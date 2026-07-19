@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scyllasband"
+version = "1.0.0"
+description = "Public inference runtime and bundle contract for Scylla's Band duration-flow TTS"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+coreml = ["coremltools>=7"]
+litert = []
+
+[project.scripts]
+scyllasband = "scyllasband.cli:main"
+scyllasband-speak = "scyllasband.cli:speak_main"
+scyllasband-group-speak = "scyllasband.cli:group_main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["scyllasband*"]

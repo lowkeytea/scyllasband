@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Interactive voice, language, and affect samples for Scylla's Band text-to-speech.">
+  <meta name="color-scheme" content="dark">
+  <title>Scylla's Band Voice Gallery</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: #f7f4ff;
+      --muted: #bdb6cc;
+      --panel: rgba(28, 23, 43, .88);
+      --line: rgba(224, 214, 255, .16);
+      --violet: #bea5ff;
+      --gold: #ffd581;
+      --shadow: 0 22px 65px rgba(0, 0, 0, .3);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 15% 0%, rgba(112, 74, 181, .38), transparent 34rem),
+        radial-gradient(circle at 90% 20%, rgba(181, 104, 80, .2), transparent 30rem),
+        #0d0a16;
+      font: 16px/1.55 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    a { color: var(--violet); }
+    .shell { width: min(1180px, calc(100% - 32px)); margin-inline: auto; }
+    .hero { padding: 72px 0 42px; }
+    .eyebrow {
+      margin: 0 0 10px;
+      color: var(--gold);
+      font-weight: 800;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+    h1 {
+      margin: 0;
+      font-size: clamp(3rem, 8vw, 6.8rem);
+      line-height: .9;
+      letter-spacing: -.065em;
+    }
+    .lede {
+      max-width: 780px;
+      margin: 28px 0 0;
+      color: var(--muted);
+      font-size: clamp(1.05rem, 2vw, 1.28rem);
+    }
+    .metrics, .links, nav { display: flex; flex-wrap: wrap; gap: 10px; }
+    .metrics, .links { margin-top: 24px; }
+    .metric, nav a {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 7px 12px;
+      background: rgba(255, 255, 255, .035);
+    }
+    .metric strong { color: var(--gold); }
+    .links a { font-weight: 750; text-decoration: none; }
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      padding-block: 12px;
+      background: rgba(13, 10, 22, .84);
+      backdrop-filter: blur(16px);
+    }
+    nav a { color: var(--ink); font-size: .86rem; text-decoration: none; }
+    main { padding-bottom: 80px; }
+    section, article { scroll-margin-top: 84px; }
+    .section-heading { margin: 62px 0 22px; }
+    h2 {
+      margin: 0;
+      font-size: clamp(2rem, 4vw, 3.4rem);
+      letter-spacing: -.04em;
+    }
+    .section-heading p { max-width: 780px; margin: 8px 0 0; color: var(--muted); }
+    .voice-grid, .demo-grid, .long-form-grid { display: grid; gap: 16px; }
+    .voice-grid { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+    .long-form-grid { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+    .voice-card, .demo-card, .long-form-card {
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+    .voice-card { padding: 20px; }
+    .voice-card h3, .voice-section h3 { margin: 0 0 14px; font-size: 1.45rem; }
+    .sample { margin-top: 14px; }
+    .sample-label {
+      display: block;
+      margin-bottom: 5px;
+      color: var(--muted);
+      font-size: .85rem;
+      font-weight: 700;
+    }
+    audio { display: block; width: 100%; height: 42px; }
+    .audio-link { display: inline-block; margin-top: 5px; font-size: .78rem; }
+    .voice-section { margin-top: 42px; }
+    .voice-section h3 span {
+      color: var(--muted);
+      font-size: .78rem;
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    .demo-grid { grid-template-columns: repeat(auto-fit, minmax(285px, 1fr)); }
+    .demo-card { padding: 18px; }
+    .long-form-card { display: flex; flex-direction: column; padding: 22px; }
+    .long-form-heading { display: flex; align-items: start; justify-content: space-between; gap: 16px; }
+    .long-form-heading h3 { margin: 0; font-size: 1.45rem; line-height: 1.2; }
+    .duration {
+      flex: 0 0 auto;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 3px 9px;
+      color: var(--gold);
+      font-size: .78rem;
+      font-weight: 800;
+    }
+    .long-form-meta { margin: 9px 0 0; color: var(--violet); font-size: .86rem; font-weight: 700; }
+    .long-form-card .line { min-height: 0; flex: 1; }
+    .source-link { display: inline-block; margin: 10px 0 0; font-size: .82rem; font-weight: 700; }
+    .demo-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .demo-heading h4 { margin: 0; font-size: 1.15rem; }
+    .cfg { color: var(--gold); font-size: .78rem; font-weight: 800; }
+    .affect {
+      margin: 5px 0 0;
+      color: var(--violet);
+      font: 600 .82rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .line { min-height: 5.2em; margin: 16px 0; color: var(--muted); }
+    .error {
+      padding: 18px;
+      border: 1px solid #ff8e8e;
+      border-radius: 16px;
+      color: #ffd0d0;
+      background: rgba(120, 20, 20, .2);
+    }
+    footer { padding: 24px 0 42px; border-top: 1px solid var(--line); color: var(--muted); }
+    @media (max-width: 560px) {
+      .shell { width: min(100% - 22px, 1180px); }
+      .hero { padding-top: 48px; }
+      nav { overflow-x: auto; flex-wrap: nowrap; }
+      nav a { white-space: nowrap; }
+    }
+  </style>
+</head>
+<body>
+  <header class="hero shell">
+    <p class="eyebrow">Spybyscript presents</p>
+    <h1>Scylla's Band<br>Voice Gallery</h1>
+    <p class="lede">Hear ten managed voices across English, Spanish, and Italian, then compare continuous calm, joy, anger, sadness, and sarcasm-overlay delivery.</p>
+    <div class="metrics" aria-label="Gallery summary">
+      <span class="metric"><strong>10</strong> voices</span>
+      <span class="metric"><strong>30</strong> multilingual clips</span>
+      <span class="metric"><strong>50</strong> affect clips</span>
+      <span class="metric"><strong>2</strong> long-form clips</span>
+      <span class="metric"><strong>24 kHz</strong> output</span>
+    </div>
+    <div class="links">
+      <a href="https://github.com/lowkeytea/scyllasband">GitHub repository &rarr;</a>
+      <a href="https://huggingface.co/spybyscript/scyllasband">Model bundles &rarr;</a>
+    </div>
+  </header>
+  <nav class="shell" id="voice-nav" aria-label="Sample navigation">
+    <a href="#long-form">Long form</a>
+  </nav>
+  <main class="shell">
+    <section id="long-form">
+      <div class="section-heading">
+        <h2>Long form</h2>
+        <p>Complete passages demonstrate chunked narration, speaker changes, and language changes beyond the short comparison clips.</p>
+      </div>
+      <div class="long-form-grid">
+        <article class="long-form-card" id="scylla-long-form">
+          <div class="long-form-heading">
+            <h3>Single-voice narration</h3>
+            <span class="duration">4:01</span>
+          </div>
+          <p class="long-form-meta">Scylla · English (US) · 746 words</p>
+          <p class="line">Scratchwick the squirrel faces Shelley the racing snail in a woodland dance battle, with dates, prices, counts, and tongue twisters carried through one continuous narration.</p>
+          <audio controls preload="none" src="scylla_long_form_sample.wav" aria-label="Scylla long-form English narration"></audio>
+          <a class="audio-link" href="scylla_long_form_sample.wav">Open audio file</a>
+          <a class="source-link" href="https://github.com/lowkeytea/scyllasband/blob/main/data/test_document.txt">Read the source text &rarr;</a>
+        </article>
+        <article class="long-form-card" id="multivoice-long-form">
+          <div class="long-form-heading">
+            <h3>Multi-voice multilingual dialogue</h3>
+            <span class="duration">2:34</span>
+          </div>
+          <p class="long-form-meta">5 voices · English, Spanish &amp; Italian · 472 words</p>
+          <p class="line">Ariadne, Max, Scylla, Ink, and Rex trade an increasingly strange breakfast conversation while speaker, language, and emotion settings change throughout.</p>
+          <audio controls preload="none" src="multi_lingual_sample.wav" aria-label="Multi-voice multilingual long-form dialogue"></audio>
+          <a class="audio-link" href="multi_lingual_sample.wav">Open audio file</a>
+          <a class="source-link" href="https://github.com/lowkeytea/scyllasband/blob/main/data/ariadne_max_scylla_multilingual_demo_v1.txt">Read the source script &rarr;</a>
+        </article>
+      </div>
+    </section>
+    <section id="languages">
+      <div class="section-heading">
+        <h2>Languages</h2>
+        <p>Each voice reads a matched comparison line in English, Spanish, and Italian. Audio loads only when you press play.</p>
+      </div>
+      <div class="voice-grid" id="language-grid"></div>
+    </section>
+    <section id="affect">
+      <div class="section-heading">
+        <h2>Affect</h2>
+        <p>Core emotions use continuous strengths. Sarcasm is an overlay mixed with a compatible core delivery. The displayed CFG value strengthens the requested difference while retaining the voice reference.</p>
+      </div>
+      <div id="affect-sections"></div>
+    </section>
+    <noscript><p class="error">JavaScript is required to build the sample list. The WAV files remain available in the GitHub repository.</p></noscript>
+    <p class="error" id="load-error" hidden></p>
+  </main>
+  <footer><div class="shell">Scylla's Band by <strong>Spybyscript</strong>. Released under Apache 2.0.</div></footer>
+  <script>
+    function element(tag, className, text) {
+      var node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    function addAudio(container, source, label) {
+      var audio = document.createElement("audio");
+      audio.controls = true;
+      audio.preload = "none";
+      audio.src = source;
+      audio.setAttribute("aria-label", label);
+      container.appendChild(audio);
+
+      var fallback = element("a", "audio-link", "Open audio file");
+      fallback.href = source;
+      container.appendChild(fallback);
+    }
+
+    function titleCase(value) {
+      return value.charAt(0).toUpperCase() + value.slice(1);
+    }
+
+    fetch("affect_script.json")
+      .then(function (response) {
+        if (!response.ok) throw new Error("sample metadata returned " + response.status);
+        return response.json();
+      })
+      .then(function (data) {
+        var voices = Object.entries(data.voices);
+        var nav = document.getElementById("voice-nav");
+        var languageGrid = document.getElementById("language-grid");
+        var affectSections = document.getElementById("affect-sections");
+        var languageSamples = [["en", "English"], ["es", "Spanish"], ["it", "Italian"]];
+
+        voices.forEach(function (entry) {
+          var voice = entry[0];
+          var spec = entry[1];
+          var navLink = element("a", "", titleCase(voice));
+          navLink.href = "#" + voice + "-languages";
+          nav.appendChild(navLink);
+
+          var voiceCard = element("article", "voice-card");
+          voiceCard.id = voice + "-languages";
+          voiceCard.appendChild(element("h3", "", titleCase(voice)));
+          languageSamples.forEach(function (language) {
+            var sample = element("div", "sample");
+            sample.id = voice + "-" + language[0];
+            sample.appendChild(element("span", "sample-label", language[1]));
+            addAudio(sample, voice + "_" + language[0] + ".wav", titleCase(voice) + " in " + language[1]);
+            voiceCard.appendChild(sample);
+          });
+          languageGrid.appendChild(voiceCard);
+
+          var voiceSection = element("section", "voice-section");
+          var voiceHeading = element("h3", "", titleCase(voice) + " ");
+          voiceHeading.appendChild(element("span", "", spec.language));
+          voiceSection.appendChild(voiceHeading);
+          var demoGrid = element("div", "demo-grid");
+
+          spec.demos.forEach(function (demo) {
+            var card = element("article", "demo-card");
+            card.id = voice + "-" + demo.delivery;
+            var heading = element("div", "demo-heading");
+            heading.appendChild(element("h4", "", titleCase(demo.delivery)));
+            heading.appendChild(element("span", "cfg", "CFG " + demo.guidance_scale));
+            card.appendChild(heading);
+            var affect = Object.entries(demo.affect).map(function (pair) {
+              return pair[0] + "=" + pair[1];
+            }).join(", ");
+            card.appendChild(element("p", "affect", affect));
+            card.appendChild(element("p", "line", "\u201c" + demo.text + "\u201d"));
+            addAudio(
+              card,
+              "affect/" + voice + "_" + demo.delivery + ".wav",
+              titleCase(voice) + " demonstrating " + demo.delivery
+            );
+            demoGrid.appendChild(card);
+          });
+          voiceSection.appendChild(demoGrid);
+          affectSections.appendChild(voiceSection);
+        });
+      })
+      .catch(function (error) {
+        var message = document.getElementById("load-error");
+        message.hidden = false;
+        message.textContent = "The gallery metadata could not be loaded: " + error.message;
+      });
+
+    document.addEventListener("play", function (event) {
+      if (event.target.tagName !== "AUDIO") return;
+      document.querySelectorAll("audio").forEach(function (other) {
+        if (other !== event.target) other.pause();
+      });
+    }, true);
+  </script>
+</body>
+</html>

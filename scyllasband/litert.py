@@ -1,0 +1,2563 @@
+"""LiteRT graph runner for Scylla's Band bundles."""
+
+from __future__ import annotations
+
+from collections import OrderedDict
+import copy
+from dataclasses import dataclass
+import json
+import math
+from pathlib import Path
+import re
+import threading
+import unicodedata
+from typing import Any, Mapping
+
+import numpy as np
+
+from .contract import ScyllasBandBundleManifest
+from .g2p_phrases import (
+    BOUNDARY_PHONE_TOKENS,
+    DEFAULT_G2P_PHRASE_MAX_CHARS,
+    g2p_phrase_segments,
+    punctuation_phone_token,
+)
+
+
+@dataclass(frozen=True)
+class LiteRTSynthesisResult:
+    audio: np.ndarray
+    metadata: dict[str, Any]
+    latents: np.ndarray | None = None
+
+
+@dataclass(frozen=True)
+class _EmotionGuidanceTerm:
+    emotion: str
+    emotion_id: int
+    scale: float
+
+
+@dataclass(frozen=True)
+class _AffectFeatures:
+    enabled: bool
+    axes: tuple[str, ...]
+    values: np.ndarray
+    condition_mask: np.ndarray
+    requested: object
+    preset: str | None
+
+
+@dataclass(frozen=True)
+class _ReferenceFeatures:
+    style: np.ndarray
+    prosody: np.ndarray
+    mask: np.ndarray
+    native_mask: float
+    fallback_mask: float
+    key: str | None
+    path: str | None
+
+
+PROSODY_DROP_INDICES = (0, 14)
+PROSODY_LOG1P_INDICES = (1, 2, 5, 6, 7, 8, 9, 10, 11, 13)
+_FRONTEND_CACHE_SIZE = 256
+
+
+class LiteRTRunner:
+    backend_name = "litert"
+
+    """Execute the fixed-shape LiteRT Scylla's Band graph chain.
+
+    This module is public-runtime code. It deliberately consumes only the
+    Scylla's Band bundle contract and bundle assets; it does not import scyllasband-trainer.
+    """
+
+    def __init__(
+        self,
+        bundle_dir: str | Path,
+        manifest: ScyllasBandBundleManifest,
+        *,
+        sessions: Mapping[str, Any] | None = None,
+    ) -> None:
+        self.bundle_dir = Path(bundle_dir)
+        self.manifest = manifest
+        self.phone_to_id = _load_token_to_id(self.bundle_dir / manifest.assets["phone_vocab"])
+        self.voice_to_id = _load_index(self.bundle_dir / manifest.assets["voice_index"])
+        self.language_to_id = _load_index(self.bundle_dir / manifest.assets["language_index"])
+        emotion_asset = manifest.assets.get("emotion_index") or manifest.assets.get("emotions")
+        self.emotion_to_id = (
+            _load_index(self.bundle_dir / emotion_asset) if emotion_asset else {"neutral": 0}
+        )
+        self.g2p_config = _load_json(self.bundle_dir / manifest.assets["g2p_config"])
+        self.g2p_tokenizer = _load_json(self.bundle_dir / manifest.assets["g2p_tokenizer"])
+        self.g2p_language_map = _load_json(self.bundle_dir / manifest.assets["g2p_language_map"])
+        override_asset = manifest.assets.get("g2p_pronunciation_overrides")
+        self.g2p_pronunciation_overrides = (
+            _load_optional_json(self.bundle_dir / override_asset) if override_asset else {}
+        )
+        self.export_status = _load_optional_json(self.bundle_dir / "export_status.json")
+        controls = dict(getattr(self.manifest, "controls", {}) or {})
+        affect_config = controls.get("affect", {})
+        self.affect_config = (
+            dict(affect_config) if isinstance(affect_config, Mapping) else {}
+        )
+        self.affect_enabled = bool(self.affect_config.get("enabled", False))
+        self.affect_axes = tuple(str(item) for item in self.affect_config.get("axes", ()))
+        self.affect_presets = dict(self.affect_config.get("presets", {}) or {})
+        self.affect_legacy_presets = dict(
+            self.affect_config.get("legacy_presets", {}) or {}
+        )
+        punctuation_silence = controls.get("punctuation_silence", {})
+        if not isinstance(punctuation_silence, Mapping):
+            punctuation_silence = {}
+        self.punctuation_silence_target = str(
+            punctuation_silence.get("target")
+            or self.g2p_config.get("punctuation_silence_target")
+            or "merge_into_punctuation"
+        ).strip().lower()
+        fixed_shapes = dict(self.export_status.get("fixed_shapes", {}) or controls.get("fixed_shapes", {}))
+        self.g2p_text_tokens = int(fixed_shapes.get("g2p_text_tokens") or self.g2p_config.get("fixed_text_tokens") or 512)
+        self.g2p_segment_config = _g2p_segment_config_for_fixed_text(
+            self.g2p_config,
+            tokenizer=self.g2p_tokenizer,
+            fixed_text_tokens=self.g2p_text_tokens,
+        )
+        self.phone_frames = int(fixed_shapes.get("phone_frames") or 256)
+        self.latent_frames = int(fixed_shapes.get("latent_frames") or 256)
+        self.target_bucket_frames = _target_bucket_frames(controls, self.latent_frames)
+        self.latent_dim = int(self.manifest.audio.latent_dim)
+        self.reference_config = dict(controls.get("reference_packs", {}) or {})
+        self.reference_style_dim = int(self.reference_config.get("style_dim") or 128)
+        self.reference_prosody_dim = int(self.reference_config.get("prosody_dim") or 32)
+        self.reference_fallback_weight = float(self.reference_config.get("fallback_weight") or 0.25)
+        self.prefix_config = dict(controls.get("prefix_conditioning", {}) or {})
+        self.prefix_max_frames = max(1, int(self.prefix_config.get("max_frames") or 64))
+        self._voice_pack_cache: dict[Path, dict[str, np.ndarray]] = {}
+        self._reference_stats: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None = None
+        self._sessions: dict[str, Any] = dict(sessions or {})
+        self._g2p_cache: OrderedDict[tuple[str, str, str, str], dict[str, Any]] = OrderedDict()
+        self._g2p_word_cache: OrderedDict[tuple[str, str], tuple[str, ...]] = OrderedDict()
+        self._duration_cache: OrderedDict[tuple[Any, ...], tuple[float, ...]] = OrderedDict()
+        self._g2p_lock = threading.RLock()
+        self._duration_lock = threading.RLock()
+
+    def synthesize(
+        self,
+        request: Any,
+        *,
+        text: str | None,
+        language: str,
+    ) -> LiteRTSynthesisResult:
+        if request.speed <= 0.0:
+            raise ValueError("speed must be positive")
+        phone_result = self._resolve_phones(request, text=text, language=language)
+        phones = phone_result["phones"]
+        if len(phones) > self.phone_frames:
+            raise ValueError(
+                f"Phone sequence has {len(phones)} phones, but this LiteRT bundle "
+                f"supports at most {self.phone_frames}. Split the text into shorter chunks."
+            )
+        unknown = sorted({phone for phone in phones if phone not in self.phone_to_id})
+        if unknown:
+            preview = ", ".join(unknown[:20])
+            raise ValueError(f"Phone sequence contains symbols outside the Scylla's Band phone vocabulary: {preview}")
+
+        voice_index = self._lookup(self.voice_to_id, request.voice_id, "voice")
+        language_index = self._lookup(self.language_to_id, language, "language")
+        affect_features = self._resolve_affect(request)
+        affect_guidance_scale = self._resolve_affect_guidance_scale(request, affect_features)
+        guidance_terms = (
+            []
+            if affect_features.enabled
+            else self._parse_emotion_guidance(getattr(request, "emotion_guidance", None))
+        )
+        emotion_name, emotion_index = self._resolve_emotion(request, guidance_terms)
+        reference_features = self._reference_features(
+            voice_id=str(request.voice_id),
+            language=language,
+            emotion=emotion_name,
+        )
+        phone_ids = [int(self.phone_to_id[phone]) for phone in phones]
+        boundary_before_id, boundary_after_id = self._boundary_ids(request, phone_result)
+        duration_scale = 1.0 / float(request.speed)
+        durations = self._predict_durations(
+            phone_ids,
+            phones=phones,
+            voice_index=voice_index,
+            language_index=language_index,
+            emotion_index=emotion_index,
+            affect_features=affect_features,
+            affect_guidance_scale=affect_guidance_scale,
+            guidance_terms=guidance_terms,
+            reference_features=reference_features,
+            guidance_null_reference=bool(getattr(request, "guidance_null_reference", True)),
+            boundary_before_id=boundary_before_id,
+            boundary_after_id=boundary_after_id,
+            duration_scale=duration_scale,
+            request=request,
+        )
+        latent_length = int(sum(durations))
+        if latent_length <= 0:
+            raise ValueError("Predicted zero latent frames; cannot synthesize")
+        fixed_latent_frames = self._latent_bucket_frames(latent_length)
+        if latent_length > fixed_latent_frames:
+            raise ValueError(
+                f"Predicted {latent_length} latent frames, but this LiteRT bundle "
+                f"supports at most {fixed_latent_frames}. Increase --speed or split the text."
+            )
+        vector_component = self._bucket_component_name("vector_estimator", fixed_latent_frames)
+        vocoder_component = self._bucket_component_name("vocoder", fixed_latent_frames)
+
+        expanded_phone_ids = _expand_phone_lists_to_length(phone_ids, durations, latent_length)
+        span_context_hidden = self._span_context_hidden(
+            request,
+            target_phone_ids=phone_ids,
+            language=language,
+            component_name=vector_component,
+        )
+        latents = self._sample_latents(
+            expanded_phone_ids,
+            latent_length=latent_length,
+            fixed_latent_frames=fixed_latent_frames,
+            vector_component=vector_component,
+            span_context_hidden=span_context_hidden,
+            voice_index=voice_index,
+            language_index=language_index,
+            emotion_index=emotion_index,
+            affect_features=affect_features,
+            affect_guidance_scale=affect_guidance_scale,
+            guidance_terms=guidance_terms,
+            reference_features=reference_features,
+            guidance_null_reference=bool(getattr(request, "guidance_null_reference", True)),
+            emotion_embed_scale=float(getattr(request, "emotion_embed_scale", 1.0)),
+            prefix_latents=getattr(request, "prefix_latents", None),
+            boundary_before_id=boundary_before_id,
+            boundary_after_id=boundary_after_id,
+            steps=int(request.steps),
+            sampler=str(request.sampler),
+            seed=request.seed,
+            noise_scale=float(request.temperature),
+        )
+        affect_guidance_active = affect_features.enabled and affect_guidance_scale != 1.0
+        guidance_branch_count = 2 if affect_guidance_active else (1 + len(guidance_terms) if guidance_terms else 1)
+        guidance_vector_batched = bool(
+            guidance_terms
+            and not affect_guidance_active
+            and self._supports_batched_guidance(vector_component, guidance_branch_count)
+        )
+        sampler_evaluations = int(request.steps) * (2 if str(request.sampler) == "heun" else 1)
+        audio = self._run_vocoder(
+            latents,
+            component_name=vocoder_component,
+            latent_length=latent_length,
+            voice_index=voice_index,
+            language_index=language_index,
+            emotion_index=emotion_index,
+            reference_features=reference_features,
+        )
+        trim_samples = max(1, (latent_length * 2 - 1) * int(self.manifest.audio.hop_length))
+        audio = np.asarray(audio, dtype=np.float32).reshape(-1)[:trim_samples]
+        audio = np.clip(audio, -1.0, 1.0)
+        metadata = {
+            "backend": self.backend_name,
+            "bundle_dir": str(self.bundle_dir),
+            "voice_id": request.voice_id,
+            "voice_index": voice_index,
+            "language": language,
+            "language_index": language_index,
+            "emotion": emotion_name,
+            "emotion_id": emotion_index,
+            "emotion_guidance": _emotion_guidance_metadata(guidance_terms),
+            "emotion_guidance_null_weight": _emotion_guidance_null_weight(guidance_terms),
+            "affect_guidance_scale": affect_guidance_scale,
+            "affect_guidance_null_weight": 1.0 - affect_guidance_scale,
+            "affect_guidance_reference_retained": bool(affect_features.enabled),
+            "guidance_null_reference": bool(getattr(request, "guidance_null_reference", True)),
+            "emotion_embed_scale": float(getattr(request, "emotion_embed_scale", 1.0)),
+            "reference_key": reference_features.key,
+            "reference_pack_path": reference_features.path,
+            "reference_mask": float(reference_features.mask[0]),
+            "native_reference_mask": float(reference_features.native_mask),
+            "fallback_reference_mask": float(reference_features.fallback_mask),
+            "prefix_frames_used": int(self._prefix_inputs(getattr(request, "prefix_latents", None))[1].sum()),
+            "boundary_before_id": boundary_before_id,
+            "boundary_after_id": boundary_after_id,
+            "text": text or "",
+            "phone_source": phone_result["phone_source"],
+            "phones": phones,
+            "phone_ids": phone_ids,
+            "predicted_durations": durations,
+            "predicted_latent_frames": latent_length,
+            "predicted_mel_frames": latent_length * 2,
+            "trimmed_audio_samples": int(audio.size),
+            "fixed_latent_frames": fixed_latent_frames,
+            "target_bucket_latent_frames": fixed_latent_frames,
+            "vector_component": vector_component,
+            "vocoder_component": vocoder_component,
+            "steps": int(request.steps),
+            "sampler": str(request.sampler),
+            "vector_guidance_branches": guidance_branch_count,
+            "vector_guidance_batched": guidance_vector_batched,
+            "vector_model_invocations": sampler_evaluations * (
+                1 if guidance_vector_batched else guidance_branch_count
+            ),
+            "speed": float(request.speed),
+            "duration_scale": duration_scale,
+            "min_sentence_pause_ms": float(getattr(request, "min_sentence_pause_ms", 0.0)),
+            "min_clause_pause_ms": float(getattr(request, "min_clause_pause_ms", 0.0)),
+            "seed": request.seed,
+            "noise_scale": float(request.temperature),
+        }
+        metadata.update(self._affect_metadata(affect_features))
+        metadata.update({key: value for key, value in phone_result.items() if key not in {"phones", "phone_source"}})
+        return LiteRTSynthesisResult(
+            audio=audio,
+            metadata=metadata,
+            latents=np.asarray(latents[:, :, :latent_length], dtype=np.float32).copy(),
+        )
+
+    def session_status(self) -> dict[str, Any]:
+        """Report process-local component sessions without creating new ones."""
+        return {
+            "backend": self.backend_name,
+            "session_count": len(self._sessions),
+            "sessions": sorted(self._sessions),
+        }
+
+    def estimate_latent_frames(
+        self,
+        request: Any,
+        *,
+        text: str | None,
+        language: str,
+    ) -> dict[str, Any]:
+        if request.speed <= 0.0:
+            raise ValueError("speed must be positive")
+        phone_result = self._resolve_phones(request, text=text, language=language)
+        phones = phone_result["phones"]
+        if len(phones) > self.phone_frames:
+            raise ValueError(
+                f"Phone sequence has {len(phones)} phones, but this LiteRT bundle "
+                f"supports at most {self.phone_frames}. Split the text into shorter chunks."
+            )
+        unknown = sorted({phone for phone in phones if phone not in self.phone_to_id})
+        if unknown:
+            preview = ", ".join(unknown[:20])
+            raise ValueError(f"Phone sequence contains symbols outside the Scylla's Band phone vocabulary: {preview}")
+
+        voice_index = self._lookup(self.voice_to_id, request.voice_id, "voice")
+        language_index = self._lookup(self.language_to_id, language, "language")
+        affect_features = self._resolve_affect(request)
+        affect_guidance_scale = self._resolve_affect_guidance_scale(request, affect_features)
+        guidance_terms = (
+            []
+            if affect_features.enabled
+            else self._parse_emotion_guidance(getattr(request, "emotion_guidance", None))
+        )
+        emotion_name, emotion_index = self._resolve_emotion(request, guidance_terms)
+        reference_features = self._reference_features(
+            voice_id=str(request.voice_id),
+            language=language,
+            emotion=emotion_name,
+        )
+        phone_ids = [int(self.phone_to_id[phone]) for phone in phones]
+        boundary_before_id, boundary_after_id = self._boundary_ids(request, phone_result)
+        duration_scale = 1.0 / float(request.speed)
+        durations = self._predict_durations(
+            phone_ids,
+            phones=phones,
+            voice_index=voice_index,
+            language_index=language_index,
+            emotion_index=emotion_index,
+            affect_features=affect_features,
+            affect_guidance_scale=affect_guidance_scale,
+            guidance_terms=guidance_terms,
+            reference_features=reference_features,
+            guidance_null_reference=bool(getattr(request, "guidance_null_reference", True)),
+            boundary_before_id=boundary_before_id,
+            boundary_after_id=boundary_after_id,
+            duration_scale=duration_scale,
+            request=request,
+        )
+        latent_length = int(sum(durations))
+        fixed_latent_frames = self._latent_bucket_frames(latent_length) if latent_length > 0 else self.target_bucket_frames[0]
+        metadata = {
+            "backend": self.backend_name,
+            "bundle_dir": str(self.bundle_dir),
+            "voice_id": request.voice_id,
+            "voice_index": voice_index,
+            "language": language,
+            "language_index": language_index,
+            "emotion": emotion_name,
+            "emotion_id": emotion_index,
+            "emotion_guidance": _emotion_guidance_metadata(guidance_terms),
+            "emotion_guidance_null_weight": _emotion_guidance_null_weight(guidance_terms),
+            "affect_guidance_scale": affect_guidance_scale,
+            "affect_guidance_null_weight": 1.0 - affect_guidance_scale,
+            "affect_guidance_reference_retained": bool(affect_features.enabled),
+            "guidance_null_reference": bool(getattr(request, "guidance_null_reference", True)),
+            "emotion_embed_scale": float(getattr(request, "emotion_embed_scale", 1.0)),
+            "reference_key": reference_features.key,
+            "reference_pack_path": reference_features.path,
+            "reference_mask": float(reference_features.mask[0]),
+            "native_reference_mask": float(reference_features.native_mask),
+            "fallback_reference_mask": float(reference_features.fallback_mask),
+            "boundary_before_id": boundary_before_id,
+            "boundary_after_id": boundary_after_id,
+            "text": text or "",
+            "phone_source": phone_result["phone_source"],
+            "phones": phones,
+            "phone_ids": phone_ids,
+            "predicted_durations": durations,
+            "predicted_latent_frames": latent_length,
+            "predicted_mel_frames": latent_length * 2,
+            "fixed_latent_frames": fixed_latent_frames,
+            "target_bucket_latent_frames": fixed_latent_frames,
+            "speed": float(request.speed),
+            "duration_scale": duration_scale,
+            "min_sentence_pause_ms": float(getattr(request, "min_sentence_pause_ms", 0.0)),
+            "min_clause_pause_ms": float(getattr(request, "min_clause_pause_ms", 0.0)),
+        }
+        metadata.update(self._affect_metadata(affect_features))
+        metadata.update({key: value for key, value in phone_result.items() if key not in {"phones", "phone_source"}})
+        return metadata
+
+    def phonemize(
+        self,
+        text: str,
+        *,
+        language: str,
+        boundary_before: str | None = None,
+        boundary_after: str | None = None,
+    ) -> dict[str, Any]:
+        cache_key = (
+            str(text or ""),
+            self._g2p_language(language),
+            _normalize_boundary_before(boundary_before),
+            _normalize_boundary_after(boundary_after),
+        )
+        with self._g2p_lock:
+            cached = self._g2p_cache.get(cache_key)
+            if cached is not None:
+                self._g2p_cache.move_to_end(cache_key)
+                return copy.deepcopy(cached)
+            result = self._phonemize_uncached(
+                text,
+                language=language,
+                boundary_before=boundary_before,
+                boundary_after=boundary_after,
+            )
+            self._g2p_cache[cache_key] = copy.deepcopy(result)
+            self._g2p_cache.move_to_end(cache_key)
+            while len(self._g2p_cache) > _FRONTEND_CACHE_SIZE:
+                self._g2p_cache.popitem(last=False)
+            return result
+
+    def _phonemize_uncached(
+        self,
+        text: str,
+        *,
+        language: str,
+        boundary_before: str | None = None,
+        boundary_after: str | None = None,
+    ) -> dict[str, Any]:
+        model_language = self._g2p_language(language)
+        segments = _g2p_text_segments(text, config=self.g2p_segment_config)
+        pause_phone = "<sil>" if "<sil>" in self.phone_to_id else None
+        before = _normalize_boundary_before(boundary_before)
+        after = _normalize_boundary_after(boundary_after)
+        phones: list[str] = []
+        predictions: list[dict[str, Any]] = []
+        boundary_tokens: list[str] = []
+        pronunciation_overrides: list[dict[str, Any]] = []
+        terminal_tail_repairs: list[dict[str, Any]] = []
+        leading_context_phone = _context_phone_for_boundary(before, self.phone_to_id, self.g2p_config)
+        if leading_context_phone is not None:
+            phones.append(leading_context_phone)
+            boundary_tokens.append(leading_context_phone)
+        if pause_phone is not None and _insert_leading_silence(before):
+            phones.append(pause_phone)
+        for index, segment in enumerate(segments):
+            prediction = self._predict_g2p_segment(segment, language=model_language)
+            predictions.append(prediction)
+            pronunciation_overrides.extend(
+                dict(item) for item in prediction.get("pronunciation_overrides", [])
+            )
+            terminal_tail_repairs.extend(
+                dict(item) for item in prediction.get("terminal_tail_repairs", [])
+            )
+            phones.extend(phone for phone in prediction["phones"] if phone not in _SILENCE_PHONES)
+            boundary_phone = _boundary_phone_for_segment(segment, self.phone_to_id)
+            has_following_segment = index < len(segments) - 1
+            if boundary_phone is not None:
+                phones.append(boundary_phone)
+                boundary_tokens.append(boundary_phone)
+                if (
+                    self.punctuation_silence_target == "explicit_silence"
+                    and pause_phone is not None
+                ):
+                    phones.append(pause_phone)
+            elif has_following_segment:
+                internal_phone = _continuation_phone(
+                    "clause_continue",
+                    self.phone_to_id,
+                    self.g2p_config,
+                    fallback_pause=pause_phone,
+                )
+                if internal_phone is not None:
+                    phones.append(internal_phone)
+                    boundary_tokens.append(internal_phone)
+                    if self.punctuation_silence_target == "explicit_silence" and pause_phone is not None:
+                        phones.append(pause_phone)
+        trailing_phone = _trailing_boundary_phone(after, self.phone_to_id, self.g2p_config)
+        if trailing_phone is not None and not _ends_in_boundary_phone(phones):
+            phones.append(trailing_phone)
+            boundary_tokens.append(trailing_phone)
+        if not phones:
+            raise ValueError("G2P produced no usable Scylla's Band phone symbols")
+        confidences = [float(item.get("confidence", 0.0)) for item in predictions]
+        result = {
+            "phones": phones,
+            "phone_source": "g2p",
+            "g2p_prediction_text": " | ".join(str(item.get("prediction_text", "")) for item in predictions),
+            "g2p_prediction_confidence": min(confidences) if confidences else 0.0,
+            "g2p_segment_confidences": confidences,
+            "g2p_segments": segments,
+            "g2p_inserted_pause_tokens": pause_phone is not None,
+            "g2p_boundary_tokens": boundary_tokens,
+            "punctuation_silence_target": self.punctuation_silence_target,
+            "boundary_before": before,
+            "boundary_after": after,
+            "context_phone_tokens_enabled": _emit_context_phone_tokens(self.g2p_config),
+        }
+        if pronunciation_overrides:
+            result["pronunciation_overrides"] = pronunciation_overrides
+        if terminal_tail_repairs:
+            result["g2p_terminal_tail_repairs"] = terminal_tail_repairs
+        return result
+
+    def _resolve_phones(self, request: Any, *, text: str | None, language: str) -> dict[str, Any]:
+        explicit = request.explicit_phones
+        if isinstance(explicit, str):
+            phones = [item for item in explicit.split() if item]
+        elif explicit:
+            phones = [str(item) for item in explicit if str(item)]
+        else:
+            phones = []
+        if phones:
+            return {"phones": phones, "phone_source": "explicit"}
+        if not text or not text.strip():
+            raise ValueError("Raw text synthesis requires text or explicit_phones")
+        result = self.phonemize(
+            text,
+            language=language,
+            boundary_before=getattr(request, "boundary_before", None),
+            boundary_after=getattr(request, "boundary_after", None),
+        )
+        result["g2p_input_text"] = text
+        return result
+
+    def _predict_g2p_segment(self, text: str, *, language: str) -> dict[str, Any]:
+        prediction = self._predict_g2p_raw(text, language=language)
+        prediction = self._apply_g2p_pronunciation_overrides(prediction, text=text, language=language)
+        return self._repair_g2p_terminal_tail(prediction, text=text, language=language)
+
+    def _predict_g2p_raw(self, text: str, *, language: str) -> dict[str, Any]:
+        encoded = self._encode_g2p_text(text, language=language)
+        logits = self._session("g2p").invoke({0: encoded[np.newaxis, :]})
+        if isinstance(logits, (list, tuple)):
+            logits = logits[0]
+        logits = np.asarray(logits, dtype=np.float32)[0]
+        return self._decode_g2p_logits(logits)
+
+    def _repair_g2p_terminal_tail(
+        self,
+        prediction: dict[str, Any],
+        *,
+        text: str,
+        language: str,
+    ) -> dict[str, Any]:
+        """Trim short CTC tail hallucinations after a correctly decoded final word."""
+        word = _terminal_g2p_word(text)
+        if not word:
+            return prediction
+        cache_key = (str(language), word)
+        isolated = self._g2p_word_cache.get(cache_key)
+        if isolated is None:
+            isolated_prediction = self._predict_g2p_raw(word, language=language)
+            isolated_prediction = self._apply_g2p_pronunciation_overrides(
+                isolated_prediction,
+                text=word,
+                language=language,
+            )
+            isolated = tuple(str(phone) for phone in isolated_prediction.get("phones", []))
+            self._g2p_word_cache[cache_key] = isolated
+            self._g2p_word_cache.move_to_end(cache_key)
+            while len(self._g2p_word_cache) > _FRONTEND_CACHE_SIZE:
+                self._g2p_word_cache.popitem(last=False)
+        else:
+            self._g2p_word_cache.move_to_end(cache_key)
+        repaired, removed = _trim_g2p_terminal_artifacts(
+            [str(phone) for phone in prediction.get("phones", [])],
+            list(isolated),
+        )
+        if not removed:
+            return prediction
+        updated = dict(prediction)
+        updated["phones"] = repaired
+        updated["prediction_symbols"] = repaired
+        updated["prediction_text"] = " ".join(repaired).strip()
+        updated["terminal_tail_repairs"] = [
+            {
+                "word": word,
+                "phones": list(isolated),
+                "removed": removed,
+            }
+        ]
+        return updated
+
+    def _encode_g2p_text(self, text: str, *, language: str) -> np.ndarray:
+        token_to_id = {str(key): int(value) for key, value in self.g2p_tokenizer["text_symbols"].items()}
+        language_token = f"<{language}>"
+        if language_token not in token_to_id:
+            raise ValueError(f"G2P language {language!r} is not supported by this bundle")
+        char_repeats = max(1, int(self.g2p_tokenizer.get("char_repeats", 1)))
+        lowercase = bool(self.g2p_tokenizer.get("lowercase", True))
+        work = str(text or "")
+        if lowercase:
+            work = work.lower()
+        sequence = [int(token_to_id[language_token])]
+        emitted_chars = 0
+        for char in work:
+            token_id = token_to_id.get(char)
+            if token_id is None:
+                continue
+            sequence.extend([int(token_id)] * char_repeats)
+            emitted_chars += 1
+        sequence.append(int(token_to_id.get("<end>", self.g2p_tokenizer.get("text_pad_index", 0))))
+        if emitted_chars <= 0:
+            raise ValueError("G2P text has no characters supported by this bundle")
+        if len(sequence) > self.g2p_text_tokens:
+            raise ValueError(
+                f"G2P input encodes to {len(sequence)} tokens, but this LiteRT bundle "
+                f"supports at most {self.g2p_text_tokens}. Split the text into shorter chunks."
+            )
+        out = np.full((self.g2p_text_tokens,), int(self.g2p_tokenizer.get("text_pad_index", 0)), dtype=np.int64)
+        out[: len(sequence)] = np.asarray(sequence, dtype=np.int64)
+        return out
+
+    def _decode_g2p_logits(self, logits: np.ndarray) -> dict[str, Any]:
+        phoneme_symbols = {
+            int(key): str(value)
+            for key, value in dict(self.g2p_tokenizer["phoneme_symbols"]).items()
+        }
+        pad_index = int(self.g2p_tokenizer.get("phoneme_pad_index", 0))
+        end_index = int(self.g2p_tokenizer.get("phoneme_end_index", 0))
+        probs = _softmax(np.asarray(logits, dtype=np.float32), axis=-1)
+        argmax = np.argmax(probs, axis=-1).astype(np.int64)
+        phones: list[str] = []
+        emitted_probs: list[float] = []
+        previous: int | None = None
+        for frame, token_id_raw in enumerate(argmax.tolist()):
+            token_id = int(token_id_raw)
+            if previous == token_id:
+                continue
+            previous = token_id
+            if token_id == pad_index:
+                continue
+            if token_id == end_index:
+                break
+            symbol = phoneme_symbols.get(token_id)
+            if _skip_g2p_output_symbol(symbol):
+                continue
+            phones.append(str(symbol))
+            emitted_probs.append(float(probs[frame, token_id]))
+        confidence = _prob_product(emitted_probs)
+        return {
+            "phones": phones,
+            "prediction_text": " ".join(phones).strip(),
+            "prediction_symbols": phones,
+            "confidence": confidence,
+        }
+
+    def _apply_g2p_pronunciation_overrides(
+        self,
+        prediction: dict[str, Any],
+        *,
+        text: str,
+        language: str,
+    ) -> dict[str, Any]:
+        overrides = _pronunciation_overrides_for_language(
+            self.g2p_pronunciation_overrides,
+            language=language,
+        )
+        if not overrides:
+            return prediction
+        words = _words_for_pronunciation_overrides(text)
+        if not words:
+            return prediction
+        phones = [str(phone) for phone in prediction.get("phones", [])]
+        applied: list[dict[str, Any]] = []
+        for word, spec in sorted(overrides.items()):
+            if word not in words:
+                continue
+            target = _override_phone_list(spec, key="phones")
+            source = _override_phone_list(spec, key="replace")
+            if not target or not source:
+                continue
+            phones, count = _replace_phone_subsequence(phones, source, target)
+            if count <= 0:
+                continue
+            applied.append(
+                {
+                    "word": word,
+                    "replace": source,
+                    "phones": target,
+                    "count": count,
+                }
+            )
+        if not applied:
+            return prediction
+        updated = dict(prediction)
+        updated["phones"] = phones
+        updated["prediction_symbols"] = phones
+        updated["prediction_text"] = " ".join(phones).strip()
+        updated["pronunciation_overrides"] = applied
+        return updated
+
+    def _predict_durations(
+        self,
+        phone_ids: list[int],
+        *,
+        phones: list[str],
+        voice_index: int,
+        language_index: int,
+        emotion_index: int,
+        affect_features: _AffectFeatures,
+        affect_guidance_scale: float,
+        guidance_terms: list[_EmotionGuidanceTerm],
+        reference_features: _ReferenceFeatures,
+        guidance_null_reference: bool,
+        boundary_before_id: int,
+        boundary_after_id: int,
+        duration_scale: float,
+        request: Any,
+    ) -> list[int]:
+        if affect_features.enabled and affect_guidance_scale != 1.0:
+            null_values = self._predict_duration_values(
+                phone_ids,
+                voice_index=voice_index,
+                language_index=language_index,
+                emotion_index=emotion_index,
+                affect_features=affect_features,
+                emotion_condition_scale=1.0,
+                reference_features=reference_features,
+                reference_condition_scale=1.0,
+                boundary_before_id=boundary_before_id,
+                boundary_after_id=boundary_after_id,
+                affect_condition_scale=0.0,
+            )
+            conditioned_values = self._predict_duration_values(
+                phone_ids,
+                voice_index=voice_index,
+                language_index=language_index,
+                emotion_index=emotion_index,
+                affect_features=affect_features,
+                emotion_condition_scale=1.0,
+                reference_features=reference_features,
+                reference_condition_scale=1.0,
+                boundary_before_id=boundary_before_id,
+                boundary_after_id=boundary_after_id,
+                affect_condition_scale=1.0,
+            )
+            null_array = np.asarray(null_values, dtype=np.float32)
+            conditioned_array = np.asarray(conditioned_values, dtype=np.float32)
+            values = np.maximum(
+                null_array + float(affect_guidance_scale) * (conditioned_array - null_array),
+                0.0,
+            ).tolist()
+        elif guidance_terms:
+            null_reference_scale = 0.0 if guidance_null_reference else 1.0
+            values = self._predict_duration_values(
+                phone_ids,
+                voice_index=voice_index,
+                language_index=language_index,
+                emotion_index=emotion_index,
+                affect_features=affect_features,
+                emotion_condition_scale=0.0,
+                reference_features=reference_features,
+                reference_condition_scale=null_reference_scale,
+                boundary_before_id=boundary_before_id,
+                boundary_after_id=boundary_after_id,
+            )
+            blended = _emotion_guidance_null_weight(guidance_terms) * np.asarray(values, dtype=np.float32)
+            for term in guidance_terms:
+                term_values = self._predict_duration_values(
+                    phone_ids,
+                    voice_index=voice_index,
+                    language_index=language_index,
+                    emotion_index=int(term.emotion_id),
+                    affect_features=affect_features,
+                    emotion_condition_scale=1.0,
+                    reference_features=reference_features,
+                    reference_condition_scale=1.0,
+                    boundary_before_id=boundary_before_id,
+                    boundary_after_id=boundary_after_id,
+                )
+                blended = blended + float(term.scale) * np.asarray(term_values, dtype=np.float32)
+            values = np.maximum(blended, 0.0).tolist()
+        else:
+            values = self._predict_duration_values(
+                phone_ids,
+                voice_index=voice_index,
+                language_index=language_index,
+                emotion_index=emotion_index,
+                affect_features=affect_features,
+                emotion_condition_scale=1.0,
+                reference_features=reference_features,
+                reference_condition_scale=1.0,
+                boundary_before_id=boundary_before_id,
+                boundary_after_id=boundary_after_id,
+            )
+        durations = _frames_to_durations(values, phones=phones, scale=duration_scale, min_phone_frames=1)
+        return _apply_punctuation_duration_floors(
+            durations,
+            phones=phones,
+            sentence_frames=_pause_ms_to_latent_frames(
+                getattr(request, "min_sentence_pause_ms", 0.0),
+                sample_rate=int(self.manifest.audio.sample_rate),
+                latent_hop_length=int(self.manifest.audio.latent_hop_length),
+            ),
+            clause_frames=_pause_ms_to_latent_frames(
+                getattr(request, "min_clause_pause_ms", 0.0),
+                sample_rate=int(self.manifest.audio.sample_rate),
+                latent_hop_length=int(self.manifest.audio.latent_hop_length),
+            ),
+        )
+
+    def _predict_duration_values(
+        self,
+        phone_ids: list[int],
+        *,
+        voice_index: int,
+        language_index: int,
+        emotion_index: int,
+        affect_features: _AffectFeatures,
+        emotion_condition_scale: float,
+        reference_features: _ReferenceFeatures,
+        reference_condition_scale: float,
+        boundary_before_id: int,
+        boundary_after_id: int,
+        affect_condition_scale: float = 1.0,
+    ) -> list[float]:
+        cache_key = (
+            tuple(int(item) for item in phone_ids),
+            int(voice_index),
+            int(language_index),
+            int(emotion_index),
+            tuple(float(value) for value in affect_features.values.reshape(-1)),
+            float(affect_features.condition_mask[0]),
+            float(affect_condition_scale),
+            float(emotion_condition_scale),
+            reference_features.key,
+            reference_features.path,
+            float(reference_features.mask[0]),
+            float(reference_condition_scale),
+            int(boundary_before_id),
+            int(boundary_after_id),
+        )
+        with self._duration_lock:
+            cached = self._duration_cache.get(cache_key)
+            if cached is not None:
+                self._duration_cache.move_to_end(cache_key)
+                return list(cached)
+            padded = np.zeros((1, self.phone_frames), dtype=np.int64)
+            mask = np.zeros((1, self.phone_frames), dtype=np.bool_)
+            padded[0, : len(phone_ids)] = np.asarray(phone_ids, dtype=np.int64)
+            mask[0, : len(phone_ids)] = True
+            input_names = self._component_input_names("duration_predictor")
+            args: dict[int, np.ndarray] = (
+                {}
+                if input_names
+                else {
+                    0: padded,
+                    1: np.asarray([voice_index], dtype=np.int64),
+                    2: np.asarray([language_index], dtype=np.int64),
+                    3: np.asarray([emotion_index], dtype=np.int64),
+                    4: np.asarray([boundary_before_id], dtype=np.int64),
+                    5: np.asarray([boundary_after_id], dtype=np.int64),
+                    6: mask,
+                }
+            )
+            self._add_optional_arg(args, "duration_predictor", "phone_ids", padded)
+            self._add_optional_arg(
+                args, "duration_predictor", "voice_id", np.asarray([voice_index], dtype=np.int64)
+            )
+            self._add_optional_arg(
+                args, "duration_predictor", "language_id", np.asarray([language_index], dtype=np.int64)
+            )
+            self._add_optional_arg(
+                args, "duration_predictor", "emotion_id", np.asarray([emotion_index], dtype=np.int64)
+            )
+            self._add_optional_arg(
+                args, "duration_predictor", "affect_values", affect_features.values
+            )
+            self._add_optional_arg(
+                args,
+                "duration_predictor",
+                "boundary_before_id",
+                np.asarray([boundary_before_id], dtype=np.int64),
+            )
+            self._add_optional_arg(
+                args,
+                "duration_predictor",
+                "boundary_after_id",
+                np.asarray([boundary_after_id], dtype=np.int64),
+            )
+            self._add_optional_arg(args, "duration_predictor", "phone_mask", mask)
+            self._add_optional_arg(
+                args,
+                "duration_predictor",
+                "emotion_condition_mask",
+                np.asarray([emotion_condition_scale], dtype=np.float32),
+            )
+            self._add_optional_arg(
+                args,
+                "duration_predictor",
+                "affect_condition_mask",
+                affect_features.condition_mask * float(affect_condition_scale),
+            )
+            self._add_reference_args(args, "duration_predictor", reference_features, reference_condition_scale)
+            output = self._session("duration_predictor").invoke(args)
+            values = tuple(
+                float(item)
+                for item in np.asarray(output, dtype=np.float32).reshape(-1)[: len(phone_ids)]
+            )
+            self._duration_cache[cache_key] = values
+            self._duration_cache.move_to_end(cache_key)
+            while len(self._duration_cache) > _FRONTEND_CACHE_SIZE:
+                self._duration_cache.popitem(last=False)
+            return list(values)
+
+    def _sample_latents(
+        self,
+        expanded_phone_ids: list[int],
+        *,
+        latent_length: int,
+        fixed_latent_frames: int,
+        vector_component: str,
+        span_context_hidden: np.ndarray | None,
+        voice_index: int,
+        language_index: int,
+        emotion_index: int,
+        affect_features: _AffectFeatures,
+        affect_guidance_scale: float,
+        guidance_terms: list[_EmotionGuidanceTerm],
+        reference_features: _ReferenceFeatures,
+        guidance_null_reference: bool,
+        emotion_embed_scale: float,
+        prefix_latents: Any,
+        boundary_before_id: int,
+        boundary_after_id: int,
+        steps: int,
+        sampler: str,
+        seed: int | None,
+        noise_scale: float,
+    ) -> np.ndarray:
+        if steps <= 0:
+            raise ValueError("steps must be positive")
+        sampler = str(sampler or "euler").lower()
+        if sampler not in {"euler", "heun"}:
+            raise ValueError(f"Unsupported sampler {sampler!r}; expected 'euler' or 'heun'")
+        rng = np.random.default_rng(seed)
+        latents = rng.standard_normal((1, self.latent_dim, fixed_latent_frames)).astype(np.float32)
+        latents *= float(noise_scale)
+        latent_mask = np.zeros((1, fixed_latent_frames), dtype=np.bool_)
+        latent_mask[0, :latent_length] = True
+        latents *= latent_mask[:, np.newaxis, :].astype(np.float32)
+        expanded = np.zeros((1, fixed_latent_frames), dtype=np.int64)
+        expanded[0, :latent_length] = np.asarray(expanded_phone_ids, dtype=np.int64)
+        voice = np.asarray([voice_index], dtype=np.int64)
+        language = np.asarray([language_index], dtype=np.int64)
+        emotion = np.asarray([emotion_index], dtype=np.int64)
+        boundary_before = np.asarray([boundary_before_id], dtype=np.int64)
+        boundary_after = np.asarray([boundary_after_id], dtype=np.int64)
+        prefix_values, prefix_mask = self._prefix_inputs(prefix_latents, component_name=vector_component)
+        mask_float = latent_mask[:, np.newaxis, :].astype(np.float32)
+        dt = 1.0 / float(steps)
+        for step in range(steps):
+            if sampler == "euler":
+                time_value = (float(step) + 0.5) / float(steps)
+                velocity = self._guided_vector_velocity(
+                    latents,
+                    time_value,
+                    expanded,
+                    vector_component,
+                    span_context_hidden,
+                    voice,
+                    language,
+                    emotion,
+                    affect_features,
+                    boundary_before,
+                    boundary_after,
+                    latent_mask,
+                    affect_guidance_scale,
+                    guidance_terms,
+                    reference_features,
+                    guidance_null_reference,
+                    emotion_embed_scale,
+                    prefix_values,
+                    prefix_mask,
+                )
+                latents = (latents + dt * velocity) * mask_float
+            else:
+                start_time = float(step) / float(steps)
+                end_time = float(step + 1) / float(steps)
+                start_velocity = self._guided_vector_velocity(
+                    latents,
+                    start_time,
+                    expanded,
+                    vector_component,
+                    span_context_hidden,
+                    voice,
+                    language,
+                    emotion,
+                    affect_features,
+                    boundary_before,
+                    boundary_after,
+                    latent_mask,
+                    affect_guidance_scale,
+                    guidance_terms,
+                    reference_features,
+                    guidance_null_reference,
+                    emotion_embed_scale,
+                    prefix_values,
+                    prefix_mask,
+                )
+                predicted = (latents + dt * start_velocity) * mask_float
+                end_velocity = self._guided_vector_velocity(
+                    predicted,
+                    end_time,
+                    expanded,
+                    vector_component,
+                    span_context_hidden,
+                    voice,
+                    language,
+                    emotion,
+                    affect_features,
+                    boundary_before,
+                    boundary_after,
+                    latent_mask,
+                    affect_guidance_scale,
+                    guidance_terms,
+                    reference_features,
+                    guidance_null_reference,
+                    emotion_embed_scale,
+                    prefix_values,
+                    prefix_mask,
+                )
+                latents = (latents + 0.5 * dt * (start_velocity + end_velocity)) * mask_float
+        return latents.astype(np.float32)
+
+    def _guided_vector_velocity(
+        self,
+        latents: np.ndarray,
+        time_value: float,
+        expanded: np.ndarray,
+        vector_component: str,
+        span_context_hidden: np.ndarray | None,
+        voice: np.ndarray,
+        language: np.ndarray,
+        emotion: np.ndarray,
+        affect_features: _AffectFeatures,
+        boundary_before: np.ndarray,
+        boundary_after: np.ndarray,
+        latent_mask: np.ndarray,
+        affect_guidance_scale: float,
+        guidance_terms: list[_EmotionGuidanceTerm],
+        reference_features: _ReferenceFeatures,
+        guidance_null_reference: bool,
+        emotion_embed_scale: float,
+        prefix_latents: np.ndarray,
+        prefix_mask: np.ndarray,
+    ) -> np.ndarray:
+        if affect_features.enabled and affect_guidance_scale != 1.0:
+            null_velocity = self._vector_velocity(
+                latents,
+                time_value,
+                expanded,
+                vector_component,
+                span_context_hidden,
+                voice,
+                language,
+                emotion,
+                affect_features,
+                boundary_before,
+                boundary_after,
+                latent_mask,
+                emotion_condition_scale=emotion_embed_scale,
+                affect_condition_scale=0.0,
+                reference_features=reference_features,
+                reference_condition_scale=1.0,
+                prefix_latents=prefix_latents,
+                prefix_mask=prefix_mask,
+            )
+            conditioned_velocity = self._vector_velocity(
+                latents,
+                time_value,
+                expanded,
+                vector_component,
+                span_context_hidden,
+                voice,
+                language,
+                emotion,
+                affect_features,
+                boundary_before,
+                boundary_after,
+                latent_mask,
+                emotion_condition_scale=emotion_embed_scale,
+                affect_condition_scale=1.0,
+                reference_features=reference_features,
+                reference_condition_scale=1.0,
+                prefix_latents=prefix_latents,
+                prefix_mask=prefix_mask,
+            )
+            return np.asarray(
+                null_velocity + float(affect_guidance_scale) * (conditioned_velocity - null_velocity),
+                dtype=np.float32,
+            )
+        if not guidance_terms:
+            return self._vector_velocity(
+                latents,
+                time_value,
+                expanded,
+                vector_component,
+                span_context_hidden,
+                voice,
+                language,
+                emotion,
+                affect_features,
+                boundary_before,
+                boundary_after,
+                latent_mask,
+                emotion_condition_scale=emotion_embed_scale,
+                affect_condition_scale=1.0,
+                reference_features=reference_features,
+                reference_condition_scale=1.0,
+                prefix_latents=prefix_latents,
+                prefix_mask=prefix_mask,
+            )
+        if self._supports_batched_guidance(vector_component, 1 + len(guidance_terms)):
+            return self._batched_guided_vector_velocity(
+                latents,
+                time_value,
+                expanded,
+                vector_component,
+                span_context_hidden,
+                voice,
+                language,
+                emotion,
+                affect_features,
+                boundary_before,
+                boundary_after,
+                latent_mask,
+                guidance_terms,
+                reference_features,
+                guidance_null_reference,
+                emotion_embed_scale,
+                prefix_latents,
+                prefix_mask,
+            )
+        null_reference_scale = 0.0 if guidance_null_reference else 1.0
+        velocity = self._vector_velocity(
+            latents,
+            time_value,
+            expanded,
+            vector_component,
+            span_context_hidden,
+            voice,
+            language,
+            emotion,
+            affect_features,
+            boundary_before,
+            boundary_after,
+            latent_mask,
+            emotion_condition_scale=0.0,
+            affect_condition_scale=1.0,
+            reference_features=reference_features,
+            reference_condition_scale=null_reference_scale,
+            prefix_latents=prefix_latents,
+            prefix_mask=prefix_mask,
+        )
+        blended = _emotion_guidance_null_weight(guidance_terms) * velocity
+        for term in guidance_terms:
+            term_velocity = self._vector_velocity(
+                latents,
+                time_value,
+                expanded,
+                vector_component,
+                span_context_hidden,
+                voice,
+                language,
+                np.asarray([int(term.emotion_id)], dtype=np.int64),
+                affect_features,
+                boundary_before,
+                boundary_after,
+                latent_mask,
+                emotion_condition_scale=emotion_embed_scale,
+                affect_condition_scale=1.0,
+                reference_features=reference_features,
+                reference_condition_scale=1.0,
+                prefix_latents=prefix_latents,
+                prefix_mask=prefix_mask,
+            )
+            blended = blended + float(term.scale) * term_velocity
+        return np.asarray(blended, dtype=np.float32)
+
+    def _supports_batched_guidance(
+        self,
+        component_name: str,
+        branch_count: int,
+    ) -> bool:
+        del component_name, branch_count
+        return False
+
+    def _batched_guided_vector_velocity(
+        self,
+        latents: np.ndarray,
+        time_value: float,
+        expanded: np.ndarray,
+        vector_component: str,
+        span_context_hidden: np.ndarray | None,
+        voice: np.ndarray,
+        language: np.ndarray,
+        emotion: np.ndarray,
+        affect_features: _AffectFeatures,
+        boundary_before: np.ndarray,
+        boundary_after: np.ndarray,
+        latent_mask: np.ndarray,
+        guidance_terms: list[_EmotionGuidanceTerm],
+        reference_features: _ReferenceFeatures,
+        guidance_null_reference: bool,
+        emotion_embed_scale: float,
+        prefix_latents: np.ndarray,
+        prefix_mask: np.ndarray,
+    ) -> np.ndarray:
+        branch_count = 1 + len(guidance_terms)
+        null_emotion = int(np.asarray(emotion).reshape(-1)[0])
+        emotion_ids = np.asarray(
+            [null_emotion, *(int(term.emotion_id) for term in guidance_terms)],
+            dtype=np.int64,
+        )
+        emotion_scales = np.asarray(
+            [0.0, *(float(emotion_embed_scale) for _ in guidance_terms)],
+            dtype=np.float32,
+        )
+        reference_scales = np.asarray(
+            [0.0 if guidance_null_reference else 1.0, *(1.0 for _ in guidance_terms)],
+            dtype=np.float32,
+        )
+        args: dict[int, np.ndarray] = {
+            0: _repeat_batch(latents, branch_count),
+            1: np.full((branch_count,), float(time_value), dtype=np.float32),
+            2: _repeat_batch(expanded, branch_count),
+            3: _repeat_batch(voice, branch_count),
+            4: _repeat_batch(language, branch_count),
+            5: emotion_ids,
+            6: _repeat_batch(boundary_before, branch_count),
+            7: _repeat_batch(boundary_after, branch_count),
+            8: _repeat_batch(latent_mask, branch_count),
+        }
+        self._add_optional_arg(args, vector_component, "emotion_condition_mask", emotion_scales)
+        self._add_optional_arg(
+            args,
+            vector_component,
+            "reference_style",
+            _repeat_batch(reference_features.style, branch_count),
+        )
+        self._add_optional_arg(
+            args,
+            vector_component,
+            "reference_prosody",
+            _repeat_batch(reference_features.prosody, branch_count),
+        )
+        self._add_optional_arg(
+            args,
+            vector_component,
+            "reference_mask",
+            _repeat_batch(reference_features.mask, branch_count),
+        )
+        self._add_optional_arg(
+            args,
+            vector_component,
+            "reference_condition_mask",
+            reference_scales,
+        )
+        self._add_optional_arg(
+            args,
+            vector_component,
+            "prefix_latents",
+            _repeat_batch(prefix_latents, branch_count),
+        )
+        self._add_optional_arg(
+            args,
+            vector_component,
+            "prefix_mask",
+            _repeat_batch(prefix_mask, branch_count),
+        )
+        if span_context_hidden is not None:
+            self._add_optional_arg(
+                args,
+                vector_component,
+                "span_context_hidden",
+                _repeat_batch(span_context_hidden, branch_count),
+            )
+        velocities = np.asarray(self._session(vector_component).invoke(args), dtype=np.float32)
+        if velocities.ndim != 3 or int(velocities.shape[0]) != branch_count:
+            raise RuntimeError(
+                f"Batched vector estimator returned shape {tuple(velocities.shape)}; "
+                f"expected [{branch_count}, C, T]"
+            )
+        weights = np.asarray(
+            [_emotion_guidance_null_weight(guidance_terms), *(term.scale for term in guidance_terms)],
+            dtype=np.float32,
+        )
+        return np.sum(
+            velocities * weights[:, np.newaxis, np.newaxis],
+            axis=0,
+            keepdims=True,
+            dtype=np.float32,
+        )
+
+    def _vector_velocity(
+        self,
+        latents: np.ndarray,
+        time_value: float,
+        expanded: np.ndarray,
+        component_name: str,
+        span_context_hidden: np.ndarray | None,
+        voice: np.ndarray,
+        language: np.ndarray,
+        emotion: np.ndarray,
+        affect_features: _AffectFeatures,
+        boundary_before: np.ndarray,
+        boundary_after: np.ndarray,
+        latent_mask: np.ndarray,
+        *,
+        emotion_condition_scale: float,
+        affect_condition_scale: float,
+        reference_features: _ReferenceFeatures,
+        reference_condition_scale: float,
+        prefix_latents: np.ndarray,
+        prefix_mask: np.ndarray,
+    ) -> np.ndarray:
+        input_names = self._component_input_names(component_name)
+        args: dict[int, np.ndarray] = (
+            {}
+            if input_names
+            else {
+                0: latents.astype(np.float32),
+                1: np.asarray([float(time_value)], dtype=np.float32),
+                2: expanded,
+                3: voice,
+                4: language,
+                5: emotion,
+                6: boundary_before,
+                7: boundary_after,
+                8: latent_mask,
+            }
+        )
+        self._add_optional_arg(args, component_name, "noise", latents.astype(np.float32))
+        self._add_optional_arg(
+            args, component_name, "time", np.asarray([float(time_value)], dtype=np.float32)
+        )
+        self._add_optional_arg(args, component_name, "expanded_phone_ids", expanded)
+        self._add_optional_arg(args, component_name, "voice_id", voice)
+        self._add_optional_arg(args, component_name, "language_id", language)
+        self._add_optional_arg(args, component_name, "emotion_id", emotion)
+        self._add_optional_arg(args, component_name, "affect_values", affect_features.values)
+        self._add_optional_arg(args, component_name, "boundary_before_id", boundary_before)
+        self._add_optional_arg(args, component_name, "boundary_after_id", boundary_after)
+        self._add_optional_arg(args, component_name, "latent_mask", latent_mask)
+        self._add_optional_arg(args, component_name, "emotion_condition_mask", np.asarray([emotion_condition_scale], dtype=np.float32))
+        self._add_optional_arg(
+            args,
+            component_name,
+            "affect_condition_mask",
+            affect_features.condition_mask * float(affect_condition_scale),
+        )
+        self._add_reference_args(args, component_name, reference_features, reference_condition_scale)
+        self._add_optional_arg(args, component_name, "prefix_latents", prefix_latents)
+        self._add_optional_arg(args, component_name, "prefix_mask", prefix_mask)
+        if span_context_hidden is not None:
+            self._add_optional_arg(args, component_name, "span_context_hidden", span_context_hidden)
+        output = self._session(component_name).invoke(args)
+        return np.asarray(output, dtype=np.float32)
+
+    def _run_vocoder(
+        self,
+        latents: np.ndarray,
+        *,
+        component_name: str,
+        latent_length: int,
+        voice_index: int,
+        language_index: int,
+        emotion_index: int,
+        reference_features: _ReferenceFeatures,
+    ) -> np.ndarray:
+        input_names = self._component_input_names(component_name)
+        if not input_names:
+            args: dict[int, np.ndarray] = {
+                0: latents.astype(np.float32),
+                1: np.asarray([voice_index], dtype=np.int64),
+                2: np.asarray([language_index], dtype=np.int64),
+                3: np.asarray([emotion_index], dtype=np.int64),
+            }
+        else:
+            args = {}
+            self._add_optional_arg(args, component_name, "latents", latents.astype(np.float32))
+            latent_frames = int(latents.shape[-1]) if np.asarray(latents).ndim >= 3 else int(self.latent_frames)
+            latent_mask = np.zeros((1, latent_frames), dtype=np.bool_)
+            latent_mask[0, : max(0, min(int(latent_length), latent_frames))] = True
+            self._add_optional_arg(args, component_name, "latent_mask", latent_mask)
+            self._add_optional_arg(args, component_name, "voice_id", np.asarray([voice_index], dtype=np.int64))
+            self._add_optional_arg(args, component_name, "language_id", np.asarray([language_index], dtype=np.int64))
+            self._add_optional_arg(args, component_name, "emotion_id", np.asarray([emotion_index], dtype=np.int64))
+            self._add_reference_args(args, component_name, reference_features, 1.0)
+        output = self._session(component_name).invoke(args)
+        return np.asarray(output, dtype=np.float32)
+
+    def _add_reference_args(
+        self,
+        args: dict[int, np.ndarray],
+        component_name: str,
+        reference_features: _ReferenceFeatures,
+        reference_condition_scale: float,
+    ) -> None:
+        self._add_optional_arg(args, component_name, "reference_style", reference_features.style)
+        self._add_optional_arg(args, component_name, "reference_prosody", reference_features.prosody)
+        self._add_optional_arg(args, component_name, "reference_mask", reference_features.mask)
+        self._add_optional_arg(
+            args,
+            component_name,
+            "reference_condition_mask",
+            np.asarray([reference_condition_scale], dtype=np.float32),
+        )
+
+    def _session(self, component_name: str) -> Any:
+        if component_name not in self._sessions:
+            self._sessions[component_name] = _LiteRTSession(self._component_path(component_name))
+        return self._sessions[component_name]
+
+    def _component_path(self, component_name: str) -> Path:
+        component = self.manifest.components[component_name]
+        artifact = component.artifacts.get("litert")
+        if artifact is None:
+            raise RuntimeError(f"Bundle component {component_name!r} has no LiteRT artifact")
+        return self.bundle_dir / artifact.path
+
+    def _latent_bucket_frames(self, latent_length: int) -> int:
+        for frames in self.target_bucket_frames:
+            if int(latent_length) <= int(frames):
+                return int(frames)
+        return int(self.target_bucket_frames[-1])
+
+    def _bucket_component_name(self, base: str, latent_frames: int) -> str:
+        frames = int(latent_frames)
+        if frames == int(self.latent_frames):
+            return base
+        candidate = f"{base}_{frames}"
+        if candidate in self.manifest.components:
+            return candidate
+        raise RuntimeError(
+            f"Bundle target bucket {frames} requires component {candidate!r}; "
+            "refusing to run the default fixed-shape component"
+        )
+
+    def _component_input_names(self, component_name: str) -> tuple[str, ...]:
+        component = self.manifest.components.get(component_name)
+        return tuple(component.inputs) if component is not None else ()
+
+    def _component_supports_input(self, component_name: str, input_name: str) -> bool:
+        return input_name in self._component_input_names(component_name)
+
+    def _optional_input_index(self, component_name: str, input_name: str) -> int | None:
+        inputs = self._component_input_names(component_name)
+        try:
+            return inputs.index(input_name)
+        except ValueError:
+            return None
+
+    def _add_optional_arg(
+        self,
+        args: dict[int, np.ndarray],
+        component_name: str,
+        input_name: str,
+        value: np.ndarray,
+    ) -> None:
+        index = self._optional_input_index(component_name, input_name)
+        if index is not None:
+            args[int(index)] = value
+
+    def _reference_features(self, *, voice_id: str, language: str, emotion: str) -> _ReferenceFeatures:
+        if not self._reference_inputs_enabled():
+            return self._empty_reference_features()
+        pack_dir = self.manifest.assets.get("voice_packs")
+        if not pack_dir:
+            return self._empty_reference_features()
+        path = self.bundle_dir / pack_dir / f"{voice_id}.npz"
+        if not path.is_file():
+            return self._empty_reference_features(path=str(path))
+        pack = self._load_voice_pack(path)
+        suffix = self._select_reference_suffix(pack, language=language, emotion=emotion)
+        if suffix is None:
+            return self._empty_reference_features(path=str(path))
+        reference_mask = _mask_value(pack.get(f"reference_mask__{suffix}"))
+        native_mask = _mask_value(pack.get(f"native_reference_mask__{suffix}"))
+        fallback_mask = _mask_value(pack.get(f"fallback_reference_mask__{suffix}"))
+        if reference_mask <= 0.0:
+            return self._empty_reference_features(path=str(path))
+        style = _array_or_zeros(pack.get(f"style_embedding__{suffix}"), self.reference_style_dim)
+        prosody = _array_or_zeros(pack.get(f"prosody_stats__{suffix}"), self.reference_prosody_dim)
+        style_mean, style_std, prosody_mean, prosody_std = self._reference_normalization_stats()
+        style = _normalize_style(style, style_mean, style_std)
+        prosody = _normalize_prosody(prosody, prosody_mean, prosody_std)
+        effective_mask = _effective_reference_mask(
+            reference_mask,
+            native_reference_mask=native_mask,
+            fallback_reference_mask=fallback_mask,
+            fallback_weight=self.reference_fallback_weight,
+        )
+        return _ReferenceFeatures(
+            style=style.reshape(1, -1).astype(np.float32),
+            prosody=prosody.reshape(1, -1).astype(np.float32),
+            mask=np.asarray([effective_mask], dtype=np.float32),
+            native_mask=float(native_mask),
+            fallback_mask=float(fallback_mask),
+            key=suffix.replace("__", "|", 1),
+            path=str(path),
+        )
+
+    def _span_context_hidden(
+        self,
+        request: Any,
+        *,
+        target_phone_ids: list[int],
+        language: str,
+        component_name: str,
+    ) -> np.ndarray | None:
+        if not self._component_supports_input(component_name, "span_context_hidden"):
+            return None
+        span_config = self._span_context_config()
+        if span_config and not bool(span_config.get("enabled", True)):
+            hidden_size = int(
+                span_config.get("hidden_size")
+                or self.export_status.get("exported_components", {})
+                .get("vector_estimator", {})
+                .get("inputs", {})
+                .get("span_context_hidden_size")
+                or 512
+            )
+            return np.zeros((1, max(1, hidden_size)), dtype=np.float32)
+        if "vector_context_encoder" not in self.manifest.components:
+            raise RuntimeError(
+                f"Bundle component {component_name!r} requires span_context_hidden, "
+                "but vector_context_encoder is missing"
+            )
+        phone_ids, segment_ids, mask = self._span_context_inputs(
+            request,
+            target_phone_ids=target_phone_ids,
+            language=language,
+        )
+        hidden = self._session("vector_context_encoder").invoke({0: phone_ids, 1: segment_ids, 2: mask})
+        return np.asarray(hidden, dtype=np.float32)
+
+    def _span_context_inputs(
+        self,
+        request: Any,
+        *,
+        target_phone_ids: list[int],
+        language: str,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        max_phones = max(1, int(self._span_context_config().get("context_max_phones") or 768))
+        before_ids = self._span_context_text_phone_ids(
+            getattr(request, "context_before", None),
+            language=language,
+        )
+        after_ids = self._span_context_text_phone_ids(
+            getattr(request, "context_after", None),
+            language=language,
+        )
+        target_ids = [int(item) for item in target_phone_ids]
+        ids, segments = _balanced_span_context_ids(
+            before_ids,
+            target_ids,
+            after_ids,
+            max_phones=max_phones,
+        )
+        phone_ids = np.zeros((1, max_phones), dtype=np.int64)
+        segment_ids = np.zeros((1, max_phones), dtype=np.int64)
+        mask = np.zeros((1, max_phones), dtype=np.bool_)
+        if ids:
+            length = min(max_phones, len(ids))
+            phone_ids[0, :length] = np.asarray(ids[:length], dtype=np.int64)
+            segment_ids[0, :length] = np.asarray(segments[:length], dtype=np.int64)
+            mask[0, :length] = True
+        return phone_ids, segment_ids, mask
+
+    def _span_context_text_phone_ids(self, text: Any, *, language: str) -> list[int]:
+        value = str(text or "").strip()
+        if not value:
+            return []
+        try:
+            result = self.phonemize(
+                value,
+                language=language,
+                boundary_before="chunk_continue",
+                boundary_after="chunk_continue",
+            )
+        except ValueError:
+            return []
+        return [
+            int(self.phone_to_id[phone])
+            for phone in result.get("phones", [])
+            if str(phone) in self.phone_to_id
+        ]
+
+    def _span_context_config(self) -> dict[str, Any]:
+        controls = dict(getattr(self.manifest, "controls", {}) or {})
+        config = controls.get("span_conditioning")
+        return dict(config) if isinstance(config, Mapping) else {}
+
+    def _reference_inputs_enabled(self) -> bool:
+        return any(
+            self._component_supports_input(component, "reference_style")
+            for component in ("duration_predictor", "vector_estimator", "vocoder")
+        )
+
+    def _empty_reference_features(self, *, path: str | None = None) -> _ReferenceFeatures:
+        return _ReferenceFeatures(
+            style=np.zeros((1, self.reference_style_dim), dtype=np.float32),
+            prosody=np.zeros((1, self.reference_prosody_dim), dtype=np.float32),
+            mask=np.zeros((1,), dtype=np.float32),
+            native_mask=0.0,
+            fallback_mask=0.0,
+            key=None,
+            path=path,
+        )
+
+    def _load_voice_pack(self, path: Path) -> dict[str, np.ndarray]:
+        cached = self._voice_pack_cache.get(path)
+        if cached is not None:
+            return cached
+        with np.load(str(path)) as payload:
+            arrays = {str(key): np.asarray(payload[key]) for key in payload.files}
+        self._voice_pack_cache[path] = arrays
+        return arrays
+
+    def _select_reference_suffix(self, pack: Mapping[str, np.ndarray], *, language: str, emotion: str) -> str | None:
+        languages = [str(language)]
+        if language == "en_gb":
+            languages.append("en_us")
+        elif language == "en":
+            languages.extend(["en_us", "en_gb"])
+        emotions = [str(emotion)]
+        if emotion != "neutral":
+            emotions.append("neutral")
+        for lang in languages:
+            for emo in emotions:
+                suffix = f"{lang}__{emo}"
+                if _mask_value(pack.get(f"reference_mask__{suffix}")) > 0.0:
+                    return suffix
+        return None
+
+    def _reference_normalization_stats(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        if self._reference_stats is not None:
+            return self._reference_stats
+        style_rows: list[np.ndarray] = []
+        prosody_rows: list[np.ndarray] = []
+        pack_dir = self.manifest.assets.get("voice_packs")
+        npz_dir = self.bundle_dir / pack_dir if pack_dir else None
+        if npz_dir is not None and npz_dir.is_dir():
+            for path in sorted(npz_dir.glob("*.npz")):
+                pack = self._load_voice_pack(path)
+                for key, value in pack.items():
+                    if not key.startswith("reference_mask__") or _mask_value(value) <= 0.0:
+                        continue
+                    suffix = key[len("reference_mask__") :]
+                    style_rows.append(_array_or_zeros(pack.get(f"style_embedding__{suffix}"), self.reference_style_dim))
+                    prosody_rows.append(_transform_prosody(_array_or_zeros(pack.get(f"prosody_stats__{suffix}"), self.reference_prosody_dim)))
+        style_mean, style_std = _standardize_rows(style_rows, self.reference_style_dim)
+        prosody_mean, prosody_std = _standardize_rows(prosody_rows, self.reference_prosody_dim)
+        self._reference_stats = (style_mean, style_std, prosody_mean, prosody_std)
+        return self._reference_stats
+
+    def _prefix_inputs(self, prefix_latents: Any, component_name: str = "vector_estimator") -> tuple[np.ndarray, np.ndarray]:
+        frames = self.prefix_max_frames
+        latents = np.zeros((1, self.latent_dim, frames), dtype=np.float32)
+        mask = np.zeros((1, frames), dtype=np.bool_)
+        if prefix_latents is None or not self._component_supports_input(component_name, "prefix_latents"):
+            return latents, mask
+        value = np.asarray(prefix_latents, dtype=np.float32)
+        if value.ndim == 2:
+            value = value[np.newaxis, :, :]
+        if value.ndim != 3 or int(value.shape[1]) != self.latent_dim:
+            return latents, mask
+        keep = min(frames, int(value.shape[-1]))
+        if keep <= 0:
+            return latents, mask
+        latents[:, :, -keep:] = value[:, :, -keep:]
+        mask[:, -keep:] = True
+        return latents, mask
+
+    def _boundary_ids(self, request: Any, phone_result: Mapping[str, Any]) -> tuple[int, int]:
+        before = phone_result.get("boundary_before") or getattr(request, "boundary_before", None)
+        after = phone_result.get("boundary_after") or getattr(request, "boundary_after", None)
+        before = _normalize_boundary_before(before)
+        after = _normalize_boundary_after(after)
+        return _boundary_before_id(before, self.g2p_config), _boundary_after_id(after, self.g2p_config)
+
+    def _lookup(self, values: Mapping[str, int], key: str, label: str) -> int:
+        try:
+            return int(values[key])
+        except KeyError as exc:
+            options = ", ".join(sorted(values))
+            raise ValueError(f"Unknown {label} {key!r}; available: {options}") from exc
+
+    def _resolve_emotion(
+        self,
+        request: Any,
+        guidance_terms: list[_EmotionGuidanceTerm],
+    ) -> tuple[str, int]:
+        if self.affect_enabled:
+            return "neutral", int(self.emotion_to_id.get("neutral", 0))
+        if guidance_terms:
+            primary = max(guidance_terms, key=lambda term: term.scale)
+            return primary.emotion, int(primary.emotion_id)
+        raw = getattr(request, "emotion", None)
+        if raw is None or not str(raw).strip():
+            raw = getattr(request, "style_id", None)
+        emotion = _normalize_emotion(raw)
+        return emotion, self._lookup(self.emotion_to_id, emotion, "emotion")
+
+    def _resolve_affect(self, request: Any) -> _AffectFeatures:
+        raw = getattr(request, "affect", None)
+        raw_emotion = str(getattr(request, "emotion", None) or "").strip()
+        if not self.affect_enabled:
+            if raw is not None and str(raw).strip():
+                raise ValueError("This bundle does not support six-axis emotion conditioning")
+            return _AffectFeatures(
+                enabled=False,
+                axes=(),
+                values=np.zeros((1, 0), dtype=np.float32),
+                condition_mask=np.zeros((1,), dtype=np.float32),
+                requested=None,
+                preset=None,
+            )
+        if getattr(request, "emotion_guidance", None):
+            raise ValueError(
+                "Legacy categorical emotion guidance is not supported by this six-axis emotion bundle"
+            )
+        if raw is not None and raw_emotion and raw_emotion.lower() not in {"default", "neutral"}:
+            raise ValueError("Pass either emotion axis values or a legacy emotion preset, not both")
+
+        preset: str | None = None
+        requested: object = raw
+        spec: object = raw
+        if spec is None or (isinstance(spec, str) and not spec.strip()):
+            if raw_emotion and raw_emotion.lower() not in {"default", "neutral"}:
+                legacy = self.affect_legacy_presets.get(raw_emotion)
+                if legacy is None:
+                    raise ValueError(
+                        f"Emotion {raw_emotion!r} has no declared preset in this bundle"
+                    )
+                spec = legacy
+                requested = raw_emotion
+            else:
+                spec = self.affect_config.get("default_preset")
+                requested = None
+
+        if isinstance(spec, str):
+            value = spec.strip()
+            if "=" not in value:
+                if value in self.affect_presets:
+                    preset = value
+                    spec = self.affect_presets[value]
+                elif value in self.affect_legacy_presets:
+                    preset = value
+                    spec = self.affect_legacy_presets[value]
+                    if isinstance(spec, str):
+                        preset = str(spec)
+                        spec = self.affect_presets.get(preset)
+                else:
+                    options = ", ".join(sorted(self.affect_presets)) or "none"
+                    raise ValueError(f"Unknown emotion preset {value!r}; available: {options}")
+            else:
+                parsed: dict[str, float] = {}
+                for part in value.split(","):
+                    name, separator, raw_value = part.strip().partition("=")
+                    if not separator or not name.strip() or not raw_value.strip():
+                        raise ValueError(
+                            f"Invalid emotion term {part!r}; expected axis=value"
+                        )
+                    axis = name.strip().lower()
+                    if axis in parsed:
+                        raise ValueError(f"Duplicate emotion axis {axis!r}")
+                    parsed[axis] = float(raw_value)
+                spec = parsed
+
+        values_by_axis: dict[str, float]
+        if isinstance(spec, Mapping):
+            values_by_axis = {str(key).strip().lower(): float(value) for key, value in spec.items()}
+        elif isinstance(spec, (list, tuple)):
+            if len(spec) != len(self.affect_axes):
+                raise ValueError(
+                    f"Emotion preset has {len(spec)} values; expected {len(self.affect_axes)}"
+                )
+            values_by_axis = {
+                axis: float(value) for axis, value in zip(self.affect_axes, spec, strict=True)
+            }
+        else:
+            raise ValueError("Emotion must be a preset, axis=value string, or axis mapping")
+        unknown = sorted(set(values_by_axis) - set(self.affect_axes))
+        if unknown:
+            raise ValueError(f"Unknown emotion axis: {', '.join(unknown)}")
+        vector = np.zeros((1, len(self.affect_axes)), dtype=np.float32)
+        for index, axis in enumerate(self.affect_axes):
+            value = float(values_by_axis.get(axis, 0.0))
+            if not math.isfinite(value) or value < 0.0 or value > 1.0:
+                raise ValueError(f"Emotion value for {axis!r} must be finite and within [0, 1]")
+            vector[0, index] = value
+        return _AffectFeatures(
+            enabled=True,
+            axes=self.affect_axes,
+            values=vector,
+            condition_mask=np.ones((1,), dtype=np.float32),
+            requested=requested,
+            preset=preset,
+        )
+
+    def _resolve_affect_guidance_scale(
+        self,
+        request: Any,
+        affect: _AffectFeatures,
+    ) -> float:
+        scale = float(getattr(request, "affect_guidance_scale", 1.0))
+        if not math.isfinite(scale) or scale < 0.0:
+            raise ValueError("emotion_scale must be finite and non-negative")
+        if not affect.enabled and scale != 1.0:
+            raise ValueError("emotion_scale requires a six-axis emotion bundle")
+        return scale
+
+    def _affect_metadata(self, affect: _AffectFeatures) -> dict[str, Any]:
+        if not affect.enabled:
+            return {"affect_enabled": False}
+        return {
+            "affect_enabled": True,
+            "affect_axes": list(affect.axes),
+            "affect_axis_order_version": self.affect_config.get("axis_order_version"),
+            "affect_requested": affect.requested,
+            "affect_preset": affect.preset,
+            "affect_preset_version": self.affect_config.get("preset_version"),
+            "affect_values": {
+                axis: float(affect.values[0, index])
+                for index, axis in enumerate(affect.axes)
+            },
+            "affect_vector": [float(value) for value in affect.values.reshape(-1)],
+            "affect_condition_mask": float(affect.condition_mask[0]),
+        }
+
+    def _parse_emotion_guidance(self, spec: str | None) -> list[_EmotionGuidanceTerm]:
+        if spec is None or not str(spec).strip():
+            return []
+        terms: list[_EmotionGuidanceTerm] = []
+        for part in str(spec).split(","):
+            part = part.strip()
+            if not part:
+                continue
+            name, _, raw_scale = part.partition(":")
+            emotion = _normalize_emotion(name)
+            scale = float(raw_scale) if raw_scale.strip() else 1.0
+            if not math.isfinite(scale):
+                raise ValueError(f"Invalid emotion guidance scale: {raw_scale!r}")
+            if scale < 0.0:
+                raise ValueError(f"Emotion guidance scale must be non-negative: {raw_scale!r}")
+            terms.append(
+                _EmotionGuidanceTerm(
+                    emotion=emotion,
+                    emotion_id=self._lookup(self.emotion_to_id, emotion, "emotion"),
+                    scale=scale,
+                )
+            )
+        return terms
+
+    def _g2p_language(self, language: str) -> str:
+        normalized = str(language).strip().lower().replace("-", "_")
+        return str(self.g2p_language_map.get(normalized, normalized))
+
+
+class _LiteRTSession:
+    def __init__(self, model_path: Path) -> None:
+        interpreter_cls = _load_interpreter_class()
+        self.interpreter = interpreter_cls(model_path=str(model_path))
+        self.interpreter.allocate_tensors()
+        self.inputs = list(self.interpreter.get_input_details())
+        self.outputs = list(self.interpreter.get_output_details())
+        self._inputs_by_arg = {_input_arg_index(detail): detail for detail in self.inputs}
+
+    def invoke(self, args: Mapping[int, np.ndarray]) -> np.ndarray:
+        missing = sorted(set(self._inputs_by_arg) - set(args))
+        if missing:
+            raise RuntimeError(f"Missing LiteRT input arg(s): {missing}")
+        for arg_index, value in args.items():
+            detail = self._inputs_by_arg[int(arg_index)]
+            array = np.asarray(value, dtype=detail["dtype"])
+            expected_shape = tuple(int(item) for item in detail["shape"])
+            if tuple(array.shape) != expected_shape:
+                raise RuntimeError(
+                    f"LiteRT input args_{arg_index} expected shape {expected_shape}, got {tuple(array.shape)}"
+                )
+            self.interpreter.set_tensor(int(detail["index"]), array)
+        self.interpreter.invoke()
+        return self.interpreter.get_tensor(int(self.outputs[0]["index"]))
+
+
+def _normalize_emotion(value: Any) -> str:
+    emotion = str(value or "neutral").strip().lower().replace("-", "_").replace(" ", "_")
+    if emotion in {"", "auto", "default", "none"}:
+        return "neutral"
+    return emotion
+
+
+def _emotion_guidance_null_weight(terms: list[_EmotionGuidanceTerm]) -> float:
+    if not terms:
+        return 0.0
+    return float(1.0 - sum(float(term.scale) for term in terms))
+
+
+def _emotion_guidance_metadata(terms: list[_EmotionGuidanceTerm]) -> list[dict[str, Any]] | None:
+    if not terms:
+        return None
+    return [
+        {"emotion": term.emotion, "emotion_id": int(term.emotion_id), "scale": float(term.scale)}
+        for term in terms
+    ]
+
+
+def _repeat_batch(value: np.ndarray, count: int) -> np.ndarray:
+    array = np.asarray(value)
+    if array.ndim == 0:
+        array = array.reshape(1)
+    if int(array.shape[0]) == int(count):
+        return np.ascontiguousarray(array)
+    if int(array.shape[0]) != 1:
+        raise ValueError(
+            f"Cannot expand input with batch {array.shape[0]} to batch {int(count)}"
+        )
+    return np.repeat(array, int(count), axis=0)
+
+
+def _array_or_zeros(value: np.ndarray | None, dim: int) -> np.ndarray:
+    if value is None:
+        return np.zeros((int(dim),), dtype=np.float32)
+    array = np.asarray(value, dtype=np.float32).reshape(-1)
+    output = np.zeros((int(dim),), dtype=np.float32)
+    count = min(int(dim), int(array.size))
+    if count > 0:
+        output[:count] = array[:count]
+    return np.nan_to_num(output, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+
+
+def _mask_value(value: np.ndarray | None) -> float:
+    if value is None:
+        return 0.0
+    array = np.asarray(value).reshape(-1)
+    if array.size == 0:
+        return 0.0
+    return 1.0 if float(array[0]) > 0.0 else 0.0
+
+
+def _effective_reference_mask(
+    reference_mask: float,
+    *,
+    native_reference_mask: float,
+    fallback_reference_mask: float,
+    fallback_weight: float,
+) -> float:
+    if reference_mask <= 0.0:
+        return 0.0
+    if native_reference_mask > 0.0:
+        return 1.0
+    if fallback_reference_mask > 0.0:
+        return max(0.0, float(fallback_weight))
+    return 1.0
+
+
+def _standardize_rows(rows: list[np.ndarray], dim: int) -> tuple[np.ndarray, np.ndarray]:
+    if not rows:
+        return np.zeros((int(dim),), dtype=np.float32), np.ones((int(dim),), dtype=np.float32)
+    matrix = np.stack([_array_or_zeros(row, dim) for row in rows]).astype(np.float32)
+    matrix = np.nan_to_num(matrix, nan=0.0, posinf=0.0, neginf=0.0)
+    mean = matrix.mean(axis=0).astype(np.float32)
+    std = matrix.std(axis=0).astype(np.float32)
+    std = np.where(std < 1e-4, 1.0, std).astype(np.float32)
+    return mean, std
+
+
+def _normalize_style(style: np.ndarray, mean: np.ndarray, std: np.ndarray) -> np.ndarray:
+    output = (np.asarray(style, dtype=np.float32) - mean.astype(np.float32)) / np.maximum(std.astype(np.float32), 1e-4)
+    output = np.nan_to_num(output, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+    norm = max(float(np.linalg.norm(output)), 1e-6)
+    return (output / norm).astype(np.float32)
+
+
+def _normalize_prosody(prosody: np.ndarray, mean: np.ndarray, std: np.ndarray) -> np.ndarray:
+    transformed = _transform_prosody(prosody)
+    output = (transformed - mean.astype(np.float32)) / np.maximum(std.astype(np.float32), 1e-4)
+    output = np.nan_to_num(output, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+    for index in PROSODY_DROP_INDICES:
+        if index < int(output.size):
+            output[index] = 0.0
+    return output.astype(np.float32)
+
+
+def _transform_prosody(prosody: np.ndarray) -> np.ndarray:
+    output = np.nan_to_num(np.asarray(prosody, dtype=np.float32).copy(), nan=0.0, posinf=0.0, neginf=0.0)
+    for index in PROSODY_LOG1P_INDICES:
+        if index < int(output.size):
+            output[index] = np.log1p(max(0.0, float(output[index])))
+    for index in PROSODY_DROP_INDICES:
+        if index < int(output.size):
+            output[index] = 0.0
+    return output.astype(np.float32)
+
+
+def _pronunciation_overrides_for_language(data: Mapping[str, Any], *, language: str) -> dict[str, Any]:
+    languages = data.get("languages", data) if isinstance(data, Mapping) else {}
+    if not isinstance(languages, Mapping):
+        return {}
+    raw = languages.get(str(language))
+    if not isinstance(raw, Mapping):
+        return {}
+    return {str(word).strip().lower(): spec for word, spec in raw.items() if str(word).strip()}
+
+
+def _words_for_pronunciation_overrides(text: str) -> set[str]:
+    return {match.group(0).lower() for match in re.finditer(r"[A-Za-z]+(?:'[A-Za-z]+)?", text or "")}
+
+
+def _terminal_g2p_word(text: str) -> str:
+    matches = list(
+        re.finditer(
+            r"[^\W\d_]+(?:['’\-][^\W\d_]+)*",
+            str(text or "").lower(),
+            flags=re.UNICODE,
+        )
+    )
+    return matches[-1].group(0) if matches else ""
+
+
+def _trim_g2p_terminal_artifacts(
+    phrase_phones: list[str],
+    isolated_word_phones: list[str],
+    *,
+    max_removed_phones: int = 2,
+) -> tuple[list[str], list[str]]:
+    """Remove only a short suffix following an exact isolated-word match."""
+    if not phrase_phones or not isolated_word_phones or max_removed_phones <= 0:
+        return phrase_phones, []
+    isolated_count = len(isolated_word_phones)
+    earliest = max(0, len(phrase_phones) - isolated_count - int(max_removed_phones))
+    latest = len(phrase_phones) - isolated_count
+    for start in range(latest, earliest - 1, -1):
+        end = start + isolated_count
+        if phrase_phones[start:end] != isolated_word_phones:
+            continue
+        removed = phrase_phones[end:]
+        if 0 < len(removed) <= int(max_removed_phones):
+            return phrase_phones[:end], removed
+    return phrase_phones, []
+
+
+def _override_phone_list(spec: Any, *, key: str) -> list[str]:
+    if isinstance(spec, Mapping):
+        value = spec.get(key)
+    elif key == "phones":
+        value = spec
+    else:
+        value = None
+    if isinstance(value, str):
+        return [item for item in value.split() if item]
+    if isinstance(value, list | tuple):
+        return [str(item) for item in value if str(item)]
+    return []
+
+
+def _replace_phone_subsequence(phones: list[str], source: list[str], target: list[str]) -> tuple[list[str], int]:
+    if not phones or not source:
+        return phones, 0
+    output: list[str] = []
+    count = 0
+    index = 0
+    source_len = len(source)
+    while index < len(phones):
+        if phones[index : index + source_len] == source:
+            output.extend(target)
+            index += source_len
+            count += 1
+        else:
+            output.append(phones[index])
+            index += 1
+    return output, count
+
+
+def _balanced_span_context_ids(
+    before_ids: list[int],
+    target_ids: list[int],
+    after_ids: list[int],
+    *,
+    max_phones: int,
+) -> tuple[list[int], list[int]]:
+    max_phones = max(1, int(max_phones))
+    target = [int(item) for item in target_ids[:max_phones]]
+    if len(target) >= max_phones:
+        return target, [1] * len(target)
+    remaining = max_phones - len(target)
+    before_keep = min(len(before_ids), (remaining + 1) // 2)
+    after_keep = min(len(after_ids), remaining - before_keep)
+    spare = remaining - before_keep - after_keep
+    if spare > 0 and before_keep < len(before_ids):
+        extra = min(spare, len(before_ids) - before_keep)
+        before_keep += extra
+        spare -= extra
+    if spare > 0 and after_keep < len(after_ids):
+        after_keep += min(spare, len(after_ids) - after_keep)
+    before = [int(item) for item in before_ids[-before_keep:]] if before_keep else []
+    after = [int(item) for item in after_ids[:after_keep]] if after_keep else []
+    ids = before + target + after
+    segments = ([0] * len(before)) + ([1] * len(target)) + ([2] * len(after))
+    return ids, segments
+
+
+def _target_bucket_frames(controls: Mapping[str, Any], default_latent_frames: int) -> tuple[int, ...]:
+    target_buckets = controls.get("target_buckets") if isinstance(controls, Mapping) else None
+    frames: list[int] = []
+    if isinstance(target_buckets, Mapping):
+        raw_buckets = target_buckets.get("buckets")
+        if isinstance(raw_buckets, list):
+            for item in raw_buckets:
+                if isinstance(item, Mapping):
+                    value = item.get("latent_frames")
+                else:
+                    value = item
+                try:
+                    parsed = int(value)
+                except (TypeError, ValueError):
+                    continue
+                if parsed > 0 and parsed not in frames:
+                    frames.append(parsed)
+    default_frames = int(default_latent_frames)
+    if default_frames > 0 and default_frames not in frames:
+        frames.append(default_frames)
+    return tuple(sorted(frames)) or (max(1, default_frames),)
+
+
+def _load_interpreter_class() -> Any:
+    try:
+        from ai_edge_litert.interpreter import Interpreter  # type: ignore[import]
+        return Interpreter
+    except Exception:
+        pass
+    try:
+        from tflite_runtime.interpreter import Interpreter  # type: ignore[import]
+        return Interpreter
+    except Exception:
+        pass
+    try:
+        from tensorflow.lite import Interpreter  # type: ignore[import]
+        return Interpreter
+    except Exception as exc:
+        raise RuntimeError(
+            "LiteRT graph execution requires ai-edge-litert, tflite-runtime, or TensorFlow. "
+            "Run Scylla's Band with the deployment Python environment that contains a LiteRT interpreter."
+        ) from exc
+
+
+def _input_arg_index(detail: Mapping[str, Any]) -> int:
+    name = str(detail.get("name", ""))
+    match = re.search(r"args_(\d+)", name)
+    if match:
+        return int(match.group(1))
+    if len(name) == 0 and "index" in detail:
+        return int(detail["index"])
+    raise RuntimeError(f"Cannot infer LiteRT argument index from tensor name {name!r}")
+
+
+def _load_json(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def _load_optional_json(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    data = _load_json(path)
+    return dict(data) if isinstance(data, dict) else {}
+
+
+def _load_token_to_id(path: Path) -> dict[str, int]:
+    data = _load_json(path)
+    return {str(key): int(value) for key, value in data["token_to_id"].items()}
+
+
+def _load_index(path: Path) -> dict[str, int]:
+    rows = _load_json(path)
+    return {str(row["id"]): int(row["index"]) for row in rows}
+
+
+def _frames_to_durations(
+    values: list[float],
+    *,
+    phones: list[str],
+    scale: float,
+    min_phone_frames: int,
+) -> list[int]:
+    durations: list[int] = []
+    for value, phone in zip(values, phones):
+        frame_count = int(round(max(0.0, float(value)) * float(scale)))
+        if phone and min_phone_frames > 0:
+            frame_count = max(int(min_phone_frames), frame_count)
+        durations.append(frame_count)
+    return durations
+
+
+_SENTENCE_PUNCTUATION_PHONES = frozenset({"<end_stmt>", "<end_question>", "<end_exclaim>", "<ellipsis>", "<ctx_sentence_end>"})
+_CLAUSE_PUNCTUATION_PHONES = frozenset({"<pause_comma>", "<pause_semicolon>", "<pause_colon>", "<pause_dash>", "<ctx_continuation>"})
+
+
+def _pause_ms_to_latent_frames(value: object, *, sample_rate: int, latent_hop_length: int) -> int:
+    try:
+        pause_ms = max(0.0, float(value or 0.0))
+    except Exception:
+        pause_ms = 0.0
+    if pause_ms <= 0.0 or sample_rate <= 0 or latent_hop_length <= 0:
+        return 0
+    return max(1, int(round(pause_ms * float(sample_rate) / (1000.0 * float(latent_hop_length)))))
+
+
+def _apply_punctuation_duration_floors(
+    durations: list[int],
+    *,
+    phones: list[str],
+    sentence_frames: int,
+    clause_frames: int,
+) -> list[int]:
+    if sentence_frames <= 0 and clause_frames <= 0:
+        return durations
+    out = list(durations)
+    for index, phone in enumerate(phones):
+        if index >= len(out):
+            break
+        if sentence_frames > 0 and phone in _SENTENCE_PUNCTUATION_PHONES:
+            target_index = index + 1 if index + 1 < len(phones) and phones[index + 1] in _SILENCE_PHONES else index
+            # The outer boundary pause belongs to the host assembler. Stretching
+            # the final learned silence can turn it into breath or re-articulation.
+            if target_index < len(out) and target_index + 1 < len(phones):
+                out[target_index] = max(out[target_index], int(sentence_frames))
+        elif clause_frames > 0 and phone in _CLAUSE_PUNCTUATION_PHONES:
+            target_index = index + 1 if index + 1 < len(phones) and phones[index + 1] in _SILENCE_PHONES else index
+            if target_index < len(out) and target_index + 1 < len(phones):
+                out[target_index] = max(out[target_index], int(clause_frames))
+    return out
+
+
+def _expand_phone_lists_to_length(phone_ids: list[int], durations: list[int], target_length: int) -> list[int]:
+    if target_length <= 0:
+        return []
+    if not phone_ids:
+        return [0 for _ in range(target_length)]
+    adjusted = _adjust_durations_to_length(durations, target_length)
+    expanded: list[int] = []
+    for phone_id, duration in zip(phone_ids, adjusted):
+        if duration <= 0:
+            continue
+        expanded.extend([int(phone_id)] * int(duration))
+        if len(expanded) >= target_length:
+            return expanded[:target_length]
+    fallback = int(phone_ids[-1])
+    if len(expanded) < target_length:
+        expanded.extend([fallback] * (target_length - len(expanded)))
+    return expanded[:target_length]
+
+
+def _adjust_durations_to_length(durations: list[int], target_length: int) -> list[int]:
+    if target_length <= 0:
+        return [0 for _ in durations]
+    if not durations:
+        return []
+    total = sum(max(0, int(item)) for item in durations)
+    if total <= 0:
+        adjusted = [0 for _ in durations]
+        adjusted[0] = target_length
+        return adjusted
+    if total == target_length:
+        return [max(0, int(item)) for item in durations]
+    raw = [max(0.0, float(item)) * float(target_length) / float(total) for item in durations]
+    floors = [int(math.floor(item)) for item in raw]
+    positive = [idx for idx, item in enumerate(durations) if item > 0]
+    if target_length >= len(positive):
+        for idx in positive:
+            floors[idx] = max(1, floors[idx])
+    diff = target_length - sum(floors)
+    if diff > 0:
+        order = sorted(range(len(raw)), key=lambda idx: raw[idx] - math.floor(raw[idx]), reverse=True)
+        for idx in order:
+            if diff <= 0:
+                break
+            if durations[idx] <= 0:
+                continue
+            floors[idx] += 1
+            diff -= 1
+    elif diff < 0:
+        removable = -diff
+        order = sorted(range(len(floors)), key=lambda idx: floors[idx], reverse=True)
+        for idx in order:
+            if removable <= 0:
+                break
+            minimum = 1 if durations[idx] > 0 and target_length >= len(positive) else 0
+            take = min(removable, max(0, floors[idx] - minimum))
+            floors[idx] -= take
+            removable -= take
+    return floors
+
+
+def _g2p_segment_config_for_fixed_text(
+    config: Mapping[str, Any] | None,
+    *,
+    tokenizer: Mapping[str, Any] | None,
+    fixed_text_tokens: int,
+) -> dict[str, Any]:
+    config_map = dict(config or {})
+    configured_max = _positive_int_config(
+        config_map.get("chunk_max_chars", config_map.get("phrase_chunk_max_chars")),
+        DEFAULT_G2P_PHRASE_MAX_CHARS,
+    )
+    try:
+        char_repeats = max(1, int(dict(tokenizer or {}).get("char_repeats", 1)))
+    except Exception:
+        char_repeats = 1
+    fixed_tokens = max(1, int(fixed_text_tokens or 0))
+    safe_chars = max(1, (fixed_tokens - 2) // char_repeats)
+    config_map["chunk_max_chars"] = min(configured_max, safe_chars)
+    config_map["fixed_text_tokens"] = fixed_tokens
+    config_map["tokenizer_char_repeats"] = char_repeats
+    return config_map
+
+
+def _g2p_text_segments(text: str, *, config: Mapping[str, Any] | None = None) -> list[str]:
+    config_map = dict(config or {})
+    input_granularity = str(config_map.get("input_granularity") or "phrase").strip().lower()
+    if input_granularity == "phrase":
+        max_chars = _positive_int_config(
+            config_map.get("chunk_max_chars", config_map.get("phrase_chunk_max_chars")),
+            DEFAULT_G2P_PHRASE_MAX_CHARS,
+        )
+        drop_bracketed_notes = _bool_config(config_map.get("drop_bracketed_notes"), True)
+        segments = g2p_phrase_segments(
+            text,
+            max_chars=max_chars,
+            drop_bracketed_notes=drop_bracketed_notes,
+        )
+        return segments or [str(text or "").strip()]
+
+    segments = [segment.strip() for segment in re.split(r"[.!?,;:]+", text) if segment.strip()]
+    return segments or [str(text or "").strip()]
+
+
+def _positive_int_config(value: Any, default: int) -> int:
+    try:
+        parsed = int(value)
+    except Exception:
+        return int(default)
+    return parsed if parsed > 0 else int(default)
+
+
+def _bool_config(value: Any, default: bool) -> bool:
+    if value is None:
+        return bool(default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return bool(default)
+
+
+def _softmax(values: np.ndarray, *, axis: int) -> np.ndarray:
+    shifted = values - np.max(values, axis=axis, keepdims=True)
+    exp = np.exp(shifted)
+    return exp / np.sum(exp, axis=axis, keepdims=True)
+
+
+def _skip_g2p_output_symbol(symbol: str | None) -> bool:
+    if not symbol or symbol.startswith("<") or symbol == "_":
+        return True
+    if not symbol.strip():
+        return True
+    return all(unicodedata.category(char)[0] in {"P", "Z"} for char in symbol)
+
+
+def _prob_product(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    total = 0.0
+    for value in values:
+        total += math.log(max(float(value), 1e-12))
+    return float(math.exp(total))
+
+
+_SILENCE_PHONES = frozenset({"<sil>", "sil", "sp", "<sp>"})
+
+
+def _boundary_phone_for_segment(segment: str, phone_to_id: Mapping[str, int]) -> str | None:
+    token = punctuation_phone_token(segment)
+    if token and token in phone_to_id:
+        return token
+    return None
+
+
+_CONTEXT_BOUNDARY_PHONE = {
+    "paragraph_start": "<ctx_sentence_start>",
+    "sentence_start": "<ctx_sentence_start>",
+    "clause_continue": "<ctx_continuation>",
+    "chunk_continue": "<ctx_chunk_continue>",
+    "sentence_end": "<ctx_sentence_end>",
+    "paragraph_end": "<ctx_sentence_end>",
+}
+
+_DEFAULT_BOUNDARY_BEFORE_VALUES = ["sentence_start", "paragraph_start", "clause_continue", "chunk_continue"]
+_DEFAULT_BOUNDARY_AFTER_VALUES = ["sentence_end", "paragraph_end", "clause_continue", "chunk_continue"]
+
+
+def _boundary_context_config(config: Mapping[str, Any] | None) -> dict[str, Any]:
+    if isinstance(config, Mapping):
+        chunk_context = config.get("chunk_context")
+        if isinstance(chunk_context, Mapping):
+            return dict(chunk_context)
+    return {
+        "schema_version": 2,
+        "conditioning": "boundary_embeddings",
+        "boundary_before_values": list(_DEFAULT_BOUNDARY_BEFORE_VALUES),
+        "boundary_after_values": list(_DEFAULT_BOUNDARY_AFTER_VALUES),
+        "default_boundary_before": "sentence_start",
+        "default_boundary_after": "sentence_end",
+        "emit_context_phone_tokens": False,
+    }
+
+
+def _boundary_before_id(boundary: str, config: Mapping[str, Any] | None) -> int:
+    chunk_context = _boundary_context_config(config)
+    values = [str(item) for item in chunk_context.get("boundary_before_values", _DEFAULT_BOUNDARY_BEFORE_VALUES)]
+    if boundary not in values:
+        boundary = str(chunk_context.get("default_boundary_before") or _DEFAULT_BOUNDARY_BEFORE_VALUES[0])
+    return values.index(boundary) if boundary in values else 0
+
+
+def _boundary_after_id(boundary: str, config: Mapping[str, Any] | None) -> int:
+    chunk_context = _boundary_context_config(config)
+    values = [str(item) for item in chunk_context.get("boundary_after_values", _DEFAULT_BOUNDARY_AFTER_VALUES)]
+    if boundary not in values:
+        boundary = str(chunk_context.get("default_boundary_after") or _DEFAULT_BOUNDARY_AFTER_VALUES[0])
+    return values.index(boundary) if boundary in values else 0
+
+
+def _normalize_boundary_before(value: str | None) -> str:
+    normalized = str(value or "").strip().lower().replace("-", "_")
+    if normalized in {"", "auto", "none", "start", "utterance_start"}:
+        return "paragraph_start"
+    if normalized in {"paragraph", "paragraph_start", "document_start", "doc_start"}:
+        return "paragraph_start"
+    if normalized in {"sentence", "sentence_start"}:
+        return "sentence_start"
+    if normalized in {"clause", "clause_continue", "continuation", "continue"}:
+        return "clause_continue"
+    if normalized in {"chunk", "chunk_continue", "artificial_continue", "budget_continue"}:
+        return "chunk_continue"
+    return normalized
+
+
+def _normalize_boundary_after(value: str | None) -> str:
+    normalized = str(value or "").strip().lower().replace("-", "_")
+    if normalized in {"", "auto", "none", "end", "utterance_end"}:
+        return "sentence_end"
+    if normalized in {"paragraph", "paragraph_end", "document_end", "doc_end"}:
+        return "paragraph_end"
+    if normalized in {"sentence", "sentence_end"}:
+        return "sentence_end"
+    if normalized in {"clause", "clause_continue", "continuation", "continue"}:
+        return "clause_continue"
+    if normalized in {"chunk", "chunk_continue", "artificial_continue", "budget_continue"}:
+        return "chunk_continue"
+    return normalized
+
+
+def _insert_leading_silence(boundary_before: str) -> bool:
+    return boundary_before in {"paragraph_start", "sentence_start"}
+
+
+def _emit_context_phone_tokens(config: Mapping[str, Any] | None) -> bool:
+    chunk_context = dict(_boundary_context_config(config))
+    return bool(chunk_context.get("emit_context_phone_tokens", False))
+
+
+def _context_phone_for_boundary(
+    boundary: str,
+    phone_to_id: Mapping[str, int],
+    config: Mapping[str, Any] | None,
+) -> str | None:
+    if not _emit_context_phone_tokens(config):
+        return None
+    token = _CONTEXT_BOUNDARY_PHONE.get(boundary)
+    if token and token in phone_to_id:
+        return token
+    return None
+
+
+def _continuation_phone(
+    boundary: str,
+    phone_to_id: Mapping[str, int],
+    config: Mapping[str, Any] | None,
+    *,
+    fallback_pause: str | None,
+) -> str | None:
+    context_phone = _context_phone_for_boundary(boundary, phone_to_id, config)
+    if context_phone is not None:
+        return context_phone
+    if "<pause_comma>" in phone_to_id:
+        return "<pause_comma>"
+    return fallback_pause
+
+
+def _trailing_boundary_phone(
+    boundary: str,
+    phone_to_id: Mapping[str, int],
+    config: Mapping[str, Any] | None,
+) -> str | None:
+    if boundary == "clause_continue":
+        return _continuation_phone(boundary, phone_to_id, config, fallback_pause=None)
+    if boundary == "chunk_continue":
+        return None
+    return _context_phone_for_boundary(boundary, phone_to_id, config)
+
+
+def _ends_in_boundary_phone(phones: list[str]) -> bool:
+    for phone in reversed(phones):
+        if phone in _SILENCE_PHONES:
+            continue
+        return phone in BOUNDARY_PHONE_TOKENS
+    return False

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.ScyllasBandSample" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/scyllasband_primary</item>
+        <item name="colorPrimaryVariant">@color/scyllasband_primary_dark</item>
+        <item name="colorSecondary">@color/scyllasband_secondary</item>
+        <item name="android:fontFamily">sans</item>
+    </style>
+</resources>

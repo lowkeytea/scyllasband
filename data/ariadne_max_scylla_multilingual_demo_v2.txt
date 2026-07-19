@@ -1,0 +1,40 @@
+[ariadne:en_us:calm=0.5,joy=0.75] I brought pastries, [es] pequenos pastelitos con secretos, [en_us] and nobody should panic yet.
+[max:en_us:joy=0.5,sarcasm=0.5] The pastries are sugar comets, [it] piccoli astri condannati, [en_us] and our mouths are brave telescopes.
+[scylla:en_us:calm=0.25,questioning=0.75] I thought this was coffee, [es] no una ceremonia peligrosa, [en_us] so why is Max smiling like that?
+[ink:en_gb:calm=0.25,sarcasm=0.5] So this is breakfast, [it] una colazione perfettamente normale, [en_gb] and the cupcake merely has an agenda.
+[ariadne:en_us:joy=1] Oh my god, [:es:joy=0.75] mi querido caos con piernas, [:en_us:calm=0.25,joy=0.5,questioning=0.75] are you really going to do that?
+[max:en_us:calm=0.25,sarcasm=0.75] Define that, [it] perche una scintilla piccola e quasi educata, [en_us] if nobody screams before breakfast.
+[scylla:en_us:anger=0.5,questioning=0.25] Nobody should scream before breakfast, [es] ni durante el cafe, [en_us] and especially not because of a cupcake.
+[ariadne:en_us:calm=0.5,joy=0.75] Is okay, darling, [it] il cupcake ha un cuore gentile, [en_us] probably with only one tiny fuse.
+[rex:en_us:calm=0.5,questioning=0.75] Only one fuse, [es] como si eso fuera tranquilizador, [en_us] and have we confirmed what it actually does?
+[scylla:en_us:anger=0.75,questioning=0.25] One tiny fuse is still a fuse, [es] Ariadne, por favor, [en_us] do not wink at the dessert.
+[max:en_us:joy=0.5,sarcasm=0.75] Dessert is temporary thunder, [it] dolce lampo nella gabbia dei denti, [en_us] and I respect its courage.
+[ariadne:en_us:calm=0.25,joy=0.75] See, [es] el lo entiende perfectamente, [en_us] which is either lovely or a legal problem.
+[scylla:en_us:anger=0.5,sarcasm=0.5] Great, [it] allora siamo tutti perduti, [en_us] but at least the paperwork will smell like frosting.
+[rex:en_us:calm=0.5,sarcasm=0.5] I will start the report, [it] modulo numero uno, disastro al dessert, [en_us] and leave room for witness statements.
+[max:en_us:calm=0.25,sarcasm=0.75] Paperwork is just flat trees begging for purpose, [es] pobres arboles, [en_us] but frosting gives them dignity.
+[ariadne:en_us:joy=0.5,sarcasm=0.75] I love how normal this is, [:it:calm=0.5,joy=0.25,sarcasm=0.5] proprio normale, [:en_us:joy=0.75,sarcasm=0.5] like a picnic inside a bell.
+[scylla:en_us:calm=0.25,questioning=0.75] Why a bell, [es] por que una campana, [en_us] and why did that make sense for one second?
+[max:en_us:calm=0.25,sarcasm=0.75] Because the universe rings when bitten, [it] e noi siamo denti con agenda, [en_us] extremely busy teeth.
+[scylla:en_us:anger=0.75] I am not a tooth, [es] no soy un diente, [en_us] I am a person asking for fewer metaphors.
+[ink:en_gb:anger=0.25,sarcasm=0.75] Quite right, [es] somos personas con cafe, no dientes, [en_gb] although I fear the distinction is lost on Max.
+[ariadne:en_us:calm=0.5,joy=0.5] She is right, Max, [it] meno metafore di carne, [en_us] more polite breakfast words.
+[max:en_us:calm=0.25,sarcasm=0.75] Fine, I will be gentle, [es] suave como una nube culpable, [en_us] and barely mention mortality.
+[scylla:en_us:anger=0.5] Barely is not zero, [it] e zero sarebbe molto bello, [en_us] so please aim for zero.
+[ariadne:en_us:calm=0.25,joy=1] I can help, [es] hacemos un brindis por el cafe, [en_us] and then we all pretend the cupcake is furniture.
+[max:en_us:joy=0.5,sarcasm=0.75] Furniture remembers forests, [it] ma questo cupcake ricorda il forno, [en_us] and the oven was a dragon with manners.
+[scylla:en_us:anger=0.25,questioning=0.5] That did not help, [es] eso empeoro todo, [en_us] but somehow I am still hungry.
+[rex:en_us:calm=0.5,joy=0.25,questioning=0.5] Hungry enough to test it, [it] abbastanza coraggiosa per il cupcake blu, [en_us] or should I update the report first?
+[ariadne:en_us:calm=0.5,joy=0.75] Then take the blue one, [:es:joy=0.75] el azul es para valientes, [:en_us:calm=0.5,joy=0.5] and I checked it twice for sparks.
+[scylla:en_us:calm=0.25,questioning=0.75] You checked it twice, [it] questo non mi consola, [en_us] but I appreciate the effort.
+[max:en_us:joy=0.5,sarcasm=0.75] Courage enters through the mouth, [es] con azucar y miedo, [en_us] and exits as excellent decisions.
+[scylla:en_us:anger=0.5] That is not biology, [es] ni filosofia, [en_us] and I am writing that down.
+[ariadne:en_us:joy=0.75] Put a little heart next to it, [it] un cuoricino severo, [en_us] because stern notes need decoration.
+[scylla:en_us:anger=0.25,sarcasm=0.5] Fine, a stern heart, [es] un corazon con reglas, [en_us] for the most alarming brunch I have ever survived.
+[ink:en_gb:calm=0.25,sarcasm=0.75] A stern heart is sensible branding, [it] elegante ma minaccioso, [en_gb] which suits this table perfectly.
+[max:en_us:joy=0.75,sarcasm=0.5] Survived is such a glowing word, [it] sopravvissuti e zuccherati, [en_us] we are legends with crumbs.
+[ariadne:en_us:calm=0.5,joy=0.75] Legends with crumbs is very good, [es] leyendas con migas, [en_us] and nobody exploded.
+[scylla:en_us:calm=0.5,joy=0.25,questioning=0.25] Nobody exploded, [it] per ora, [en_us] which is the nicest thing anyone has said today.
+[rex:en_us:calm=0.5,sarcasm=0.5] I am recording that as a success, [es] exito provisional, [en_us] with several very serious footnotes.
+[max:en_us:sadness=0.25,sarcasm=0.75] For now is where hope keeps its knives, [es] pero son cuchillos pequenos, [en_us] adorable, really.
+[scylla:en_us:anger=0.75] And we are done, [es] terminamos, [en_us] before hope gets utensils.

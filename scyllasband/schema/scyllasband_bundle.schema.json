@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scyllasband.dev/schema/scyllasband_bundle.schema.json",
+  "title": "Scylla's Band Bundle Manifest",
+  "type": "object",
+  "required": ["contract_version", "model_name", "audio", "languages", "components"],
+  "properties": {
+    "contract_version": { "const": "1.0.0" },
+    "model_name": { "type": "string" },
+    "architecture": { "type": "string" },
+    "audio": {
+      "type": "object",
+      "required": ["sample_rate", "hop_length", "n_mels", "latent_dim", "latent_hop_length"],
+      "properties": {
+        "sample_rate": { "type": "integer", "minimum": 8000 },
+        "hop_length": { "type": "integer", "minimum": 1 },
+        "n_mels": { "type": "integer", "minimum": 1 },
+        "latent_dim": { "type": "integer", "minimum": 1 },
+        "latent_hop_length": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "languages": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "default_language": { "type": "string" },
+    "preferred_backends": {
+      "type": "array",
+      "items": { "enum": ["onnx", "litert", "coreml"] },
+      "minItems": 1
+    },
+    "voices": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "language": { "type": "string" },
+          "languages": {
+            "type": "array",
+            "items": { "type": "string" },
+            "minItems": 1
+          },
+          "default_language": { "type": "string" },
+          "embedding_path": { "type": ["string", "null"] },
+          "styles": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "components": {
+      "type": "object",
+      "required": ["g2p", "duration_predictor", "vector_estimator", "vocoder"],
+      "additionalProperties": {
+        "type": "object",
+        "anyOf": [
+          { "required": ["path"] },
+          { "required": ["artifacts"] }
+        ],
+        "properties": {
+          "path": { "type": "string" },
+          "format": { "type": "string" },
+          "artifacts": {
+            "type": "object",
+            "minProperties": 1,
+            "additionalProperties": {
+              "type": "object",
+              "required": ["path"],
+              "properties": {
+                "path": { "type": "string" },
+                "format": { "type": "string" }
+              }
+            }
+          },
+          "inputs": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "outputs": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "required": { "type": "boolean" }
+        }
+      }
+    },
+    "controls": { "type": "object" },
+    "assets": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    }
+  }
+}

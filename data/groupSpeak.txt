@@ -1,0 +1,16 @@
+[ariadne:en] My favorite food is fresh pasta with lemon and herbs. It tastes bright, but still feels like comfort food.
+[tuesday:es] Eso suena buenisimo. Para mi, la comida perfecta es una tortilla espanola con cebolla dulce y un poco de pan crujiente.
+[orpheus:it] Vi capisco. Io sceglierei un risotto ai funghi, lento e cremoso, perche ogni boccone sembra una piccola pausa.
+[stone:en] I respect that, but smoked brisket wins for me. If the bark is right, I do not need anything else on the plate.
+[ariadne:es] El brisket estaria muy bien con arroz y frijoles. Tambien me encanta el gazpacho cuando hace calor.
+[tuesday:it] Si, una zuppa fredda ha senso. Pero se parliamo di dolci, io voto per il tiramisu con molto caffe.
+[orpheus:en] Tiramisu is a strong answer. I would put gelato beside it, especially pistachio or dark chocolate.
+[stone:es] El chocolate oscuro va con casi todo. A mi tambien me gusta la paella, sobre todo cuando el arroz queda tostado abajo.
+[ariadne:it] Quella parte croccante e la migliore. Mi piace anche una pizza semplice, con pomodoro, basilico, e mozzarella.
+[tuesday:en] Simple pizza is hard to beat. I would add roasted peppers, then call that dinner without changing anything else.
+[orpheus:es] Me gusta esa idea. Los pimientos asados tienen dulzura, y combinan con queso, pasta, arroz, o pan.
+[stone:it] Allora siamo d'accordo: cibo semplice, fatto bene, con abbastanza tempo per parlare mentre si mangia.
+[ariadne:en] That was fun! We should do this again.
+[tuesday:en] Only if I get some coffee with it.
+[orpheus:en] Haha, not bad for a first global meet!
+[stone:en] I totally agree.

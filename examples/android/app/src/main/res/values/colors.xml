@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="scyllasband_primary">#315F91</color>
+    <color name="scyllasband_primary_dark">#183C62</color>
+    <color name="scyllasband_secondary">#6B5B95</color>
+    <color name="scyllasband_outline">#72777F</color>
+</resources>

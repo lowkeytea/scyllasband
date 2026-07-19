@@ -1,0 +1,44 @@
+[ariadne:en_us:calm=0.5,joy=0.75] I brought pastries, tiny cards, and one very innocent secret plan.
+[max:en_us:anger=0.25,sarcasm=0.5] The pastries are temporary sugar comets, and we are brave mouths orbiting their doom.
+[scylla:en_us:calm=0.25,questioning=0.75] I thought this was coffee, not a lecture from the dessert apocalypse.
+[ariadne:es:calm=0.5,joy=0.75] Pero mira, Sarah, el cafe esta caliente y los dulces quieren ser nuestros amigos.
+[ink:en_gb:calm=0.25,sarcasm=0.5] Right, so the pastries are doomed, and somehow I am the dramatic one.
+[ariadne:en_us:joy=1,sarcasm=0.25] Also, maybe one cupcake is hiding a little message, but this is normal party behavior.
+[scylla:en_us:calm=0.25,questioning=0.75] A cupcake with secrets is not normal, Cassandra.
+[rex:en_us:calm=0.5,questioning=0.75] Can we establish whether the cupcake is actually dangerous before we toast it?
+[max:it:joy=1,anger=0.25] No, e magnifico, perche lo zucchero canta mentre il tempo mastica le nostre ossa.
+[max:en_us:joy=0.5,sarcasm=0.5] See, perfectly casual.
+[scylla:en_us:anger=0.5,questioning=0.5] That was not casual in any known dimension.
+[ink:en_gb:anger=0.25,sarcasm=0.75] Brilliant. Five people, one suspicious cupcake, and not a single sensible adult.
+[ariadne:en_us:calm=0.5,joy=0.75] Is okay, darling, Max is just doing breakfast philosophy with extra thunder.
+[ariadne:it:calm=0.5,joy=0.75] E poi, se ridiamo insieme, anche il caos diventa una piccola festa.
+[ariadne:en_us:joy=0.5,sarcasm=0.75] And if chaos steals your chair, you say thank you and draw a mustache on it.
+[max:en_us:joy=1,anger=0.25] Exactly! Furniture is just wood pretending it survived the forest.
+[scylla:en_us:anger=0.75,questioning=0.25] Please stop making the table sound haunted.
+[rex:en_us:anger=0.5,sarcasm=0.25] The chair did nothing wrong. I would like that entered into the record.
+[max:es:joy=0.75,sarcasm=0.5] La mesa no esta embrujada, solo recuerda los arboles y grita en silencio.
+[max:en_us:calm=0.25,sarcasm=0.75] That is comfort, really.
+[scylla:es:anger=0.5,questioning=0.5] No se como responder a eso, pero ahora quiero sentarme en el suelo.
+[scylla:en_us:anger=0.5,sarcasm=0.75] Congratulations, Max, you have emotionally defeated a chair.
+[ink:en_gb:calm=0.25,sarcasm=0.5] I was promised tea. This is metaphysics with crumbs.
+[ariadne:en_us:calm=0.25,joy=1] This is why I like you both; every snack becomes a tiny adventure.
+[ariadne:es:joy=1] Venga, brindemos por cafe, por amigos, y por planes que casi no explotan.
+[ariadne:en_us:calm=0.5,joy=0.5,questioning=0.5] Almost not exploding is very responsible, yes?
+[scylla:en_us:anger=0.25,questioning=1] Why did you say almost.
+[rex:en_us:calm=0.5,sarcasm=0.25] I can work with indoor prophecy, as long as nobody summons anything.
+[max:en_us:calm=0.25,sarcasm=0.75] Because certainty is a cage, and cages are rude to lightning.
+[max:it:joy=0.75,anger=0.25] Dai, un piccolo lampo nel corridoio non ha mai rovinato una colazione.
+[max:en_us:joy=0.5,questioning=0.25] Probably.
+[scylla:it:anger=0.5,questioning=0.75] Probabilmente non e una garanzia, Max.
+[scylla:en_us:anger=0.75] I need everyone to use indoor levels of prophecy.
+[ariadne:en_us:calm=0.75,joy=0.5] Indoor prophecy, yes, very cozy, like a blanket with suspicious pockets.
+[max:en_us:sadness=0.5,sarcasm=0.5] The blanket knows we are meat with appointments.
+[scylla:en_us:anger=0.75] No.
+[rex:en_us:calm=0.5,sarcasm=0.5] Strong objection. Concise, persuasive, and completely ignored.
+[ariadne:en_us:joy=1] I vote we change subject before Sarah hides the blanket in a well.
+[ariadne:it:calm=0.5,joy=0.5] Parliamo di musica, di viaggi, e di biscotti che non hanno segreti.
+[ariadne:en_us:calm=0.75,joy=0.5] There, safe topic, very charming.
+[scylla:en_us:calm=0.5,joy=0.25,questioning=0.25] Thank you, that was almost normal.
+[ink:en_gb:calm=0.25,sarcasm=0.75] Almost normal is apparently the highest standard available here.
+[max:en_us:joy=0.75,sarcasm=0.5] Normal is a tiny hat for a giant moon.
+[scylla:en_us:anger=0.75] And we are done.
