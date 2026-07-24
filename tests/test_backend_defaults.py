@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 import inspect
+from pathlib import Path
 from types import SimpleNamespace
 import unittest
 
-from scyllasband.cli import _default_bundle_path, _parse_cli_args, build_parser
+from scyllasband.cli import (
+    _default_bundle_path,
+    _normalize_requested_bundle_subdirs,
+    _parse_cli_args,
+    build_parser,
+)
 from scyllasband.native import SCYLLASBAND_BACKEND_ONNX, NativeScyllasBandRuntime, _backend_id
 from scyllasband.runtime import ScyllasBandRuntime, _validate_backends
 
@@ -17,6 +23,34 @@ class BackendDefaultsTest(unittest.TestCase):
         args = self.parse_speak("--voice", "scylla", "Hello.")
         self.assertEqual(args.backend, "onnx")
         self.assertEqual(_default_bundle_path(args.backend).name, "onnx")
+
+    def test_download_accepts_int8_and_preserves_existing_bundle_groups(self) -> None:
+        args = _parse_cli_args(
+            build_parser(),
+            ["download", "--runtime-bundles", "onnx-int8"],
+        )
+        self.assertEqual(args.runtime_bundles, "onnx-int8")
+        self.assertEqual(
+            _normalize_requested_bundle_subdirs(("both",)),
+            ("onnx", "litert"),
+        )
+        self.assertEqual(
+            _normalize_requested_bundle_subdirs(("all",)),
+            ("onnx", "onnx-int8", "litert"),
+        )
+
+    def test_android_sample_defaults_to_int8_assets(self) -> None:
+        repository_root = Path(__file__).resolve().parents[1]
+        gradle = (repository_root / "examples/android/app/build.gradle.kts").read_text(
+            encoding="utf-8"
+        )
+        installer = (
+            repository_root
+            / "examples/android/scyllasband-android/src/main/java/org/scyllasband/android/ScyllasBandAssetInstaller.kt"
+        ).read_text(encoding="utf-8")
+        self.assertIn("scyllasband/models/onnx-int8", gradle)
+        self.assertIn("into(\"scyllasband/onnx-int8\")", gradle)
+        self.assertIn("DEFAULT_ASSET_ROOT = \"scyllasband/onnx-int8\"", installer)
 
     def test_litert_requires_explicit_selection(self) -> None:
         args = self.parse_speak(

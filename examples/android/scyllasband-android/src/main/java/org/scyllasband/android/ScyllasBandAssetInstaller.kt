@@ -52,6 +52,6 @@ internal class ScyllasBandAssetInstaller(
     }
 
     private companion object {
-        const val DEFAULT_ASSET_ROOT = "scyllasband/onnx"
+        const val DEFAULT_ASSET_ROOT = "scyllasband/onnx-int8"
     }
 }

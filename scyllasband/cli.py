@@ -17,6 +17,7 @@ from .contract import (
     validate_bundle_layout,
 )
 from .download import (
+    BUNDLE_SUBDIR_GROUPS,
     DEFAULT_BUNDLE_SUBDIR,
     DEFAULT_INFERENCE_REPO_ID,
     DEFAULT_MODELS_DIR,
@@ -204,10 +205,12 @@ def _normalize_requested_bundle_subdirs(values: tuple[str, ...]) -> tuple[str, .
         item = str(value).strip().lower()
         if not item:
             continue
-        candidates = SUPPORTED_BUNDLE_SUBDIRS if item == "both" else (item,)
+        candidates = BUNDLE_SUBDIR_GROUPS.get(item, (item,))
         for candidate in candidates:
             if candidate not in (*SUPPORTED_BUNDLE_SUBDIRS,):
-                options = ", ".join((*SUPPORTED_BUNDLE_SUBDIRS, "both"))
+                options = ", ".join(
+                    (*SUPPORTED_BUNDLE_SUBDIRS, *BUNDLE_SUBDIR_GROUPS)
+                )
                 raise ValueError(f"Unsupported runtime bundle {candidate!r}; expected one of: {options}")
             if candidate not in output:
                 output.append(candidate)
@@ -397,7 +400,15 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     download_parser = subparsers.add_parser("download", allow_abbrev=False)
     download_parser.add_argument("--models-dir", type=Path, default=DEFAULT_MODELS_DIR)
     download_parser.add_argument("--repo-id", default=DEFAULT_INFERENCE_REPO_ID)
-    download_parser.add_argument("--runtime-bundles", choices=("onnx", "litert", "both"), default=DEFAULT_BUNDLE_SUBDIR, help="Runtime bundle(s) to download; defaults to onnx")
+    download_parser.add_argument(
+        "--runtime-bundles",
+        choices=(*SUPPORTED_BUNDLE_SUBDIRS, *BUNDLE_SUBDIR_GROUPS),
+        default=DEFAULT_BUNDLE_SUBDIR,
+        help=(
+            "Runtime bundle(s) to download; onnx-int8 is the smaller CPU-optimized "
+            "ONNX option, both keeps ONNX plus LiteRT, and all downloads every option"
+        ),
+    )
     download_parser.add_argument("--bundle-subdir", default=None, help="Legacy/expert override for the exact HF bundle subdir to download")
     download_parser.add_argument("--token", help="Hugging Face token; defaults to the hub client configuration")
     download_parser.add_argument("--revision", help="Optional Hugging Face revision")

@@ -2,11 +2,12 @@
 
 Scylla's Band is the public inference/runtime package for the `scyllasband` continuous-latent TTS model. The 1.0 bundle predicts phone durations and rectified acoustic latent flow, then decodes those latents through a Scylla's Band acoustic adapter and Vocos vocoder.
 
-The default public runtime path is ONNX across the Python CLI, Python API, Android sample, and native `libscyllasband` API. LiteRT remains available as an experimental, explicitly selected backend for platform acceleration work.
+The default desktop/server runtime path remains the full-precision ONNX bundle. A CPU-optimized INT8 ONNX bundle is available as an explicit option and is the Android sample default. LiteRT remains available as an experimental, explicitly selected backend for platform acceleration work.
 
 ## Highlights
 
 - ONNX Runtime is the default desktop/server inference path.
+- Optional per-channel dynamic INT8 weights reduce the bundle by about 33% and accelerate CPU inference while preserving duration, conditioning, and vocoder components in FP32.
 - Experimental LiteRT bundle is available for explicit native and mobile validation.
 - 24 kHz output with 100-mel acoustic features and 24-D acoustic latents.
 - Four public text-input languages: `en_us`, `en_gb`, `es`, and `it`.
@@ -20,6 +21,8 @@ The default public runtime path is ONNX across the Python CLI, Python API, Andro
 ## Audio Samples
 
 Open the [interactive voice and affect gallery](https://lowkeytea.github.io/scyllasband/) to play all ten voices in English, Spanish, and Italian, plus English demonstrations of calm, joy, anger, sadness, and sarcasm-overlay delivery. The [sample index and generation details](samples/README.md) remain available in the repository.
+
+Join the [Scylla's Band Discord](https://discord.gg/cNdBuM3tS) for release updates, help, and community discussion.
 
 ## Quick Start
 
@@ -45,13 +48,19 @@ scyllasband/models/onnx/    # default ONNX inference bundle
 scyllasband/models/voices/  # voice packs copied from the selected bundle
 ```
 
-To fetch the experimental LiteRT bundle as well:
+To fetch the optional CPU-optimized INT8 ONNX bundle:
 
 ```bash
-python -m scyllasband download --runtime-bundles both
+python -m scyllasband download --runtime-bundles onnx-int8
+python -m scyllasband validate-bundle scyllasband/models/onnx-int8
+python -m scyllasband speak scyllasband/models/onnx-int8 \
+    --voice scylla --language en_us -o hello_int8.wav \
+    "Hello from INT8 ONNX."
 ```
 
-The CLI defaults to `scyllasband/models/onnx` and does not fall back to LiteRT. To use LiteRT, pass its bundle path and `--backend litert` explicitly. You can pass an explicit bundle path as the first positional argument to `speak`, `plan`, `stream`, `group-speak`, `validate-bundle`, or `list-voices`.
+The INT8 bundle uses the normal `onnx` backend; its bundle path is the only required runtime selection. `--runtime-bundles both` retains its existing meaning and downloads full-precision ONNX plus LiteRT. Use `--runtime-bundles all` to download full-precision ONNX, INT8 ONNX, and LiteRT.
+
+The CLI defaults to `scyllasband/models/onnx` and does not fall back to another bundle. To use LiteRT, pass its bundle path and `--backend litert` explicitly. You can pass an explicit bundle path as the first positional argument to `speak`, `plan`, `stream`, `group-speak`, `validate-bundle`, or `list-voices`.
 
 ## CLI
 
@@ -130,7 +139,7 @@ The runtime deliberately has no fixed upper cap, so values such as `2.5` are val
 
 ### Backend Selection
 
-The default backend is `onnx`. The legacy `auto` spelling remains accepted as an alias for ONNX; it never opts into LiteRT. LiteRT requires both an explicit LiteRT bundle and `--backend litert`.
+The default backend is `onnx`. The full-precision and INT8 bundles both use this backend; select INT8 by passing `scyllasband/models/onnx-int8`. The legacy `auto` spelling remains accepted as an alias for ONNX; it never opts into LiteRT. LiteRT requires both an explicit LiteRT bundle and `--backend litert`.
 
 ```bash
 # Default ONNX path
@@ -144,6 +153,14 @@ python -m scyllasband speak scyllasband/models/onnx \
     --language en_us \
     -o hello_onnx.wav \
     "Hello from ONNX."
+
+# Optional CPU-optimized INT8 ONNX path
+python -m scyllasband speak scyllasband/models/onnx-int8 \
+    --backend onnx \
+    --voice scylla \
+    --language en_us \
+    -o hello_int8.wav \
+    "Hello from INT8 ONNX."
 
 # Experimental LiteRT path
 python -m scyllasband speak scyllasband/models/litert \
@@ -386,7 +403,7 @@ LiteRT currently carries more duplicated bucket-specific graph data than ONNX, b
 
 `libscyllasband/` owns the native runtime, long-form planning, streaming callbacks, host-language C ABI, and ONNX/LiteRT execution paths. Native ONNX uses the same G2P, duration, reference-pack, emotion CFG, flow-sampling, target-bucket, and vocoder orchestration as native LiteRT; only the graph-session adapter changes.
 
-The [Android sample](examples/android/README.md) packages the current ONNX bundle and exposes all managed voices, manifest-declared languages, the six emotion axes with strength, and non-negative emotion CFG. Its editor uses inline speaker points and streams each completed native audio chunk while later chunks render. The Kotlin wrapper creates and warms one persistent runtime; `libscyllasband` owns a configurable target-bucket LRU, with a capacity-one memory profile used by default on Android.
+The [Android sample](examples/android/README.md) packages the CPU-optimized INT8 ONNX bundle and exposes all managed voices, manifest-declared languages, the six emotion axes with strength, and non-negative emotion CFG. Its editor uses inline speaker points and streams each completed native audio chunk while later chunks render. The Kotlin wrapper creates and warms one persistent runtime; `libscyllasband` owns a configurable target-bucket LRU, with a capacity-one memory profile used by default on Android.
 
 For normal CLI use, the first LiteRT-backed `speak`, `stream`, `plan`, or `group-speak` run automatically prepares the native runtime when `libscyllasband` is missing. The loader detects the host platform (`linux-x86_64`, `linux-arm64`, `macos-arm64`, or `windows-x86_64`), stages the matching LiteRT runtime from an installed `ai_edge_litert` package or downloads the prebuilt runtime, configures CMake, and builds the shared `scyllasband_native` library. This requires CMake plus a working C++ toolchain for the host.
 
