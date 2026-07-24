@@ -4,7 +4,7 @@ This sample demonstrates the current Scylla's Band duration-flow model through t
 
 ## What it demonstrates
 
-- The current `scyllasband` ONNX bundle, including external shared weights and 24 kHz audio playback.
+- The optional `scyllasband` INT8 ONNX bundle, including external shared weights and 24 kHz audio playback.
 - All voices and each voice's supported languages, loaded from `manifest.json` rather than hard-coded UI lists.
 - Neutral delivery or any manifest-declared affect axis (`calm`, `joy`, `anger`, `sadness`, `sarcasm`, and `questioning`), a normalized strength from 0 to 1, and a separate non-negative CFG value.
 - A paste-friendly text editor with inline speaker points. Double-tap or long-press to add a point; tap a point to edit or remove it. A point controls all following text until another point appears. New points copy the settings of the last point created.
@@ -22,15 +22,15 @@ From this directory:
 ./gradlew :app:assembleDebug
 ```
 
-The build expects the current bundle at `scyllasband/models/onnx` in the repository root. If it is missing, run this first from the repository root:
+The build defaults to the CPU-optimized bundle at `scyllasband/models/onnx-int8` in the repository root. If it is missing, run this first from the repository root:
 
 ```bash
-python -m scyllasband download
+python -m scyllasband download --runtime-bundles onnx-int8
 ```
 
 The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
 
-The sample deliberately packages the complete ONNX bundle for offline use. The current two-ABI debug APK is roughly 495 MB (472 MiB), and first launch copies the bundle into `noBackupFilesDir` because ONNX Runtime needs filesystem paths for the model and its external weight file. Production apps should normally deliver the model as an install-time asset pack or download it once, and should keep only the target ABI.
+The sample deliberately packages the complete INT8 ONNX bundle for offline use. The model bundle is roughly 292 MB (278 MiB), and first launch copies it into `noBackupFilesDir` because ONNX Runtime needs filesystem paths for the model and its external weight file. Production apps should normally deliver the model as an install-time asset pack or download it once, and should keep only the target ABI.
 
 ## Minimal integration
 
@@ -79,15 +79,12 @@ The sample logs time to first audio, total playback time, and native-heap change
 
 ## Memory and performance profile
 
-The ONNX bundle uses separate vector/vocoder graphs for four latent-frame
-buckets, backed by a 347 MB external-weight file. Keeping every encountered
-bucket warm produced more than 1.2 GB of native allocation during the
-multispeaker walkthrough on the validation device. The default capacity-one
-LRU held native allocation near 560 MB after a longer 30-second run and stayed
-flat on the repeat run. First audio measured 1.18 seconds when the needed bucket
-was already warm and 1.91 seconds when the previous run left a different bucket
-warm. These debug-build numbers are device-specific, but they show the intended
-tradeoff.
+The INT8 ONNX bundle uses separate vector/vocoder graphs for four latent-frame
+buckets, backed by a roughly 260 MB (248 MiB) external-weight file. The default
+capacity-one LRU bounds the number of warm vector/vocoder bucket sessions.
+Re-measure native memory and latency on each target device: the earlier FP32
+figures do not describe this INT8 build, and debug-build results remain
+device-specific.
 
 Useful checks:
 

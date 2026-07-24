@@ -9,6 +9,8 @@ tags:
   - text-to-speech
   - tts
   - onnx
+  - int8
+  - quantization
   - litert
   - speech-synthesis
   - duration-flow
@@ -30,6 +32,7 @@ Public resources:
 - Model bundles and voice assets: [`spybyscript/scyllasband`](https://huggingface.co/spybyscript/scyllasband)
 - Runtime source: [`lowkeytea/scyllasband`](https://github.com/lowkeytea/scyllasband)
 - [Interactive voice, language, and affect samples](https://lowkeytea.github.io/scyllasband/)
+- [Scylla's Band Discord](https://discord.gg/cNdBuM3tS)
 
 The public resources are inference-only. Training data, trainer checkpoints, and export tooling are not distributed with the model.
 
@@ -42,7 +45,7 @@ Scylla's Band is intended for:
 - Long-form narration with automatic planning and chunking.
 - Multi-voice dialogue from tagged text.
 - Continuous control over calm, joy, anger, sadness, sarcasm, and questioning delivery.
-- Desktop and server inference through ONNX Runtime.
+- Desktop and server inference through full-precision or CPU-optimized INT8 ONNX Runtime bundles.
 - Native and mobile execution through ONNX Runtime and `libscyllasband`, with LiteRT available as an explicit experimental backend.
 
 Scylla's Band is not an arbitrary-speaker cloning system. It is not intended for impersonation, fraud, deception, or generating speech that falsely represents a real person as speaking.
@@ -66,11 +69,16 @@ python -m scyllasband speak \
     "Hello from Scylla's Band."
 ```
 
-Download both public backend bundles with:
+Download the optional CPU-optimized INT8 ONNX bundle with:
 
 ```bash
-python -m scyllasband download --runtime-bundles both
+python -m scyllasband download --runtime-bundles onnx-int8
+python -m scyllasband speak scyllasband/models/onnx-int8 \
+    --voice scylla --language en_us -o hello_int8.wav \
+    "Hello from INT8 ONNX."
 ```
+
+`--runtime-bundles both` downloads full-precision ONNX plus LiteRT. Use `--runtime-bundles all` to download full-precision ONNX, INT8 ONNX, and LiteRT.
 
 An expressive example:
 
@@ -185,7 +193,7 @@ The selected bundle's `manifest.json` is authoritative for its shapes, controls,
 
 ### ONNX
 
-ONNX is the default path across Python, desktop/server, native `libscyllasband`, and the Android sample. The export uses opset 18, four full acoustic-generator/vocoder target buckets, and shared external weights. CPU execution through `CPUExecutionProvider` is the validated baseline.
+Full-precision ONNX is the default Python and desktop/server path. The export uses opset 18, four full acoustic-generator/vocoder target buckets, and shared external weights. CPU execution through `CPUExecutionProvider` is the validated baseline.
 
 ```text
 scyllasband/models/onnx/
@@ -198,6 +206,20 @@ scyllasband/models/onnx/
   onnx/components/vocoder_adapter_b{256,384,512,640}.onnx
   onnx/components/shared_weights.bin
   onnx/components/shared_weights.json
+  assets/
+```
+
+
+### INT8 ONNX
+
+The optional `onnx-int8` bundle uses per-channel dynamic QInt8 weights for G2P and the vector estimator transformer core. Activations, duration prediction, span/reference conditioning, adaptive projections, and the vocoder remain FP32. It uses the normal ONNX backend and is the default bundled model in the Android sample.
+
+```text
+scyllasband/models/onnx-int8/
+  manifest.json
+  onnx/g2p/model.onnx
+  onnx/components/vector_estimator_b{256,384,512,640}.onnx
+  onnx/components/shared_weights.bin
   assets/
 ```
 
@@ -245,12 +267,13 @@ The original desired-delivery categories were not treated as ground truth. A hum
 
 ## Validation
 
-The public ONNX and LiteRT bundles pass the 1.0 bundle contract. Machine-local `export_status.json` files are exporter diagnostics and are intentionally omitted from the public inference payload. Runtime validation uses matched text, voice, language, affect, guidance, sampler, steps, and seed, and checks each backend against its validated deterministic reference output.
+The public full-precision ONNX, INT8 ONNX, and LiteRT bundles pass the 1.0 bundle contract. Machine-local `export_status.json` files are exporter diagnostics and are intentionally omitted from the public inference payload. Runtime validation uses matched text, voice, language, affect, guidance, sampler, steps, and seed, and checks each backend against its validated deterministic reference output.
 
 Useful checks:
 
 ```bash
 python -m scyllasband validate-bundle scyllasband/models/onnx
+python -m scyllasband validate-bundle scyllasband/models/onnx-int8
 python -m scyllasband validate-bundle scyllasband/models/litert
 
 python -m scyllasband speak scyllasband/models/onnx \

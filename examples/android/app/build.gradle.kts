@@ -3,24 +3,24 @@ plugins {
 }
 
 val repositoryRoot = projectDir.resolve("../../..").canonicalFile
-val scyllasbandOnnxBundleDir = repositoryRoot.resolve("scyllasband/models/onnx")
+val scyllasbandOnnxInt8BundleDir = repositoryRoot.resolve("scyllasband/models/onnx-int8")
 val exampleDataDir = repositoryRoot.resolve("data")
 val generatedAssetsDir = layout.buildDirectory.dir("generated/scyllasbandAssets/main")
 
 val prepareScyllasBandAssets by tasks.registering(Sync::class) {
     doFirst {
-        check(scyllasbandOnnxBundleDir.resolve("manifest.json").isFile) {
-            "Scylla's Band ONNX manifest not found at ${scyllasbandOnnxBundleDir.absolutePath}. Run `python -m scyllasband download`."
+        check(scyllasbandOnnxInt8BundleDir.resolve("manifest.json").isFile) {
+            "Scylla's Band ONNX manifest not found at ${scyllasbandOnnxInt8BundleDir.absolutePath}. Run `python -m scyllasband download --runtime-bundles onnx-int8`."
         }
-        check(scyllasbandOnnxBundleDir.resolve("onnx/components/shared_weights.bin").isFile) {
-            "Scylla's Band ONNX shared weights are missing under ${scyllasbandOnnxBundleDir.absolutePath}."
+        check(scyllasbandOnnxInt8BundleDir.resolve("onnx/components/shared_weights.bin").isFile) {
+            "Scylla's Band ONNX shared weights are missing under ${scyllasbandOnnxInt8BundleDir.absolutePath}."
         }
-        check(scyllasbandOnnxBundleDir.resolve("onnx/g2p/model.onnx").isFile) {
-            "Scylla's Band ONNX G2P model is missing under ${scyllasbandOnnxBundleDir.absolutePath}."
+        check(scyllasbandOnnxInt8BundleDir.resolve("onnx/g2p/model.onnx").isFile) {
+            "Scylla's Band ONNX G2P model is missing under ${scyllasbandOnnxInt8BundleDir.absolutePath}."
         }
     }
-    from(scyllasbandOnnxBundleDir) {
-        into("scyllasband/onnx")
+    from(scyllasbandOnnxInt8BundleDir) {
+        into("scyllasband/onnx-int8")
     }
     from(exampleDataDir) {
         include("emotional_text.txt", "groupSpeak.txt", "test_document.txt")

@@ -11,8 +11,17 @@ from .contract import validate_bundle_layout
 DEFAULT_INFERENCE_REPO_ID = "spybyscript/scyllasband"
 DEFAULT_MODELS_DIR = Path("scyllasband/models")
 DEFAULT_BUNDLE_SUBDIR = "onnx"
+DEFAULT_ONNX_INT8_BUNDLE_SUBDIR = "onnx-int8"
 DEFAULT_VOICES_SUBDIR = "voices"
-SUPPORTED_BUNDLE_SUBDIRS = ("onnx", "litert")
+SUPPORTED_BUNDLE_SUBDIRS = (
+    DEFAULT_BUNDLE_SUBDIR,
+    DEFAULT_ONNX_INT8_BUNDLE_SUBDIR,
+    "litert",
+)
+BUNDLE_SUBDIR_GROUPS = {
+    "both": (DEFAULT_BUNDLE_SUBDIR, "litert"),
+    "all": SUPPORTED_BUNDLE_SUBDIRS,
+}
 
 
 def download_litert_bundle(
@@ -131,13 +140,12 @@ def _normalize_bundle_subdirs(values: Iterable[str]) -> tuple[str, ...]:
         item = str(value).strip().lower()
         if not item:
             continue
-        if item == "both":
-            candidates = SUPPORTED_BUNDLE_SUBDIRS
-        else:
-            candidates = (item,)
+        candidates = BUNDLE_SUBDIR_GROUPS.get(item, (item,))
         for candidate in candidates:
             if candidate not in SUPPORTED_BUNDLE_SUBDIRS:
-                options = ", ".join((*SUPPORTED_BUNDLE_SUBDIRS, "both"))
+                options = ", ".join(
+                    (*SUPPORTED_BUNDLE_SUBDIRS, *BUNDLE_SUBDIR_GROUPS)
+                )
                 raise ValueError(f"Unsupported runtime bundle {candidate!r}; expected one of: {options}")
             if candidate not in output:
                 output.append(candidate)
