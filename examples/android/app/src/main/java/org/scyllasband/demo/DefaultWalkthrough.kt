@@ -7,26 +7,28 @@ import org.scyllasband.android.ScyllasBandSegmentSettings
 object DefaultWalkthrough {
     private val taggedSource =
         """
-        [scylla:en_us:joy=0.6]Welcome to Scylla's Band Studio!
+        [scylla:en_us:sadness=0.6]Hey! Hey you, over there!
 
-        [scylla:en_us:anger=0.6]You might notice I sound a bit angry here, for no great reason! Oh my god, why the heck am I so angry?
+        [scylla:en_us:anger=0.6]Yo, I can see you reading the reddit post!
 
-        [scylla:en_us:sadness=0.6]Or maybe just a little bit sad... Why is life so complicated?
+        [scylla:en_us:calm=0.6]Sorry, I'm getting ahead of myself. Hello guys, gals, this is a demo of a brand new voice model!
 
-        [max:en_us:calm=0.4]Tap the full tags to change the voice, language, emotion value, and strength. Mine is calm at forty percent, because every demo needs one responsible adult.
+        [orpheus:en_gb:sarcasm=0.4]Really, a new voice model in this day and age? Why should anyone even care?
 
-        [tuesday:en_gb:sarcasm=0.7]So that's the quick of the test. But we don't just roll with the emotions.
+        [tuesday:en_gb:sarcasm=0.7]I think sir... sorry to butt in... but it's because this demo seems to have a bit more expression in it. And it's running on Android.
 
-        [rex:es:joy=0.7]Ahora cambiamos al español con Rex. Mi tag selecciona español y alegría al setenta por ciento. Toca mi punto para probar calma, sarcasmo, o una C F G diferente. Un chiste: ¿por qué el sintetizador llevó un mapa? Porque no quería perder el tono.
+        [rex:es:joy=0.7]¡Menuda fantasía! ¿Todo esto corriendo en Android? ¡Pero si la gente dice que estos trastos no tienen ni para arrancar la lavadora!
 
-        [ink:it:sarcasm=0.6]Ora tocca a Ink in italiano, con sarcasmo al sessanta per cento. Puoi cambiare emozione senza modificare il testo. Ecco una battuta: perché la voce artificiale ha portato una matita? Per prendere nota, naturalmente. Sì, era una battuta molto sintetica.
+        [ink:it:sarcasm=0.6]Mamma mia, certo che la gente vive proprio col prosciutto sugli occhi per Apple! Ma figurati se Android non è abbastanza potente da far girare i modelli vocali.
 
-        [max:en_us:calm=0.35]In a tagged file, voice, language, and emotion can change together. Short tags can change only the active language or emotion. After import, those instructions become speaker points, so you can fine-tune them visually instead of memorizing syntax.
+        [felix:en_us:calm=0.35]So hey, I'm glad you listened in. Scylla's Band already has a version 2 in the works with improved voices and new languages.
 
-        [scylla:en_us:joy=0.8]Now press Play, tap a marker, and make us sound completely different. Final joke: why did four voices share one script? We wanted better dialogue, and none of us could agree on a group chat. Welcome to Scylla's Band.
+        [ariadne:en_us:questioning=0.8]I heard there were free cookies! Oh... sorry, I just wanted an excuse to say something. Pass the cupcake?
+        
+        [gwen:en_us:calm=0.8]Sorry, I think by cookies that means the author is taking suggestions while V 2 is still in the works. Thank you!
         """.trimIndent()
 
-    private val emotionCfgByPoint = listOf(3.0f, 2.4f, 3.0f, 1.2f, 2.5f, 1.1f, 1.2f, 0.9f, 1.15f)
+    private val emotionCfgByPoint = listOf(3.0f, 2.4f, 3.0f, 1.2f, 2.5f, 1.1f, 1.2f, 0.9f, 1.15f, 1.15f)
 
     fun snapshot(
         defaults: ScyllasBandSegmentSettings,

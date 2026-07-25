@@ -1,16 +1,13 @@
-[ariadne:en] My favorite food is fresh pasta with lemon and herbs. It tastes bright, but still feels like comfort food.
-[tuesday:es] Eso suena buenisimo. Para mi, la comida perfecta es una tortilla espanola con cebolla dulce y un poco de pan crujiente.
-[orpheus:it] Vi capisco. Io sceglierei un risotto ai funghi, lento e cremoso, perche ogni boccone sembra una piccola pausa.
-[stone:en] I respect that, but smoked brisket wins for me. If the bark is right, I do not need anything else on the plate.
-[ariadne:es] El brisket estaria muy bien con arroz y frijoles. Tambien me encanta el gazpacho cuando hace calor.
-[tuesday:it] Si, una zuppa fredda ha senso. Pero se parliamo di dolci, io voto per il tiramisu con molto caffe.
-[orpheus:en] Tiramisu is a strong answer. I would put gelato beside it, especially pistachio or dark chocolate.
-[stone:es] El chocolate oscuro va con casi todo. A mi tambien me gusta la paella, sobre todo cuando el arroz queda tostado abajo.
-[ariadne:it] Quella parte croccante e la migliore. Mi piace anche una pizza semplice, con pomodoro, basilico, e mozzarella.
-[tuesday:en] Simple pizza is hard to beat. I would add roasted peppers, then call that dinner without changing anything else.
-[orpheus:es] Me gusta esa idea. Los pimientos asados tienen dulzura, y combinan con queso, pasta, arroz, o pan.
-[stone:it] Allora siamo d'accordo: cibo semplice, fatto bene, con abbastanza tempo per parlare mentre si mangia.
-[ariadne:en] That was fun! We should do this again.
-[tuesday:en] Only if I get some coffee with it.
-[orpheus:en] Haha, not bad for a first global meet!
-[stone:en] I totally agree.
+[ink:en_gb:joy=0.5] Hi everyone! Welcome to Scylla's Band! A text to speech model designed to be fast on CPU and mobile.
+[gwen:en_us:calm=0.5] There's ten unique voices, with multiple emotion or sentiment settings.
+[rex:es:calm=0.25,joy=0.75] Puedes cambiar de un idioma a otro (inglés, español o italiano) con total fluidez y con cualquiera de las voces.
+[stone:en_us:calm=0.25] That's to say, the model can speak Spanish, Italian and English. I believe more are planned in the future!
+[gwen:en_us:joy=0.5] Oh my god, don't forget it can subtly change emotions such as joy...
+[gwen:en_us:sadness=0.5] Or be really, really sad. I can almost cry.
+[rex:en_us:sadness=0.75] I know right? I don't know about being emotionally controlled like this.
+[tuesday:en_gb:anger=0.5] Why the heck do I get to have the angry example? Seriously?
+[max:it:questioning=0.5] O reflexionar sobre los grandes misterios? ¿Cómo hornear las mejores galletas?
+[max:en_us:questioning=0.5] I often wonder what people think of my voice? Is it calm? Questioning?
+[felix:en_us] All of this is faster than realtime on CPU, even for mobile!
+[ariadne:en_us:sarcasm=0.75] Sorry that I am late! I bought pastries, even if I'm almost last to say anything.
+[orpheus:en_gb:joy=0.7] The pleasure is all mine... even if I'm merely the last voice. Thank you everyone for your time!

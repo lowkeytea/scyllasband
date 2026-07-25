@@ -82,6 +82,8 @@ class PlanRecord:
     normalized_text: str
     start_char: int = 0
     end_char: int = 0
+    affect: Mapping[str, float] | str | None = None
+    affect_guidance_scale: float = 1.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -89,6 +91,8 @@ class PlanRecord:
             "voice": self.voice,
             "language": self.language,
             "emotion": self.emotion,
+            "affect": self.affect,
+            "affect_guidance_scale": self.affect_guidance_scale,
             "emotion_guidance": self.emotion_guidance,
             "text": self.text,
             "normalized_text": self.normalized_text,
@@ -377,6 +381,12 @@ def prepare_render_chunks(
         voice = str(record["voice"])
         language = runtime.resolve_language_for_voice(voice, record.get("language"))
         emotion = _optional_text(record.get("emotion")) or opts.emotion
+        affect = record.get("affect") if record.get("affect") is not None else opts.affect
+        affect_guidance_scale = float(
+            record.get("affect_guidance_scale")
+            if record.get("affect_guidance_scale") is not None
+            else opts.affect_guidance_scale
+        )
         emotion_guidance = _optional_text(record.get("emotion_guidance")) or opts.emotion_guidance
         source_text = str(record["text"])
         record_id = str(record.get("record_id") or f"record-{record_index:04d}")
@@ -394,6 +404,8 @@ def prepare_render_chunks(
                         "voice": voice,
                         "language": language,
                         "emotion": emotion,
+                        "affect": affect,
+                        "affect_guidance_scale": affect_guidance_scale,
                         "emotion_guidance": emotion_guidance,
                         "source_text": source_text,
                         "pre_normalized": False,
@@ -414,6 +426,8 @@ def prepare_render_chunks(
                     "voice": voice,
                     "language": language,
                     "emotion": emotion,
+                    "affect": affect,
+                    "affect_guidance_scale": affect_guidance_scale,
                     "emotion_guidance": emotion_guidance,
                     "source_text": source_text,
                     "pre_normalized": True,
@@ -746,6 +760,12 @@ def _plan_records_from_input(runtime: Any, records: list[dict[str, Any]], opts: 
                 voice=voice,
                 language=language,
                 emotion=_optional_text(record.get("emotion")) or opts.emotion,
+                affect=record.get("affect") if record.get("affect") is not None else opts.affect,
+                affect_guidance_scale=float(
+                    record.get("affect_guidance_scale")
+                    if record.get("affect_guidance_scale") is not None
+                    else opts.affect_guidance_scale
+                ),
                 emotion_guidance=_optional_text(record.get("emotion_guidance")) or opts.emotion_guidance,
                 text=text,
                 normalized_text=normalized,

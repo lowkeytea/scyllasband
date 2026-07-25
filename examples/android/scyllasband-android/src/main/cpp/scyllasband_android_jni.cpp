@@ -9,7 +9,7 @@
 
 namespace {
 
-constexpr int kFastSynthesisSteps = 2;
+constexpr int kFastSynthesisSteps = 5;
 constexpr int kFastMaxChunkChars = 180;
 constexpr int kMinChunkChars = 48;
 

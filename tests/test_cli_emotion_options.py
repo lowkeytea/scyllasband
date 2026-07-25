@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from types import SimpleNamespace
 import unittest
 
 from scyllasband.cli import (
@@ -9,6 +10,20 @@ from scyllasband.cli import (
     _parse_group_lines,
     build_parser,
 )
+from scyllasband.planner import planner_options_from, prepare_render_chunks
+
+
+class _PlanningRuntime:
+    manifest = SimpleNamespace(
+        audio=SimpleNamespace(sample_rate=24_000, latent_hop_length=512),
+        controls={},
+    )
+
+    def resolve_language_for_voice(self, voice: str, language: str | None) -> str:
+        return language or "en_us"
+
+    def normalize_text(self, text: str, *, language: str, voice_id: str) -> str:
+        return text
 
 
 class CliEmotionOptionsTest(unittest.TestCase):
@@ -72,6 +87,32 @@ class CliEmotionOptionsTest(unittest.TestCase):
         )
         self.assertEqual([row["affect"] for row in rows], ["joy", "anger"])
         self.assertEqual([row["emotion"] for row in rows], [None, None])
+
+    def test_group_planning_preserves_line_affect_and_global_scale(self) -> None:
+        args = _parse_cli_args(
+            build_parser(),
+            [
+                "group-speak",
+                "--emotion-scale",
+                "2.5",
+                "--text",
+                "[ink:en_gb:calm=0.25,joy=0.5] Hello!",
+            ],
+        )
+        rows = _parse_group_lines(
+            args.text_flag,
+            default_voice=args.voice,
+            default_language=args.language,
+            default_emotion=args.emotion,
+            default_affect=args.affect,
+            default_emotion_guidance=args.emotion_guidance,
+        )
+        opts = planner_options_from(args, no_preflight_chunks=True)
+
+        chunks = prepare_render_chunks(_PlanningRuntime(), rows, opts)
+
+        self.assertEqual(chunks[0]["affect"], "calm=0.25,joy=0.5")
+        self.assertEqual(chunks[0]["affect_guidance_scale"], 2.5)
 
 
 if __name__ == "__main__":
