@@ -7,6 +7,7 @@
   "properties": {
     "contract_version": { "const": "1.0.0" },
     "model_name": { "type": "string" },
+    "model_version": { "type": "string" },
     "architecture": { "type": "string" },
     "audio": {
       "type": "object",

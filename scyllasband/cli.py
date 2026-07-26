@@ -12,7 +12,7 @@ import wave
 
 from .contract import (
     BundleValidationError,
-    CANONICAL_AFFECT_AXES,
+    SUPPORTED_AFFECT_AXES,
     bundle_runtime_acceleration_report,
     validate_bundle_layout,
 )
@@ -43,8 +43,8 @@ DEFAULT_ADAPTIVE_REALTIME_FACTOR = 1.15
 DEFAULT_ADAPTIVE_MIN_CHUNKS_PER_STAGE = 2
 DEFAULT_LOOKAHEAD_CHUNKS = 1
 _GROUP_TAG_RE = re.compile(r"\[([-A-Za-z0-9_.,:=]+)\]")
-_GROUP_LANGUAGE_TAGS = frozenset({"en", "en_us", "en_gb", "es", "it"})
-_GROUP_EMOTION_PRESET_TAGS = frozenset(CANONICAL_AFFECT_AXES) | frozenset(
+_GROUP_LANGUAGE_TAGS = frozenset({"en", "en_us", "en_gb", "es", "it", "de", "fr", "vi"})
+_GROUP_EMOTION_PRESET_TAGS = frozenset(SUPPORTED_AFFECT_AXES) | frozenset(
     {
         "neutral",
         "friendly",
@@ -134,6 +134,7 @@ def _validate_bundle(args: argparse.Namespace) -> int:
             {
                 "status": "ok",
                 "model_name": manifest.model_name,
+                "model_version": manifest.model_version,
                 "contract_version": manifest.contract_version,
                 "voices": len(manifest.voices),
                 "languages": list(manifest.languages),
@@ -783,8 +784,8 @@ def _parse_group_affect_spec(value: str) -> str:
         term = raw_term.strip()
         axis, separator, raw_score = term.partition("=")
         axis = axis.strip().lower()
-        if not separator or axis not in CANONICAL_AFFECT_AXES:
-            options = ", ".join(f"{name}=VALUE" for name in CANONICAL_AFFECT_AXES)
+        if not separator or axis not in SUPPORTED_AFFECT_AXES:
+            options = ", ".join(f"{name}=VALUE" for name in SUPPORTED_AFFECT_AXES)
             raise ValueError(
                 f"Invalid group-speak emotion term {term!r}; expected one of {options}"
             )

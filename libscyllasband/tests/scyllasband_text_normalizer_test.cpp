@@ -49,6 +49,26 @@ int main() {
         "alle tre cinque era al quattordici virgola cinque per cento e tre su quattro fatto."
     );
     failures += expect_equal(
+        "fr_fr",
+        "Le prix est €21,50 et 5%.",
+        "Le prix est vingt et un euros et cinquante centimes et cinq pour cent."
+    );
+    failures += expect_equal(
+        "fr",
+        "Le 3o essai et le 80o.",
+        "Le troisième essai et le quatre vingtième."
+    );
+    failures += expect_equal(
+        "de_de",
+        "Es kostet €21,50 und 5%.",
+        "Es kostet einundzwanzig Euro und fünfzig Cent und fünf Prozent."
+    );
+    failures += expect_equal(
+        "vi_vn",
+        "Giá là €21,50 và 5%.",
+        "Giá là hai mươi mốt euro và năm mươi xu và năm phần trăm."
+    );
+    failures += expect_equal(
         "en_us",
         "D.J. played the A-game. It grossed $47500, cost $99.99, and moved at 0.03 miles per hour.",
         "dee jay played the ay game. "

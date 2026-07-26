@@ -15,6 +15,8 @@ import shutil
 import subprocess
 import sys
 
+from .contract import SUPPORTED_AFFECT_AXES
+
 SCYLLASBAND_STATUS_OK = 0
 SCYLLASBAND_STATUS_INVALID_ARGUMENT = 1
 SCYLLASBAND_STATUS_NOT_IMPLEMENTED = 2
@@ -1017,7 +1019,7 @@ def _affect_spec(value: Any) -> str | None:
         return value.strip() or None
     if not isinstance(value, Mapping):
         raise ValueError("Emotion must be a preset, axis=value string, or axis mapping")
-    axes = ("calm", "joy", "anger", "sadness", "sarcasm", "questioning")
+    axes = SUPPORTED_AFFECT_AXES
     normalized = {str(key).strip().lower(): item for key, item in value.items()}
     unknown = sorted(set(normalized) - set(axes))
     if unknown:

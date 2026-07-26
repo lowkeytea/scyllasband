@@ -27,7 +27,7 @@ REQUIRED_COMPONENTS = (
 SPLIT_VECTOR_COMPONENTS = ("vector_estimator_prefix", "vector_estimator_tail")
 SHIPPING_BACKENDS = ("onnx", "litert", "coreml")
 DEFAULT_PREFERRED_BACKENDS = ("onnx",)
-CANONICAL_AFFECT_AXES = (
+AFFECT_AXES_V1 = (
     "calm",
     "joy",
     "anger",
@@ -35,6 +35,20 @@ CANONICAL_AFFECT_AXES = (
     "sarcasm",
     "questioning",
 )
+AFFECT_AXES_V2 = (
+    "calm",
+    "joy",
+    "anger",
+    "sadness",
+    "sarcasm",
+    "whisper",
+)
+AFFECT_AXIS_ORDERS = {
+    1: AFFECT_AXES_V1,
+    2: AFFECT_AXES_V2,
+}
+CANONICAL_AFFECT_AXES = AFFECT_AXES_V1
+SUPPORTED_AFFECT_AXES = (*AFFECT_AXES_V1, "whisper")
 _AFFECT_DURATION_INPUTS = (
     "phone_ids",
     "voice_id",
@@ -208,6 +222,7 @@ class ScyllasBandBundleManifest:
     controls: dict[str, Any]
     assets: dict[str, str]
     preferred_backends: tuple[str, ...] = DEFAULT_PREFERRED_BACKENDS
+    model_version: str = "3"
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ScyllasBandBundleManifest":
@@ -253,6 +268,7 @@ class ScyllasBandBundleManifest:
         return cls(
             contract_version=version,
             model_name=str(data["model_name"]),
+            model_version=str(data.get("model_version", "3")),
             architecture=str(data.get("architecture", "scyllasband-duration-flow")),
             audio=AudioSpec.from_dict(data["audio"]),
             languages=languages,
@@ -268,6 +284,7 @@ class ScyllasBandBundleManifest:
         return {
             "contract_version": self.contract_version,
             "model_name": self.model_name,
+            "model_version": self.model_version,
             "architecture": self.architecture,
             "audio": {
                 "sample_rate": self.audio.sample_rate,
@@ -516,18 +533,37 @@ def _validate_affect_contract(manifest: ScyllasBandBundleManifest) -> None:
     if not isinstance(affect, dict) or not bool(affect.get("enabled", False)):
         return
     graph_input_contract = str(controls.get("graph_input_contract") or "")
-    if graph_input_contract != "scyllasband_affect_v1":
+    axis_order_version = int(affect.get("axis_order_version") or 0)
+    expected_axes = AFFECT_AXIS_ORDERS.get(axis_order_version)
+    if expected_axes is None:
+        raise BundleValidationError(
+            f"Unsupported affect axis_order_version {axis_order_version}"
+        )
+    expected_graph_contract = f"scyllasband_affect_v{axis_order_version}"
+    if graph_input_contract != expected_graph_contract:
         raise BundleValidationError(
             "Six-axis affect bundles must declare graph_input_contract "
-            "'scyllasband_affect_v1'"
+            f"{expected_graph_contract!r}"
         )
     axes = tuple(str(item) for item in affect.get("axes", ()))
-    if axes != CANONICAL_AFFECT_AXES:
+    if axes != expected_axes:
         raise BundleValidationError(
-            f"Affect axes must be {list(CANONICAL_AFFECT_AXES)!r}, got {list(axes)!r}"
+            f"Affect axes must be {list(expected_axes)!r}, got {list(axes)!r}"
         )
-    if int(affect.get("dimension") or 0) != len(CANONICAL_AFFECT_AXES):
+    if int(affect.get("dimension") or 0) != len(expected_axes):
         raise BundleValidationError("Affect dimension must be 6")
+    try:
+        model_major = int(manifest.model_version.split(".", 1)[0])
+    except ValueError as exc:
+        raise BundleValidationError(
+            f"model_version must start with an integer: {manifest.model_version!r}"
+        ) from exc
+    expected_model_axis_version = 2 if model_major >= 4 else 1
+    if axis_order_version != expected_model_axis_version:
+        raise BundleValidationError(
+            f"model_version {manifest.model_version} requires affect axis order "
+            f"version {expected_model_axis_version}, got {axis_order_version}"
+        )
     if affect.get("range") != [0.0, 1.0]:
         raise BundleValidationError("Affect range must be [0.0, 1.0]")
     if not bool(affect.get("condition_mask_input", False)):
@@ -545,7 +581,7 @@ def _validate_affect_contract(manifest: ScyllasBandBundleManifest) -> None:
     if default_preset not in presets:
         raise BundleValidationError("Affect default_preset must name a declared preset")
     for name, vector in presets.items():
-        if not isinstance(vector, list) or len(vector) != len(CANONICAL_AFFECT_AXES):
+        if not isinstance(vector, list) or len(vector) != len(expected_axes):
             raise BundleValidationError(f"Affect preset {name!r} must contain six values")
         try:
             values = [float(item) for item in vector]
@@ -557,7 +593,7 @@ def _validate_affect_contract(manifest: ScyllasBandBundleManifest) -> None:
     duration = manifest.components.get("duration_predictor")
     if duration is None or duration.inputs != _AFFECT_DURATION_INPUTS:
         raise BundleValidationError(
-            "Affect duration_predictor inputs do not match scyllasband_affect_v1"
+            f"Affect duration_predictor inputs do not match {expected_graph_contract}"
         )
     vector_components = [
         component
@@ -574,7 +610,7 @@ def _validate_affect_contract(manifest: ScyllasBandBundleManifest) -> None:
         if component.inputs != expected:
             raise BundleValidationError(
                 f"Affect component {component.name!r} inputs do not match "
-                "scyllasband_affect_v1"
+                f"{expected_graph_contract}"
             )
     forbidden = {"emotion_id", "emotion_condition_mask"}
     for component in (duration, *vector_components):

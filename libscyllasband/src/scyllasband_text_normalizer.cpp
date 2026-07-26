@@ -80,8 +80,23 @@ std::string normalizer_language(std::string language) {
         return static_cast<char>(std::tolower(ch));
     });
     std::replace(language.begin(), language.end(), '-', '_');
-    if (language == "es" || language == "it") {
-        return language;
+    if (language == "en" || language == "en_us" || language == "en_gb") {
+        return "en";
+    }
+    if (language == "es" || language == "es_mx" || language == "es_es") {
+        return "es";
+    }
+    if (language == "it" || language == "it_it") {
+        return "it";
+    }
+    if (language == "fr" || language == "fr_fr") {
+        return "fr";
+    }
+    if (language == "de" || language == "de_de") {
+        return "de";
+    }
+    if (language == "vi" || language == "vi_vn" || language == "vi_hn") {
+        return "vi";
     }
     return "en";
 }
@@ -216,12 +231,200 @@ std::string italian_number(int64_t number) {
     return std::to_string(number);
 }
 
+std::string french_number(int64_t number) {
+    static const std::vector<std::string> under_twenty = {
+        "zéro", "un", "deux", "trois", "quatre", "cinq", "six", "sept", "huit", "neuf",
+        "dix", "onze", "douze", "treize", "quatorze", "quinze", "seize", "dix-sept",
+        "dix-huit", "dix-neuf",
+    };
+    static const std::vector<std::string> tens = {
+        "", "", "vingt", "trente", "quarante", "cinquante", "soixante",
+    };
+    if (number < 0) {
+        return "moins " + french_number(-number);
+    }
+    if (number < 20) {
+        return under_twenty[static_cast<std::size_t>(number)];
+    }
+    if (number < 70) {
+        const int64_t rest = number % 10;
+        const std::string head = tens[static_cast<std::size_t>(number / 10)];
+        if (rest == 0) {
+            return head;
+        }
+        return head + (rest == 1 ? " et " : "-") + french_number(rest);
+    }
+    if (number < 80) {
+        const int64_t rest = number - 60;
+        return "soixante" + std::string(rest == 11 ? " et " : "-") + french_number(rest);
+    }
+    if (number < 100) {
+        const int64_t rest = number - 80;
+        if (rest == 0) {
+            return "quatre-vingts";
+        }
+        return "quatre-vingt-" + french_number(rest);
+    }
+    if (number < 1000) {
+        const int64_t hundreds = number / 100;
+        const int64_t rest = number % 100;
+        std::string head = hundreds == 1 ? "cent" : french_number(hundreds) + " cent";
+        if (rest == 0) {
+            return hundreds == 1 ? head : head + "s";
+        }
+        return head + " " + french_number(rest);
+    }
+    if (number >= 1000000000) {
+        const int64_t count = number / 1000000000;
+        const int64_t rest = number % 1000000000;
+        const std::string head = french_number(count) + (count == 1 ? " milliard" : " milliards");
+        return rest == 0 ? head : head + " " + french_number(rest);
+    }
+    if (number >= 1000000) {
+        const int64_t count = number / 1000000;
+        const int64_t rest = number % 1000000;
+        const std::string head = french_number(count) + (count == 1 ? " million" : " millions");
+        return rest == 0 ? head : head + " " + french_number(rest);
+    }
+    const int64_t count = number / 1000;
+    const int64_t rest = number % 1000;
+    const std::string head = count == 1 ? "mille" : french_number(count) + " mille";
+    return rest == 0 ? head : head + " " + french_number(rest);
+}
+
+std::string german_number(int64_t number) {
+    static const std::vector<std::string> under_twenty = {
+        "null", "eins", "zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht", "neun",
+        "zehn", "elf", "zwölf", "dreizehn", "vierzehn", "fünfzehn", "sechzehn",
+        "siebzehn", "achtzehn", "neunzehn",
+    };
+    static const std::vector<std::string> tens = {
+        "", "", "zwanzig", "dreißig", "vierzig", "fünfzig", "sechzig", "siebzig", "achtzig", "neunzig",
+    };
+    if (number < 0) {
+        return "minus " + german_number(-number);
+    }
+    if (number < 20) {
+        return under_twenty[static_cast<std::size_t>(number)];
+    }
+    if (number < 100) {
+        const int64_t rest = number % 10;
+        const std::string head = tens[static_cast<std::size_t>(number / 10)];
+        if (rest == 0) {
+            return head;
+        }
+        return (rest == 1 ? "ein" : german_number(rest)) + std::string("und") + head;
+    }
+    if (number < 1000) {
+        const int64_t count = number / 100;
+        const int64_t rest = number % 100;
+        const std::string head = count == 1 ? "einhundert" : german_number(count) + "hundert";
+        return rest == 0 ? head : head + german_number(rest);
+    }
+    if (number < 1000000) {
+        const int64_t count = number / 1000;
+        const int64_t rest = number % 1000;
+        const std::string head = count == 1 ? "eintausend" : german_number(count) + "tausend";
+        return rest == 0 ? head : head + german_number(rest);
+    }
+    if (number >= 1000000000) {
+        const int64_t count = number / 1000000000;
+        const int64_t rest = number % 1000000000;
+        const std::string head = count == 1 ? "eine Milliarde" : german_number(count) + " Milliarden";
+        return rest == 0 ? head : head + " " + german_number(rest);
+    }
+    const int64_t count = number / 1000000;
+    const int64_t rest = number % 1000000;
+    const std::string head = count == 1 ? "eine Million" : german_number(count) + " Millionen";
+    return rest == 0 ? head : head + " " + german_number(rest);
+}
+
+std::string vietnamese_below_thousand(int64_t number, bool force_hundreds = false) {
+    static const std::vector<std::string> digits = {
+        "không", "một", "hai", "ba", "bốn", "năm", "sáu", "bảy", "tám", "chín",
+    };
+    const int64_t hundreds = number / 100;
+    const int64_t rest = number % 100;
+    std::vector<std::string> words;
+    if (hundreds > 0 || force_hundreds) {
+        words.push_back(digits[static_cast<std::size_t>(hundreds)]);
+        words.push_back("trăm");
+        if (rest > 0 && rest < 10) {
+            words.push_back("linh");
+        }
+    }
+    if (rest >= 10) {
+        const int64_t tens = rest / 10;
+        const int64_t unit = rest % 10;
+        words.push_back(tens == 1 ? "mười" : digits[static_cast<std::size_t>(tens)] + " mươi");
+        if (unit > 0) {
+            if (unit == 1 && tens > 1) {
+                words.push_back("mốt");
+            } else if (unit == 4 && tens > 1) {
+                words.push_back("tư");
+            } else if (unit == 5) {
+                words.push_back("lăm");
+            } else {
+                words.push_back(digits[static_cast<std::size_t>(unit)]);
+            }
+        }
+    } else if (rest > 0) {
+        words.push_back(digits[static_cast<std::size_t>(rest)]);
+    }
+    if (words.empty()) {
+        return digits[0];
+    }
+    std::ostringstream out;
+    for (std::size_t index = 0; index < words.size(); ++index) {
+        if (index > 0) {
+            out << " ";
+        }
+        out << words[index];
+    }
+    return out.str();
+}
+
+std::string vietnamese_number(int64_t number) {
+    if (number < 0) {
+        return "âm " + vietnamese_number(-number);
+    }
+    if (number < 1000) {
+        return vietnamese_below_thousand(number);
+    }
+    for (const auto& scale : std::vector<std::pair<int64_t, const char*>>{
+             {1000000000, "tỷ"}, {1000000, "triệu"}, {1000, "nghìn"},
+         }) {
+        if (number >= scale.first) {
+            const int64_t count = number / scale.first;
+            const int64_t rest = number % scale.first;
+            const std::string head = vietnamese_number(count) + " " + scale.second;
+            if (rest == 0) {
+                return head;
+            }
+            const std::string tail = rest < 100
+                ? vietnamese_below_thousand(rest, true)
+                : vietnamese_number(rest);
+            return head + " " + tail;
+        }
+    }
+    return std::to_string(number);
+}
+
 std::string cardinal(int64_t value, const std::string& language) {
     if (language == "es") {
         return spanish_number(value);
     }
     if (language == "it") {
         return italian_number(value);
+    }
+    if (language == "fr") {
+        return french_number(value);
+    }
+    if (language == "de") {
+        return german_number(value);
+    }
+    if (language == "vi") {
+        return vietnamese_number(value);
     }
     return english_number(value);
 }
@@ -236,6 +439,37 @@ std::string ordinal(int64_t value, const std::string& language) {
     };
     if (language == "en" && value > 0 && value < static_cast<int64_t>(english_ordinals.size())) {
         return english_ordinals[static_cast<std::size_t>(value)];
+    }
+    if (language == "fr") {
+        if (value == 1) return "premier";
+        if (value == 2) return "deuxième";
+        if (value == 5) return "cinquième";
+        if (value == 9) return "neuvième";
+        std::string word = french_number(value);
+        const auto ends_with = [&word](const std::string& suffix) {
+            return word.size() >= suffix.size()
+                && word.compare(word.size() - suffix.size(), suffix.size(), suffix) == 0;
+        };
+        // Only plural scale words drop the "s" (quatre-vingtième); words like
+        // "trois" keep it (troisième).
+        if (ends_with("e") || ends_with("vingts") || ends_with("cents")
+            || ends_with("millions") || ends_with("milliards")) {
+            word.resize(word.size() - 1);
+        }
+        return word + "ième";
+    }
+    if (language == "de") {
+        if (value == 1) return "erste";
+        if (value == 2) return "zweite";
+        if (value == 3) return "dritte";
+        if (value == 7) return "siebte";
+        if (value == 8) return "achte";
+        return german_number(value) + (value < 20 ? "te" : "ste");
+    }
+    if (language == "vi") {
+        if (value == 1) return "thứ nhất";
+        if (value == 4) return "thứ tư";
+        return "thứ " + vietnamese_number(value);
     }
     return cardinal(value, language);
 }
@@ -294,7 +528,7 @@ std::pair<std::string, std::string> split_decimal(
     if (comma != std::string::npos && dot != std::string::npos) {
         separator = comma > dot ? ',' : '.';
     } else if (comma != std::string::npos) {
-        if (!grouped_integer(value, ',') && (language == "es" || language == "it" || currency)) {
+        if (!grouped_integer(value, ',') && (language == "es" || language == "it" || language == "fr" || language == "de" || language == "vi" || currency)) {
             separator = ',';
         }
     } else if (dot != std::string::npos) {
@@ -323,7 +557,11 @@ std::string decimal_words(const std::string& raw, const std::string& language) {
     if (parts.second.empty()) {
         return whole;
     }
-    const std::string point = language == "es" ? "coma" : language == "it" ? "virgola" : "point";
+    const std::string point = language == "es" ? "coma" :
+        language == "it" ? "virgola" :
+        language == "fr" ? "virgule" :
+        language == "de" ? "Komma" :
+        language == "vi" ? "phẩy" : "point";
     std::string out = whole + " " + point;
     for (char digit : parts.second) {
         out += " " + cardinal(digit - '0', language);
@@ -332,7 +570,12 @@ std::string decimal_words(const std::string& raw, const std::string& language) {
 }
 
 std::string and_word(const std::string& language) {
-    return language == "es" ? "y" : language == "it" ? "e" : "and";
+    if (language == "es") return "y";
+    if (language == "it") return "e";
+    if (language == "fr") return "et";
+    if (language == "de") return "und";
+    if (language == "vi") return "và";
+    return "and";
 }
 
 std::string letter_name(char letter, const std::string& language) {
@@ -348,11 +591,27 @@ std::string letter_name(char letter, const std::string& language) {
         "a", "bi", "ci", "di", "e", "effe", "gi", "acca", "i", "i lunga", "cappa", "elle", "emme",
         "enne", "o", "pi", "cu", "erre", "esse", "ti", "u", "vu", "doppia vu", "ics", "ipsilon", "zeta",
     };
+    static const std::vector<std::string> french = {
+        "a", "bé", "cé", "dé", "e", "effe", "gé", "ache", "i", "ji", "ka", "elle", "emme",
+        "enne", "o", "pé", "ku", "erre", "esse", "té", "u", "vé", "double vé", "iks", "i grec", "zède",
+    };
+    static const std::vector<std::string> german = {
+        "a", "be", "tse", "de", "e", "eff", "ge", "ha", "i", "jot", "ka", "ell", "emm",
+        "enn", "o", "pe", "ku", "err", "ess", "te", "u", "fau", "we", "iks", "ypsilon", "tset",
+    };
+    static const std::vector<std::string> vietnamese = {
+        "a", "bê", "xê", "dê", "e", "ép", "giê", "hát", "i", "giây", "ca", "e lờ", "e mờ",
+        "e nờ", "o", "pê", "quy", "e rờ", "ét", "tê", "u", "vê", "vê kép", "ích", "i dài", "dét",
+    };
     const unsigned char upper = static_cast<unsigned char>(std::toupper(static_cast<unsigned char>(letter)));
     if (upper < 'A' || upper > 'Z') {
         return std::string(1, letter);
     }
-    const auto& names = language == "es" ? spanish : language == "it" ? italian : english;
+    const auto& names = language == "es" ? spanish :
+        language == "it" ? italian :
+        language == "fr" ? french :
+        language == "de" ? german :
+        language == "vi" ? vietnamese : english;
     return names[static_cast<std::size_t>(upper - 'A')];
 }
 
@@ -411,6 +670,30 @@ std::string currency_words(
         } else {
             major_singular = "dollaro"; major_plural = "dollari"; minor_singular = "cent"; minor_plural = "cent";
         }
+    } else if (language == "fr") {
+        if (symbol == "£") {
+            major_singular = "livre"; major_plural = "livres"; minor_singular = "penny"; minor_plural = "pence";
+        } else if (symbol == "€") {
+            major_singular = "euro"; major_plural = "euros"; minor_singular = "centime"; minor_plural = "centimes";
+        } else {
+            major_singular = "dollar"; major_plural = "dollars"; minor_singular = "centime"; minor_plural = "centimes";
+        }
+    } else if (language == "de") {
+        if (symbol == "£") {
+            major_singular = "Pfund"; major_plural = "Pfund"; minor_singular = "Penny"; minor_plural = "Pence";
+        } else if (symbol == "€") {
+            major_singular = "Euro"; major_plural = "Euro"; minor_singular = "Cent"; minor_plural = "Cent";
+        } else {
+            major_singular = "Dollar"; major_plural = "Dollar"; minor_singular = "Cent"; minor_plural = "Cent";
+        }
+    } else if (language == "vi") {
+        if (symbol == "£") {
+            major_singular = "bảng Anh"; major_plural = "bảng Anh"; minor_singular = "xu"; minor_plural = "xu";
+        } else if (symbol == "€") {
+            major_singular = "euro"; major_plural = "euro"; minor_singular = "xu"; minor_plural = "xu";
+        } else {
+            major_singular = "đô la"; major_plural = "đô la"; minor_singular = "xu"; minor_plural = "xu";
+        }
     } else if (symbol == "£") {
         major_singular = "pound"; major_plural = "pounds"; minor_singular = "penny"; minor_plural = "pence";
     } else if (symbol == "€") {
@@ -442,7 +725,23 @@ std::string month_name(int month, const std::string& language) {
         "gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno",
         "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre",
     };
-    const auto& names = language == "es" ? spanish : language == "it" ? italian : english;
+    static const std::vector<std::string> french = {
+        "janvier", "février", "mars", "avril", "mai", "juin",
+        "juillet", "août", "septembre", "octobre", "novembre", "décembre",
+    };
+    static const std::vector<std::string> german = {
+        "Januar", "Februar", "März", "April", "Mai", "Juni",
+        "Juli", "August", "September", "Oktober", "November", "Dezember",
+    };
+    static const std::vector<std::string> vietnamese = {
+        "tháng một", "tháng hai", "tháng ba", "tháng tư", "tháng năm", "tháng sáu",
+        "tháng bảy", "tháng tám", "tháng chín", "tháng mười", "tháng mười một", "tháng mười hai",
+    };
+    const auto& names = language == "es" ? spanish :
+        language == "it" ? italian :
+        language == "fr" ? french :
+        language == "de" ? german :
+        language == "vi" ? vietnamese : english;
     return month >= 1 && month <= 12 ? names[static_cast<std::size_t>(month - 1)] : std::string();
 }
 
@@ -456,6 +755,9 @@ std::string date_words(int month, int day, int year, const std::string& language
     if (language == "it") {
         return cardinal(day, language) + " " + month_name(month, language) + " " + cardinal(year, language);
     }
+    if (language == "fr" || language == "de" || language == "vi") {
+        return cardinal(day, language) + " " + month_name(month, language) + " " + cardinal(year, language);
+    }
     return month_name(month, language) + " " + ordinal(day, language) + ", " + cardinal(year, language);
 }
 
@@ -465,6 +767,15 @@ std::string fraction_words(int64_t numerator, int64_t denominator, const std::st
     }
     if (language == "it") {
         return cardinal(numerator, language) + " su " + cardinal(denominator, language);
+    }
+    if (language == "fr") {
+        return cardinal(numerator, language) + " sur " + cardinal(denominator, language);
+    }
+    if (language == "de") {
+        return cardinal(numerator, language) + " durch " + cardinal(denominator, language);
+    }
+    if (language == "vi") {
+        return cardinal(numerator, language) + " phần " + cardinal(denominator, language);
     }
     static const std::vector<std::pair<std::string, std::string>> names = {
         {"", ""}, {"", ""}, {"half", "halves"}, {"third", "thirds"},
@@ -479,7 +790,7 @@ std::string fraction_words(int64_t numerator, int64_t denominator, const std::st
     return cardinal(numerator, language) + " over " + cardinal(denominator, language);
 }
 
-std::string normalize_punctuation(std::string value) {
+std::string normalize_punctuation(std::string value, const std::string& language) {
     for (const std::string& zero_width : {u8"\u200b", u8"\u200c", u8"\u200d", u8"\ufeff"}) {
         replace_all(value, zero_width, "");
     }
@@ -511,8 +822,18 @@ std::string normalize_punctuation(std::string value) {
     replace_all(value, u8"\u00bc", " 1/4 ");
     replace_all(value, u8"\u00bd", " 1/2 ");
     replace_all(value, u8"\u00be", " 3/4 ");
-    replace_all(value, "=", " equals ");
-    replace_all(value, u8"\u00b0", " degrees ");
+    const std::string equals_word = language == "es" ? "igual" :
+        language == "it" ? "uguale" :
+        language == "fr" ? "égal" :
+        language == "de" ? "gleich" :
+        language == "vi" ? "bằng" : "equals";
+    const std::string degrees_word = language == "es" ? "grados" :
+        language == "it" ? "gradi" :
+        language == "fr" ? "degrés" :
+        language == "de" ? "Grad" :
+        language == "vi" ? "độ" : "degrees";
+    replace_all(value, "=", " " + equals_word + " ");
+    replace_all(value, u8"\u00b0", " " + degrees_word + " ");
     for (std::size_t index = 0; index < value.size(); ++index) {
         if (value[index] != ':') {
             continue;
@@ -530,7 +851,7 @@ std::string normalize_punctuation(std::string value) {
 
 std::string normalize_spoken_text(const std::string& text, const std::string& language) {
     const std::string lang = normalizer_language(language);
-    std::string value = normalize_punctuation(text);
+    std::string value = normalize_punctuation(text, lang);
     value = expand_dotted_initialisms(value, lang);
 
     // Currency is expanded before generic decimals and integers.
@@ -566,7 +887,11 @@ std::string normalize_spoken_text(const std::string& text, const std::string& la
         return trim(cardinal(hour, lang) + " " + minute_words + " " + suffix);
     });
     value = replace_regex(value, std::regex(R"(\b(\d[\d.,]*)%)"), [&](const RegexMatch& match) {
-        const std::string percent = lang == "es" ? "por ciento" : lang == "it" ? "per cento" : "percent";
+        const std::string percent = lang == "es" ? "por ciento" :
+            lang == "it" ? "per cento" :
+            lang == "fr" ? "pour cent" :
+            lang == "de" ? "Prozent" :
+            lang == "vi" ? "phần trăm" : "percent";
         return decimal_words(match[1].str(), lang) + " " + percent;
     });
     value = replace_regex(value, std::regex(R"(\b(\d+)(st|nd|rd|th|o|a)\b)", std::regex::icase), [&](const RegexMatch& match) {
@@ -638,7 +963,7 @@ std::string normalize_spoken_text(const std::string& text, const std::string& la
         return fraction_words(parse_digits(match[1].str()), parse_digits(match[2].str()), lang);
     });
 
-    if (lang == "es" || lang == "it") {
+    if (lang == "es" || lang == "it" || lang == "fr" || lang == "de" || lang == "vi") {
         value = replace_regex(value, std::regex(R"(\b\d[\d.]*,\d+\b)"), [&](const RegexMatch& match) {
             return decimal_words(match[0].str(), lang);
         });

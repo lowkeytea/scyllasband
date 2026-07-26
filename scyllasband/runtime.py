@@ -606,6 +606,16 @@ def _normalize_request_language(value: str | None) -> str | None:
         "british_english",
     }:
         return "en_gb"
+    if language in {"es", "es_mx", "es_es", "spa", "spanish"}:
+        return "es"
+    if language in {"it", "it_it", "ita", "italian"}:
+        return "it"
+    if language in {"fr", "fr_fr", "fra", "fre", "french"}:
+        return "fr"
+    if language in {"de", "de_de", "deu", "ger", "german"}:
+        return "de"
+    if language in {"vi", "vi_vn", "vi_hn", "vie", "vietnamese"}:
+        return "vi"
     return language
 
 

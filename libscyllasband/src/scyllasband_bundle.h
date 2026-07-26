@@ -21,6 +21,7 @@ struct ScyllasBandBundleInfo {
     std::string contract_version;
     std::string architecture;
     std::string model_name;
+    std::string model_version = "3";
     std::string selected_backend;
     std::vector<std::string> preferred_backends;
     std::map<std::string, std::string> assets;

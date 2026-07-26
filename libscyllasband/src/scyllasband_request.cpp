@@ -75,6 +75,26 @@ std::string normalize_language(const char* raw) {
         language == "uk" || language == "british" || language == "british_english") {
         return "en_gb";
     }
+    if (language == "es" || language == "es_mx" || language == "es_es" ||
+        language == "spa" || language == "spanish") {
+        return "es";
+    }
+    if (language == "it" || language == "it_it" || language == "ita" ||
+        language == "italian") {
+        return "it";
+    }
+    if (language == "fr" || language == "fr_fr" || language == "fra" ||
+        language == "fre" || language == "french") {
+        return "fr";
+    }
+    if (language == "de" || language == "de_de" || language == "deu" ||
+        language == "ger" || language == "german") {
+        return "de";
+    }
+    if (language == "vi" || language == "vi_vn" || language == "vi_hn" ||
+        language == "vie" || language == "vietnamese") {
+        return "vi";
+    }
     return language;
 }
 

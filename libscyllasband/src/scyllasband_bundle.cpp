@@ -443,6 +443,7 @@ ScyllasBandBundleInfo load_scyllasband_bundle_info(
         );
     }
     info.model_name = string_for_key(manifest, "model_name");
+    info.model_version = string_for_key(manifest, "model_version", "3");
     info.architecture = string_for_key(manifest, "architecture", "scyllasband-duration-flow");
     validate_architecture(info.architecture);
     info.default_language = string_for_key(manifest, "default_language", "en_us");
@@ -519,16 +520,46 @@ ScyllasBandBundleInfo load_scyllasband_bundle_info(
         info.affect_legacy_presets = float_array_map_for_object(object_for_key(affect, "legacy_presets"));
         const std::string affect_guidance = object_for_key(affect, "guidance");
         info.affect_guidance_default_scale = float_for_key(affect_guidance, "default_scale", 1.0f);
-        const std::vector<std::string> expected_axes = {
-            "calm", "joy", "anger", "sadness", "sarcasm", "questioning"
-        };
-        if (info.affect_graph_input_contract != "scyllasband_affect_v1") {
+        const int axis_version = int_for_key(affect, "axis_order_version", 0);
+        const std::vector<std::string> expected_axes = axis_version == 1
+            ? std::vector<std::string>{
+                "calm", "joy", "anger", "sadness", "sarcasm", "questioning"
+            }
+            : axis_version == 2
+            ? std::vector<std::string>{
+                "calm", "joy", "anger", "sadness", "sarcasm", "whisper"
+            }
+            : std::vector<std::string>{};
+        if (expected_axes.empty()) {
+            throw std::runtime_error(
+                "Unsupported affect axis_order_version '" + std::to_string(axis_version) + "'"
+            );
+        }
+        const std::string expected_graph_contract =
+            "scyllasband_affect_v" + std::to_string(axis_version);
+        if (info.affect_graph_input_contract != expected_graph_contract) {
             throw std::runtime_error(
                 "Unsupported affect graph_input_contract '" + info.affect_graph_input_contract + "'"
             );
         }
         if (info.affect_axes != expected_axes) {
             throw std::runtime_error("Affect axes must use the canonical Scylla's Band six-axis order");
+        }
+        int model_major = 0;
+        try {
+            model_major = std::stoi(info.model_version);
+        } catch (const std::exception&) {
+            throw std::runtime_error(
+                "model_version must start with an integer: '" + info.model_version + "'"
+            );
+        }
+        const int expected_model_axis_version = model_major >= 4 ? 2 : 1;
+        if (axis_version != expected_model_axis_version) {
+            throw std::runtime_error(
+                "model_version '" + info.model_version
+                + "' is incompatible with affect axis_order_version '"
+                + std::to_string(axis_version) + "'"
+            );
         }
         auto validate_presets = [&](const std::map<std::string, std::vector<float>>& presets) {
             for (const auto& item : presets) {
@@ -771,10 +802,11 @@ std::string bundle_summary_json(const ScyllasBandBundleInfo& bundle) {
 
     std::ostringstream metadata;
     metadata << "{"
-             << "\"contract_version\":\"" << json_escape(bundle.contract_version) << "\"," 
-             << "\"architecture\":\"" << json_escape(bundle.architecture) << "\"," 
-             << "\"model_name\":\"" << json_escape(bundle.model_name) << "\"," 
-             << "\"backend\":\"" << json_escape(bundle.selected_backend) << "\"," 
+             << "\"contract_version\":\"" << json_escape(bundle.contract_version) << "\","
+             << "\"architecture\":\"" << json_escape(bundle.architecture) << "\","
+             << "\"model_name\":\"" << json_escape(bundle.model_name) << "\","
+             << "\"model_version\":\"" << json_escape(bundle.model_version) << "\","
+             << "\"backend\":\"" << json_escape(bundle.selected_backend) << "\","
              << "\"sample_rate\":" << bundle.sample_rate << ","
              << "\"hop_length\":" << bundle.hop_length << ","
              << "\"latent_hop_length\":" << bundle.latent_hop_length << ","

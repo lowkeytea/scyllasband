@@ -12,7 +12,7 @@ The default desktop/server runtime path remains the full-precision ONNX bundle. 
 - 24 kHz output with 100-mel acoustic features and 24-D acoustic latents.
 - Four public text-input languages: `en_us`, `en_gb`, `es`, and `it`.
 - Ten managed voices: `ariadne`, `felix`, `gwen`, `ink`, `max`, `orpheus`, `rex`, `scylla`, `stone`, and `tuesday`.
-- Six independently scored affect controls: `calm`, `joy`, `anger`, `sadness`, `sarcasm`, and `questioning`.
+- Six independently scored, bundle-versioned affect controls. Legacy model versions use `questioning` as the sixth axis; model version 4 and newer use `whisper`.
 - Affect CFG acts on both duration and acoustic-flow prediction while retaining voice/reference conditioning. The current model was trained with affect dropout, so guidance above `1` can strengthen delivery without changing the six-axis input range.
 - Long-form chunking is enabled by default, including boundary metadata, punctuation pause floors, prefix-latent carryover, and span context.
 - Group-speak input can label lines or inline spans with `[voice]`, `[voice:language]`, or `[voice:language:axis=value,...]`.
@@ -113,7 +113,21 @@ Language-only inline tags retain the active affect vector, while a new `axis=val
 
 ### Emotion Controls and CFG
 
-The six values are continuous, composable controls rather than mutually exclusive emotion classes. `calm`, `joy`, `anger`, and `sadness` describe the core delivery; `sarcasm` and `questioning` are overlays that can be mixed with any core delivery. Each axis stays in `[0, 1]`, omitted axes are zero, and multiple axes may be nonzero at the same time.
+The selected bundle manifest is authoritative for affect names. Model versions
+through 3 use affect axis-order version 1:
+`calm, joy, anger, sadness, sarcasm, questioning`. Model version 4 and newer
+use axis-order version 2:
+`calm, joy, anger, sadness, sarcasm, whisper`. Both contracts are
+six-dimensional, so the runtime validates the model version, axis-order
+version, names, and graph contract together. It never treats `questioning` as
+`whisper` merely because both occupy the sixth tensor coordinate.
+
+`model_version` is the internal model number carried in the bundle manifest and
+is independent of the public release number. A bundle that omits the field is
+read as model version `3`. Requesting an axis the selected bundle does not
+declare is rejected as an unknown axis.
+
+The six values are continuous, composable controls rather than mutually exclusive emotion classes. `calm`, `joy`, `anger`, and `sadness` describe the core delivery; `sarcasm` and the selected bundle's sixth axis (`questioning` or `whisper`) are overlays that can be mixed with any core delivery. Each axis stays in `[0, 1]`, omitted axes are zero, and multiple axes may be nonzero at the same time.
 
 The training ratings use a `0` to `4` scale. Runtime values are those ratings divided by four: `1 -> 0.25`, `2 -> 0.5`, `3 -> 0.75`, and `4 -> 1.0`. Start with the axis values themselves when changing the kind or mixture of delivery:
 
@@ -173,7 +187,7 @@ python -m scyllasband speak scyllasband/models/litert \
 
 The Python ONNX backend requires `onnxruntime`. The Python LiteRT reference path requires one of `ai-edge-litert`, `tflite-runtime`, or TensorFlow. Native LiteRT uses staged LiteRT shared libraries through `libscyllasband`.
 
-ONNX, Python LiteRT, and native LiteRT expose the same six-axis affect and CFG request contract. The selected bundle manifest remains authoritative, and bundles that do not declare `controls.affect.enabled` reject six-axis requests.
+ONNX, Python LiteRT, and native LiteRT expose the selected bundle's six-axis affect and CFG request contract. The selected bundle manifest remains authoritative, and bundles that do not declare `controls.affect.enabled` reject six-axis requests.
 
 ### Long-Form Controls
 

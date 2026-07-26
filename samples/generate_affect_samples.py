@@ -22,8 +22,8 @@ sys.path.insert(0, str(REPO_ROOT))
 from scyllasband import ScyllasBandRuntime, SynthesisRequest  # noqa: E402
 
 
-AFFECT_AXES = ("calm", "joy", "anger", "sadness", "sarcasm", "questioning")
-DELIVERIES = ("calm", "joy", "anger", "sadness", "sarcasm")
+AFFECT_AXES = ("calm", "joy", "anger", "sadness", "sarcasm", "questioning", "whisper")
+DELIVERIES = ("calm", "joy", "anger", "sadness", "sarcasm", "whisper")
 GALLERY_URL = "https://lowkeytea.github.io/scyllasband/"
 
 

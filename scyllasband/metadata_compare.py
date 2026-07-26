@@ -6,7 +6,9 @@ from pathlib import Path
 from typing import Any
 
 
-AFFECT_AXES = ("calm", "joy", "anger", "sadness", "sarcasm", "questioning")
+AFFECT_AXES_V1 = ("calm", "joy", "anger", "sadness", "sarcasm", "questioning")
+AFFECT_AXES_V2 = ("calm", "joy", "anger", "sadness", "sarcasm", "whisper")
+SUPPORTED_AFFECT_AXES = (*AFFECT_AXES_V1, "whisper")
 
 
 DEFAULT_CHUNK_FIELDS = (
@@ -231,7 +233,14 @@ def _normalize_chunk(
                 prepared.get("affect_vector"),
                 request.get("affect"),
                 top.get("affect"),
-            )
+            ),
+            axes=_first_present(
+                chunk.get("affect_axes"),
+                summary.get("affect_axes"),
+                metadata.get("affect_axes"),
+                request.get("affect_axes"),
+                top.get("affect_axes"),
+            ),
         ),
         "affect_guidance_scale": _float_or_none(
             _first_present(
@@ -407,18 +416,29 @@ def _normalize_guidance(value: Any) -> list[dict[str, Any]] | None:
     return None
 
 
-def _normalize_affect(value: Any) -> dict[str, float] | Any:
+def _normalize_affect(
+    value: Any,
+    *,
+    axes: Any = None,
+) -> dict[str, float] | Any:
     if isinstance(value, dict):
         normalized: dict[str, float] = {}
-        for axis in AFFECT_AXES:
+        for axis in SUPPORTED_AFFECT_AXES:
             number = _float_or_none(value.get(axis))
             if number is not None:
                 normalized[axis] = number
         return normalized or value
-    if isinstance(value, (list, tuple)) and len(value) == len(AFFECT_AXES):
+    axis_order = (
+        tuple(str(item) for item in axes)
+        if isinstance(axes, (list, tuple))
+        else AFFECT_AXES_V1
+    )
+    if axis_order not in {AFFECT_AXES_V1, AFFECT_AXES_V2}:
+        axis_order = AFFECT_AXES_V1
+    if isinstance(value, (list, tuple)) and len(value) == len(axis_order):
         numbers = [_float_or_none(item) for item in value]
         if all(number is not None for number in numbers):
-            return {axis: float(number) for axis, number in zip(AFFECT_AXES, numbers)}
+            return {axis: float(number) for axis, number in zip(axis_order, numbers)}
     return value
 
 
