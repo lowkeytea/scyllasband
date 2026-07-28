@@ -552,18 +552,11 @@ def _validate_affect_contract(manifest: ScyllasBandBundleManifest) -> None:
         )
     if int(affect.get("dimension") or 0) != len(expected_axes):
         raise BundleValidationError("Affect dimension must be 6")
-    try:
-        model_major = int(manifest.model_version.split(".", 1)[0])
-    except ValueError as exc:
-        raise BundleValidationError(
-            f"model_version must start with an integer: {manifest.model_version!r}"
-        ) from exc
-    expected_model_axis_version = 2 if model_major >= 4 else 1
-    if axis_order_version != expected_model_axis_version:
-        raise BundleValidationError(
-            f"model_version {manifest.model_version} requires affect axis order "
-            f"version {expected_model_axis_version}, got {axis_order_version}"
-        )
+    # The affect contract is self-describing: axis_order_version alone fixes both
+    # the axis names and the graph input contract, and both are checked above, so
+    # v1 `questioning` can never be read as v2 `whisper`. model_version is release
+    # metadata and is deliberately NOT cross-checked against the axis order --
+    # doing so hardcodes a release-numbering scheme into the runtime.
     if affect.get("range") != [0.0, 1.0]:
         raise BundleValidationError("Affect range must be [0.0, 1.0]")
     if not bool(affect.get("condition_mask_input", False)):
@@ -625,15 +618,14 @@ def _runtime_acceleration_metadata(
     bundle_path: Path,
     manifest: ScyllasBandBundleManifest,
 ) -> tuple[dict[str, Any], str | None]:
+    # The manifest is the only public source of runtime-acceleration metadata.
+    # export_status.json is build provenance -- it records local checkpoint paths
+    # and is not part of the published bundle contract, so it is not consulted.
+    del bundle_path
     controls = manifest.controls if isinstance(manifest.controls, dict) else {}
     manifest_metadata = controls.get("runtime_acceleration")
     if isinstance(manifest_metadata, dict):
         return dict(manifest_metadata), "manifest.controls.runtime_acceleration"
-
-    export_status = _load_optional_json(bundle_path / "export_status.json")
-    status_metadata = export_status.get("runtime_acceleration")
-    if isinstance(status_metadata, dict):
-        return dict(status_metadata), "export_status.runtime_acceleration"
 
     return {}, None
 

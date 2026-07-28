@@ -545,22 +545,12 @@ ScyllasBandBundleInfo load_scyllasband_bundle_info(
         if (info.affect_axes != expected_axes) {
             throw std::runtime_error("Affect axes must use the canonical Scylla's Band six-axis order");
         }
-        int model_major = 0;
-        try {
-            model_major = std::stoi(info.model_version);
-        } catch (const std::exception&) {
-            throw std::runtime_error(
-                "model_version must start with an integer: '" + info.model_version + "'"
-            );
-        }
-        const int expected_model_axis_version = model_major >= 4 ? 2 : 1;
-        if (axis_version != expected_model_axis_version) {
-            throw std::runtime_error(
-                "model_version '" + info.model_version
-                + "' is incompatible with affect axis_order_version '"
-                + std::to_string(axis_version) + "'"
-            );
-        }
+        // The affect contract is self-describing: axis_order_version alone fixes
+        // both the axis names and the graph input contract, and both are checked
+        // above, so v1 'questioning' can never be read as v2 'whisper'.
+        // model_version is release metadata and is deliberately NOT cross-checked
+        // against the axis order -- doing so hardcodes a release-numbering scheme
+        // into the runtime. Keep this in sync with scyllasband/contract.py.
         auto validate_presets = [&](const std::map<std::string, std::vector<float>>& presets) {
             for (const auto& item : presets) {
                 if (item.second.size() != expected_axes.size()) {
