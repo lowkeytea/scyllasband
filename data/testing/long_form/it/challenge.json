@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "id": "it_challenge_01",
+  "kind": "challenge",
+  "language": "it",
+  "input_path": "it/challenge.txt",
+  "training_overlap": "fully_held_out",
+  "provenance": {"kind": "post_training_authored", "redistribution": "Apache-2.0"},
+  "challenge_spans": [
+    {"surface": "po'", "tags": ["apostrophe", "word_boundary"], "expected_spoken": "po'"},
+    {"surface": "un'amica", "tags": ["elision", "apostrophe"], "expected_spoken": "un'amica"},
+    {"surface": "Gli gnocchi", "tags": ["gli", "gn", "consonant_cluster"], "expected_spoken": "Gli gnocchi"},
+    {"surface": "scena con la scienza", "tags": ["sc", "minimal_contrast"], "expected_spoken": "scena con la scienza"},
+    {"surface": "22/05/2026", "tags": ["date", "digits"], "expected_spoken": "ventidue maggio duemilaventisei"},
+    {"surface": "12,50 €", "tags": ["currency", "decimal_comma"], "expected_spoken": "dodici euro e cinquanta centesimi"},
+    {"surface": "00318472", "tags": ["long_digit_sequence"], "expected_spoken": "zero zero tre uno otto quattro sette due"}
+  ]
+}

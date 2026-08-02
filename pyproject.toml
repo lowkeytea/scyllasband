@@ -12,11 +12,13 @@ dependencies = []
 [project.optional-dependencies]
 coreml = ["coremltools>=7"]
 litert = []
+validation = ["faster-whisper>=1.1,<2"]
 
 [project.scripts]
 scyllasband = "scyllasband.cli:main"
 scyllasband-speak = "scyllasband.cli:speak_main"
 scyllasband-group-speak = "scyllasband.cli:group_main"
+scyllasband-validate = "scyllasband.validation.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

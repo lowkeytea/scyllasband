@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "id": "es_challenge_01",
+  "kind": "challenge",
+  "language": "es",
+  "input_path": "es/challenge.txt",
+  "training_overlap": "fully_held_out",
+  "provenance": {"kind": "post_training_authored", "redistribution": "Apache-2.0"},
+  "challenge_spans": [
+    {"surface": "¿Quién", "tags": ["inverted_punctuation", "accent"], "expected_spoken": "quién"},
+    {"surface": "ferrocarril", "tags": ["rr"], "expected_spoken": "ferrocarril"},
+    {"surface": "Dígamelo", "tags": ["clitic", "stress"], "expected_spoken": "Dígamelo"},
+    {"surface": "22/05/2026", "tags": ["date", "digits"], "expected_spoken": "veintidós de mayo de dos mil veintiséis"},
+    {"surface": "12,50 €", "tags": ["currency", "decimal_comma"], "expected_spoken": "doce euros con cincuenta céntimos"},
+    {"surface": "00318472", "tags": ["long_digit_sequence"], "expected_spoken": "cero cero tres uno ocho cuatro siete dos"}
+  ]
+}

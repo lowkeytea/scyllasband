@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "id": "en_challenge_01",
+  "kind": "challenge",
+  "languages": ["en_us", "en_gb"],
+  "input_path": "en/challenge.txt",
+  "training_overlap": "fully_held_out",
+  "provenance": {"kind": "post_training_authored", "redistribution": "Apache-2.0"},
+  "spoken_replacements": [
+    {"surface": "7:45", "spoken": "seven forty five"},
+    {"surface": "HVAC", "spoken": "H V A C"},
+    {"surface": "SKU-A19", "spoken": "S K U A nineteen"},
+    {"surface": "00318472", "spoken": "zero zero three one eight four seven two"},
+    {"surface": "5–8 °F", "spoken": "five to eight degrees Fahrenheit"},
+    {"surface": "$12.50", "spoken": "twelve dollars and fifty cents"}
+  ],
+  "challenge_spans": [
+    {"surface": "read the final", "tags": ["heteronym"], "expected_spoken": "read the final", "expected_ipa": "ɹɛd"},
+    {"surface": "read the revision", "tags": ["heteronym"], "expected_spoken": "read the revision", "expected_ipa": "ɹiːd"},
+    {"surface": "lead engineer", "tags": ["heteronym"], "expected_spoken": "lead engineer", "expected_ipa": "liːd"},
+    {"surface": "lead weight", "tags": ["heteronym"], "expected_spoken": "lead weight", "expected_ipa": "lɛd"},
+    {"surface": "bass player", "tags": ["heteronym"], "expected_spoken": "bass player", "expected_ipa": "beɪs"},
+    {"surface": "bass swim", "tags": ["heteronym"], "expected_spoken": "bass swim", "expected_ipa": "bæs"},
+    {"surface": "SKU-A19", "tags": ["acronym", "mixed_identifier"], "expected_spoken": "S K U A nineteen"},
+    {"surface": "00318472", "tags": ["long_digit_sequence"], "expected_spoken": "zero zero three one eight four seven two"},
+    {"surface": "5–8 °F", "tags": ["range", "unit", "temperature"], "expected_spoken": "five to eight degrees Fahrenheit"}
+  ]
+}

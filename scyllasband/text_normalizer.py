@@ -485,6 +485,32 @@ class SpokenTextNormalizer:
         r")\.?\s+(\d{1,2})(?:,\s*(\d{2,4}))?\b",
         re.IGNORECASE,
     )
+    # Honorific abbreviations the G2P mispronounces. Each spelling here was
+    # chosen by matching the model's output for the expansion against espeak's
+    # output for the *abbreviation*, which is the target the model was distilled
+    # toward -- so "Mrs." expands to "misses" (espeak: mˈɪsɪz) rather than the
+    # etymological "missus", which the model renders mˈɪʃəs.
+    #
+    # Deliberately minimal. "Mr." is NOT listed: the model already handles it
+    # correctly before a name (7/8 across a name sample, matching the ceiling set
+    # by the names themselves), so expanding it would add risk for no gain.
+    # "Prof." and "vs" are likewise already correct. Titles whose expansion does
+    # not reproduce espeak's reading of the abbreviation (Ms., Jr., Sr., etc.,
+    # Ave., Rd.) are omitted rather than guessed at.
+    #
+    # This cannot help bare initialisms (FBI, USA, BBC). Spelling them as
+    # separate words gives each its own primary stress -- "bee bee see" becomes
+    # bˈiːbˈiːsˈiː where espeak has bˌiːbˌiːsˈiː -- so that class needs a G2P-side
+    # fix, not a normalizer one.
+    _TITLE_ABBREVIATIONS = {
+        "en": {"mrs": "misses", "dr": "doctor"},
+    }
+    # Only expand when a capitalised word follows, i.e. the honorific use
+    # ("Dr. Smith"). This leaves the street sense alone, where the abbreviation
+    # trails the name ("Main Dr.") and is not followed by a capitalised token.
+    _TITLE_ABBREVIATION_RE = re.compile(
+        r"(?<![A-Za-zÀ-ÖØ-öø-ÿÑñ])([A-Za-z]{2,4})\.?\s+(?=[A-ZÀ-ÖØ-Þ])"
+    )
     _DASH_LEFT_SINGLE_LETTER_RE = re.compile(
         r"(?<![A-Za-zÀ-ÖØ-öø-ÿÑñ])([A-Za-zÑñ])\s*-\s*(?=[A-Za-zÀ-ÖØ-öø-ÿÑñ0-9])"
     )
@@ -548,6 +574,7 @@ class SpokenTextNormalizer:
         if self.config.normalize_at_sign:
             value = self._normalize_at_symbols(value, lang)
         value = self._expand_dotted_initialisms(value, lang)
+        value = self._expand_title_abbreviations(value, lang)
         if self.config.expand_currency:
             value = re.sub(
                 r"([$£€])\s*([0-9](?:[0-9.,]*[0-9])?)",
@@ -593,6 +620,17 @@ class SpokenTextNormalizer:
             return " ".join(self._letter_name(letter, lang) for letter in letters)
 
         return self._DOTTED_INITIALISM_RE.sub(replace, text)
+
+    def _expand_title_abbreviations(self, text: str, lang: str) -> str:
+        table = self._TITLE_ABBREVIATIONS.get(lang)
+        if not table:
+            return text
+
+        def replace(match: re.Match[str]) -> str:
+            expansion = table.get(match.group(1).lower())
+            return f"{expansion} " if expansion else match.group(0)
+
+        return self._TITLE_ABBREVIATION_RE.sub(replace, text)
 
     def _expand_dash_letter_names(self, text: str, lang: str) -> str:
         def left(match: re.Match[str]) -> str:

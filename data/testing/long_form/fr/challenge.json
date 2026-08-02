@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "id": "fr_challenge_01",
+  "kind": "challenge",
+  "language": "fr",
+  "input_path": "fr/challenge.txt",
+  "training_overlap": "fully_held_out",
+  "provenance": {"kind": "post_training_authored", "redistribution": "Apache-2.0"},
+  "challenge_spans": [
+    {"surface": "Aujourd'hui", "tags": ["apostrophe", "irregular_word"], "expected_spoken": "Aujourd'hui"},
+    {"surface": "A-t-elle", "tags": ["hyphenated_inversion", "liaison"], "expected_spoken": "A-t-elle"},
+    {"surface": "l'œuvre", "tags": ["elision", "ligature"], "expected_spoken": "l'œuvre"},
+    {"surface": "22/05/2026", "tags": ["date", "digits"], "expected_spoken": "vingt-deux mai deux mille vingt-six"},
+    {"surface": "12,50 €", "tags": ["currency", "decimal_comma"], "expected_spoken": "douze euros et cinquante centimes"},
+    {"surface": "00318472", "tags": ["long_digit_sequence"], "expected_spoken": "zéro zéro trois un huit quatre sept deux"},
+    {"surface": "SNCF, TGV", "tags": ["initialism", "acronym"], "expected_spoken": "S N C F, T G V"}
+  ]
+}

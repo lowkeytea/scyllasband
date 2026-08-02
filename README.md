@@ -462,6 +462,44 @@ Text preparation is intentionally runtime-owned:
 
 Use `--no-normalize-text` only for pre-normalized regression tests. Use `--phones` only when intentionally bypassing text and G2P with model-ready phone symbols.
 
+## Model Validation
+
+The repository includes a frozen multilingual long-form suite under
+`data/testing/long_form`. The selected bundle manifest determines which
+voice, language, and affect jobs exist. Unsupported languages are not rendered,
+and the sixth-axis condition follows the declared affect axis order: v1 bundles
+run `questioning_2`, while v2 bundles run `whisper_2`.
+
+Install the optional ASR dependency and run a smoke evaluation:
+
+```bash
+pip install -e '.[validation]'
+python -m scyllasband.validation corpus
+python -m scyllasband.validation plan \
+    --bundle scyllasband/models/onnx \
+    --tier smoke --output validation_runs/shipped-smoke
+python -m scyllasband.validation render \
+    --run validation_runs/shipped-smoke \
+    --backend onnx --bundle scyllasband/models/onnx
+python -m scyllasband.validation asr \
+    --run validation_runs/shipped-smoke --profile smoke --workers 1
+python -m scyllasband.validation report \
+    --run validation_runs/shipped-smoke
+```
+
+Use `--profile release` for multilingual `large-v3` ASR. Increase `--workers`
+only when the GPU has room for one model instance per worker. `core` evaluates
+every declared voice/language cell on narrative text; `full` adds dialogue and
+pronunciation challenges. Every stage is resumable and accepts voice, language,
+condition, document, or job filters.
+
+The report at `validation_runs/shipped-smoke/report/index.html` compares the
+available backends, highlights ASR edits, plays generated audio through relative
+paths, and exports listening labels from the browser. An external PyTorch
+renderer can write the same per-job artifact contract and be added with
+`import-results`; the public runtime never imports trainer code. Core ML is
+reserved in the schema but does not yet have a public renderer.
+
 ## Repository Structure
 
 ```text

@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "id": "de_challenge_01",
+  "kind": "challenge",
+  "language": "de",
+  "input_path": "de/challenge.txt",
+  "training_overlap": "fully_held_out",
+  "provenance": {"kind": "post_training_authored", "redistribution": "Apache-2.0"},
+  "challenge_spans": [
+    {"surface": "Donaudampfschifffahrtsgesellschaftskapitän", "tags": ["long_compound"], "expected_spoken": "Donaudampfschifffahrtsgesellschaftskapitän"},
+    {"surface": "weiß-blaue", "tags": ["eszett", "hyphenated_compound"], "expected_spoken": "weiß blaue"},
+    {"surface": "22.05.2026", "tags": ["date", "digits"], "expected_spoken": "zweiundzwanzigster Mai zweitausendsechsundzwanzig"},
+    {"surface": "12,50 €", "tags": ["currency", "decimal_comma"], "expected_spoken": "zwölf Euro fünfzig"},
+    {"surface": "00318472", "tags": ["long_digit_sequence"], "expected_spoken": "null null drei eins acht vier sieben zwei"},
+    {"surface": "GmbH und TÜV", "tags": ["abbreviation", "acronym"], "expected_spoken": "G M B H und T Ü V"}
+  ]
+}

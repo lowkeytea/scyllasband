@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "id": "it_narrative_01",
+  "kind": "narrative",
+  "language": "it",
+  "input_path": "it/narrative.txt",
+  "training_overlap": "fully_held_out",
+  "provenance": {"kind": "post_training_authored", "redistribution": "Apache-2.0"}
+}

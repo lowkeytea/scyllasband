@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "id": "vi_challenge_01",
+  "kind": "challenge",
+  "language": "vi",
+  "input_path": "vi/challenge.txt",
+  "training_overlap": "fully_held_out",
+  "provenance": {"kind": "post_training_authored", "redistribution": "Apache-2.0"},
+  "challenge_spans": [
+    {"surface": "cá, cà, cả và cạ", "tags": ["tone_contrast"], "expected_spoken": "cá, cà, cả và cạ"},
+    {"surface": "má, mà, mả, mã và mạ", "tags": ["complete_tone_series"], "expected_spoken": "má, mà, mả, mã và mạ"},
+    {"surface": "Nguyễn", "tags": ["proper_noun", "consonant_cluster"], "expected_spoken": "Nguyễn"},
+    {"surface": "7:45", "tags": ["time", "digits"], "expected_spoken": "bảy giờ bốn mươi lăm phút"},
+    {"surface": "22/05/2026", "tags": ["date", "digits"], "expected_spoken": "ngày hai mươi hai tháng năm năm hai nghìn không trăm hai mươi sáu"},
+    {"surface": "00318472", "tags": ["long_digit_sequence"], "expected_spoken": "không không ba một tám bốn bảy hai"}
+  ]
+}

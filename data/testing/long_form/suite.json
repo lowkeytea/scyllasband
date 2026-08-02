@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "id": "scyllasband-long-form-v1",
+  "description": "Public multilingual long-form and pronunciation regression suite",
+  "conditions": [
+    {"id": "neutral_0", "ratings": {}},
+    {"id": "calm_4", "ratings": {"calm": 4}},
+    {"id": "joy_2", "ratings": {"joy": 2}},
+    {"id": "joy_4", "ratings": {"joy": 4}},
+    {"id": "anger_2", "ratings": {"anger": 2}},
+    {"id": "anger_4", "ratings": {"anger": 4}},
+    {"id": "sadness_2", "ratings": {"sadness": 2}},
+    {"id": "sadness_4", "ratings": {"sadness": 4}},
+    {"id": "questioning_2", "ratings": {"questioning": 2}},
+    {"id": "whisper_2", "ratings": {"whisper": 2}}
+  ],
+  "tiers": {
+    "smoke": {"document_kinds": ["challenge"]},
+    "core": {"document_kinds": ["narrative"]},
+    "full": {"document_kinds": ["narrative", "dialogue_punctuation", "challenge"]}
+  },
+  "documents": [
+    "en/narrative.json", "en/dialogue.json", "en/challenge.json",
+    "es/narrative.json", "es/dialogue.json", "es/challenge.json",
+    "it/narrative.json", "it/dialogue.json", "it/challenge.json",
+    "de/narrative.json", "de/dialogue.json", "de/challenge.json",
+    "fr/narrative.json", "fr/dialogue.json", "fr/challenge.json",
+    "vi/narrative.json", "vi/dialogue.json", "vi/challenge.json"
+  ]
+}
