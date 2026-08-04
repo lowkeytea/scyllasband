@@ -485,6 +485,12 @@ python -m scyllasband.validation asr \
     --run validation_runs/shipped-smoke --profile smoke --workers 1
 python -m scyllasband.validation report \
     --run validation_runs/shipped-smoke
+
+# Publish compact review audio and results for the static benchmark site.
+python -m scyllasband.validation publish \
+    --run validation_runs/shipped-smoke \
+    --output benchmark/v1 \
+    --pages-output docs/benchmark/v1
 ```
 
 Use `--profile release` for multilingual `large-v3` ASR. Increase `--workers`
@@ -494,11 +500,18 @@ pronunciation challenges. Every stage is resumable and accepts voice, language,
 condition, document, or job filters.
 
 The report at `validation_runs/shipped-smoke/report/index.html` compares the
-available backends, highlights ASR edits, plays generated audio through relative
-paths, and exports listening labels from the browser. An external PyTorch
+available backends and presents each source script, generated audio, ASR
+transcript, and word-level diff together. An external PyTorch
 renderer can write the same per-job artifact contract and be added with
 `import-results`; the public runtime never imports trainer code. Core ML is
 reserved in the schema but does not yet have a public renderer.
+
+`publish` turns a lossless validation work directory into a compact static
+artifact with 96 kbit/s review audio, sanitized JSON/CSV results, and the same
+interactive report. The checked-in [benchmark](benchmark/) directory describes
+the shipping release matrix, and the optional Pages output makes it available
+from the public voice gallery. A report always shows completed coverage against
+the frozen job count; partial runs are never presented as complete benchmarks.
 
 ## Repository Structure
 
@@ -506,6 +519,7 @@ reserved in the schema but does not yet have a public renderer.
 scyllasband/
   scyllasband/                 Python package, CLI, download, ONNX/LiteRT runners
   libscyllasband/              native runtime, C ABI, ONNX/LiteRT execution
+  benchmark/                   versioned public WER and listening results
   examples/android/            ONNX Android sample and Kotlin wrapper
   data/                        small local CLI examples
   models/                      downloaded runtime bundles and voice assets

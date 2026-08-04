@@ -57,7 +57,7 @@ def _json_safe(value: Any) -> Any:
 
 def _write_json_atomic(path: Path, value: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + ".tmp")
+    temporary = path.with_name(f"{path.name}.tmp.{os.getpid()}")
     temporary.write_text(
         json.dumps(_json_safe(value), indent=2, ensure_ascii=False, sort_keys=True) + "\n",
         encoding="utf-8",

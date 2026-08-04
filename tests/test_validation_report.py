@@ -5,11 +5,11 @@ import unittest
 
 from scyllasband.validation.audio import file_sha256, write_wav
 from scyllasband.validation.corpus import canonical_json_bytes, sha256_bytes
-from scyllasband.validation.report import build_report
+from scyllasband.validation.report import build_report, publish_benchmark
 
 
 class ValidationReportTests(unittest.TestCase):
-    def test_static_report_contains_relative_audio_and_review_export(self) -> None:
+    def test_static_report_contains_relative_audio_and_visible_asr_comparison(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             job_id = "fixture__voice__en_us__neutral_0__abc"
@@ -74,11 +74,35 @@ class ValidationReportTests(unittest.TestCase):
             self.assertEqual(result["rows"], 1)
             html = (root / "report" / "index.html").read_text(encoding="utf-8")
             self.assertIn(f"../renders/onnx/{job_id}/audio.wav", html)
-            self.assertIn("scyllasband_validation_review_labels.json", html)
+            self.assertNotIn("<select", html)
+            self.assertNotIn("scyllasband_validation_review_labels.json", html)
+            self.assertIn('<p class="field-label">Script</p>', html)
+            self.assertIn('<p class="field-label">ASR transcript</p>', html)
+            self.assertIn('<p class="field-label">ASR diff</p>', html)
+            self.assertIn("Scylla's Band<br>Voice Benchmark", html)
+            self.assertIn("WER by voice", html)
             summary = json.loads((root / "summary.json").read_text(encoding="utf-8"))
             self.assertEqual(summary["aggregates"]["backend"][0]["micro_wer"], 0.0)
+
+            published = root / "public" / "v1"
+            pages = root / "pages" / "benchmark" / "v1"
+            result = publish_benchmark(
+                root,
+                published,
+                pages_dir=pages,
+                audio_format="wav",
+            )
+            self.assertTrue(result["complete"])
+            self.assertEqual(result["published_jobs"], 1)
+            public_html = (published / "index.html").read_text(encoding="utf-8")
+            self.assertIn(f"audio/onnx/{job_id}.wav", public_html)
+            self.assertNotIn(str(root), public_html)
+            self.assertNotIn("<select", public_html)
+            self.assertTrue((pages / "audio" / "onnx" / f"{job_id}.wav").is_file())
+            benchmark = json.loads((published / "benchmark.json").read_text(encoding="utf-8"))
+            self.assertEqual(benchmark["model_version"], "1")
+            self.assertTrue(benchmark["complete"])
 
 
 if __name__ == "__main__":
     unittest.main()
-

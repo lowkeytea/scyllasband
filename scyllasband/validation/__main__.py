@@ -11,7 +11,7 @@ from .asr import run_asr
 from .corpus import DEFAULT_SUITE_PATH, validate_suite
 from .jobs import build_run
 from .render import import_backend_results, render_backend
-from .report import build_report
+from .report import build_report, publish_benchmark
 
 
 def _values(items: Iterable[str] | None) -> list[str] | None:
@@ -99,6 +99,20 @@ def _parser() -> argparse.ArgumentParser:
 
     report = commands.add_parser("report", help="Build JSON, CSV, and static HTML results")
     report.add_argument("--run", type=Path, required=True)
+
+    publish = commands.add_parser(
+        "publish",
+        help="Publish a compact static benchmark from a validation run",
+    )
+    publish.add_argument("--run", type=Path, required=True)
+    publish.add_argument("--output", type=Path, required=True)
+    publish.add_argument(
+        "--pages-output",
+        type=Path,
+        help="Optional GitHub Pages destination, such as docs/benchmark/v1",
+    )
+    publish.add_argument("--audio-format", choices=("mp3", "wav"), default="mp3")
+    publish.add_argument("--overwrite", action="store_true")
     return parser
 
 
@@ -170,6 +184,14 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
         )
     if args.command == "report":
         return build_report(args.run)
+    if args.command == "publish":
+        return publish_benchmark(
+            args.run,
+            args.output,
+            pages_dir=args.pages_output,
+            audio_format=args.audio_format,
+            overwrite=args.overwrite,
+        )
     raise AssertionError(args.command)
 
 
