@@ -1,0 +1,18 @@
+{
+  "artifact_kind": "scyllasband_public_voice_benchmark",
+  "audio_format": "mp3",
+  "backends": [
+    "onnx"
+  ],
+  "complete": true,
+  "expected_jobs": 270,
+  "model_name": "scyllasband",
+  "model_version": "1",
+  "published_at": "2026-08-02T21:43:56.858743+00:00",
+  "published_jobs": 270,
+  "run_contract_sha256": "32f4f5612ef1d06f191a4898528e9cbf3a3faef43d7c41acd9777333d533ffed",
+  "schema_version": 1,
+  "suite_id": "scyllasband-long-form-v1",
+  "suite_sha256": "12a4da954c0c23d52a900504e008a99f777ae1641c89d7fa2742d3fdcaec91b3",
+  "tier": "core"
+}
