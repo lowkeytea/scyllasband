@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="Published Scylla's Band voice and intelligibility benchmarks.">
+  <title>Scylla's Band Benchmarks</title>
+  <style>
+    :root { color-scheme: light; --ink:#113452; --muted:#526271; --paper:#fff; --wash:#fff7e8; --panel:#fffdf8; --line:#173b59; --red:#c83b2d; --coral:#ed6241; --orange:#f29a59; --apricot:#ffc375; --cream:#f2dfb2; --teal:#0c7d86; --seafoam:#9bcfc3; --shadow:6px 7px 0 rgba(17,52,82,.09); }
+    * { box-sizing: border-box; }
+    body { margin:0; color:var(--ink); background:linear-gradient(180deg,var(--wash),var(--paper) 30rem); font:16px/1.55 ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    a { color:var(--red); text-decoration-thickness:1.5px; text-underline-offset:.18em; }
+    a:hover { color:var(--teal); }
+    .shell { width:min(1040px,calc(100% - 32px)); margin-inline:auto; }
+    header { padding:64px 0 38px; }
+    header::before { content:""; display:block; width:min(460px,78vw); height:14px; margin-bottom:30px; border:1px solid var(--line); border-radius:999px; background:linear-gradient(90deg,var(--red) 0 20%,var(--coral) 20% 40%,var(--orange) 40% 60%,var(--apricot) 60% 76%,var(--seafoam) 76% 90%,var(--teal) 90%); box-shadow:4px 4px 0 var(--cream); }
+    .eyebrow { margin:0 0 10px; color:var(--red); font-weight:850; letter-spacing:.14em; text-transform:uppercase; }
+    h1 { margin:0; font-size:clamp(3rem,8vw,6.5rem); line-height:.9; letter-spacing:-.065em; text-shadow:3px 3px 0 var(--cream); }
+    .lede { max-width:780px; margin:26px 0 0; color:var(--muted); font-size:1.2rem; }
+    .links { display:flex; flex-wrap:wrap; gap:18px; margin-top:22px; font-weight:800; }
+    main { padding:8px 0 90px; }
+    h2 { display:inline-block; margin:24px 0 20px; border-bottom:6px solid var(--apricot); font-size:2.4rem; letter-spacing:-.04em; }
+    .release { padding:24px; border:1.5px solid var(--line); border-top:7px solid var(--teal); border-radius:18px; background:var(--panel); box-shadow:var(--shadow); }
+    .release h3 { margin:0; font-size:1.7rem; }
+    .release p { color:var(--muted); }
+    .button { display:inline-block; padding:9px 14px; border:1.5px solid var(--line); border-radius:999px; background:var(--paper); box-shadow:3px 3px 0 var(--cream); font-weight:850; text-decoration:none; }
+    footer { padding:24px 0 42px; border-top:5px solid var(--cream); color:var(--muted); }
+  </style>
+</head>
+<body>
+  <header class="shell">
+    <p class="eyebrow">Measured release listening</p>
+    <h1>Scylla's Band<br>Benchmarks</h1>
+    <p class="lede">Reproducible WER and listening-quality reports across voices, languages, and affect conditions. Every score stays connected to the generated audio and ASR diff.</p>
+    <div class="links"><a href="../index.html">Voice gallery &rarr;</a><a href="https://github.com/lowkeytea/scyllasband/tree/main/benchmark">Source data &rarr;</a></div>
+  </header>
+  <main class="shell">
+    <h2>Published releases</h2>
+    <article class="release">
+      <h3>Shipping model v1</h3>
+      <p>Ten voices, each voice's native English dialect, Spanish, Italian, and the complete v1 core affect matrix. The report shows coverage explicitly while a benchmark run is still being assembled.</p>
+      <a class="button" href="v1/index.html">Open v1 results &rarr;</a>
+    </article>
+  </main>
+  <footer><div class="shell">Scylla's Band by <strong>Spybyscript</strong>. WER is an ASR signal; use the listening review for quality decisions.</div></footer>
+</body>
+</html>
