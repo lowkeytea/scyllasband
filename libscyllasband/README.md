@@ -106,6 +106,12 @@ ctest --test-dir /tmp/scyllasband_native_onnx --output-on-failure
 
 The [Android sample](../examples/android/README.md) extracts these files from Microsoft's `onnxruntime-android` AAR and packages the current ONNX bundle for offline use.
 
+The [iOS sample](../examples/ios/README.md) uses the
+[`ScyllasBandKit`](apple/README.md) local CocoaPod in this directory. The pod
+compiles the native sources against Microsoft's `onnxruntime-c` iOS package
+and exposes a Swift-friendly Objective-C API for manifest metadata, warmup,
+streaming synthesis, PCM ownership, and cancellation.
+
 Native LiteRT synthesis requires a staged LiteRT SDK:
 
 ```bash

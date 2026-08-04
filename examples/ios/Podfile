@@ -1,0 +1,8 @@
+platform :ios, '16.0'
+
+project 'ScyllasBandStudio.xcodeproj'
+
+target 'ScyllasBandStudio' do
+  use_frameworks! :linkage => :static
+  pod 'ScyllasBandKit', :path => '../../libscyllasband'
+end

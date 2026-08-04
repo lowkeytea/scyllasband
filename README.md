@@ -18,6 +18,11 @@ The default desktop/server runtime path remains the full-precision ONNX bundle. 
 - Group-speak input can label lines or inline spans with `[voice]`, `[voice:language]`, or `[voice:language:axis=value,...]`.
 - Runtime code is self-contained in `scyllasband/`; training and export tooling are intentionally outside this inference package.
 
+Runnable mobile integrations are provided for
+[Android](examples/android/README.md) and [iOS](examples/ios/README.md). The
+iOS sample packages the native runtime as a reusable `ScyllasBandKit` local pod
+so application code never needs to import the C ABI directly.
+
 ## Audio Samples
 
 Open the [interactive voice and affect gallery](https://lowkeytea.github.io/scyllasband/) to play all ten voices in English, Spanish, and Italian, plus English demonstrations of calm, joy, anger, sadness, and sarcasm-overlay delivery. The [sample index and generation details](samples/README.md) remain available in the repository.

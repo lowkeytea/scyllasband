@@ -1,0 +1,96 @@
+{
+  "schema": "scyllasband.g2p_long_form_heteronym_challenge.v1",
+  "cases": [
+    {
+      "id": "read_past",
+      "text_contains": "Yesterday I read the final report",
+      "targets": [
+        {"lemma": "read", "sense": "past"}
+      ]
+    },
+    {
+      "id": "read_present",
+      "text_contains": "today I will read the revision",
+      "targets": [
+        {"lemma": "read", "sense": "present"}
+      ]
+    },
+    {
+      "id": "lead_pair",
+      "text_contains": "lead engineer removed a lead weight",
+      "targets": [
+        {"lemma": "lead", "sense": "guide"},
+        {"lemma": "lead", "sense": "metal"}
+      ]
+    },
+    {
+      "id": "bass_pair",
+      "text_contains": "bass player watched a bass swim",
+      "targets": [
+        {"lemma": "bass", "sense": "music"},
+        {"lemma": "bass", "sense": "fish"}
+      ]
+    },
+    {
+      "id": "wind_pair",
+      "text_contains": "Wind shook the windows while I tried to wind",
+      "targets": [
+        {"lemma": "wind", "sense": "air"},
+        {"lemma": "wind", "sense": "turn"}
+      ]
+    },
+    {
+      "id": "bow_pair",
+      "text_contains": "tied a red bow, then took a formal bow",
+      "targets": [
+        {"lemma": "bow", "sense": "ribbon"},
+        {"lemma": "bow", "sense": "bend"}
+      ]
+    },
+    {
+      "id": "close_pair",
+      "text_contains": "close the door and sit close",
+      "targets": [
+        {"lemma": "close", "sense": "shut"},
+        {"lemma": "close", "sense": "near"}
+      ]
+    },
+    {
+      "id": "live_pair",
+      "text_contains": "live programme from a town where musicians live",
+      "targets": [
+        {"lemma": "live", "sense": "broadcast"},
+        {"lemma": "live", "sense": "reside"}
+      ]
+    },
+    {
+      "id": "tear_pair",
+      "text_contains": "tear in the sail brought a tear",
+      "targets": [
+        {"lemma": "tear", "sense": "rip"},
+        {"lemma": "tear", "sense": "drop"}
+      ]
+    },
+    {
+      "id": "does_and_record",
+      "text_contains": "does crossed the field, but the machine does not record",
+      "targets": [
+        {"lemma": "does", "sense": "deer"},
+        {"lemma": "does", "sense": "do_verb"},
+        {"lemma": "record", "sense": "verb"}
+      ]
+    },
+    {
+      "id": "stress_pairs",
+      "text_contains": "record the record, produce fresh produce",
+      "targets": [
+        {"lemma": "record", "sense": "verb"},
+        {"lemma": "record", "sense": "noun"},
+        {"lemma": "produce", "sense": "verb"},
+        {"lemma": "produce", "sense": "noun"},
+        {"lemma": "contract", "sense": "verb"},
+        {"lemma": "contract", "sense": "noun"}
+      ]
+    }
+  ]
+}
