@@ -56,11 +56,12 @@ typedef enum {
 } ScyllasBandStatus;
 
 typedef enum {
-    /* Compatibility selector; resolves to SCYLLASBAND_BACKEND_ONNX. */
+    /* Resolves to the graph runtime linked into the current build. */
     SCYLLASBAND_BACKEND_AUTO = 0,
     SCYLLASBAND_BACKEND_LITERT = 1,
     SCYLLASBAND_BACKEND_COREML = 2,
-    SCYLLASBAND_BACKEND_ONNX = 3
+    SCYLLASBAND_BACKEND_ONNX = 3,
+    SCYLLASBAND_BACKEND_COREAI = 4
 } ScyllasBandBackend;
 
 typedef enum {
@@ -175,6 +176,8 @@ typedef int32_t (*ScyllasBandStreamingCallback)(
 
 const char* scyllasband_last_error(void);
 void scyllasband_clear_error(void);
+/** Internal graph adapters use this to populate the thread-local native error. */
+void scyllasband_graph_session_set_error(const char* message);
 uint64_t scyllasband_tensor_element_size(int32_t data_type);
 void scyllasband_tensors_destroy(ScyllasBandOwnedTensor* tensors, int32_t tensor_count);
 

@@ -4,6 +4,7 @@ import inspect
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
+from unittest import mock
 
 from scyllasband.cli import (
     _default_bundle_path,
@@ -19,10 +20,12 @@ class BackendDefaultsTest(unittest.TestCase):
     def parse_speak(self, *arguments: str):
         return _parse_cli_args(build_parser(), ["speak", *arguments])
 
-    def test_cli_defaults_to_onnx(self) -> None:
+    def test_cli_defaults_to_auto_with_platform_aware_bundle(self) -> None:
         args = self.parse_speak("--voice", "scylla", "Hello.")
-        self.assertEqual(args.backend, "onnx")
-        self.assertEqual(_default_bundle_path(args.backend).name, "onnx")
+        self.assertEqual(args.backend, "auto")
+        with mock.patch("scyllasband.download.coreai_host_supported", return_value=False):
+            self.assertIn(_default_bundle_path(args.backend).name, ("onnx-int8", "onnx"))
+        self.assertIn(_default_bundle_path("onnx").name, ("onnx-int8", "onnx"))
 
     def test_download_accepts_int8_and_preserves_existing_bundle_groups(self) -> None:
         args = _parse_cli_args(
@@ -36,8 +39,22 @@ class BackendDefaultsTest(unittest.TestCase):
         )
         self.assertEqual(
             _normalize_requested_bundle_subdirs(("all",)),
-            ("onnx", "onnx-int8", "litert"),
+            ("onnx", "onnx-int8", "litert", "coreai", "coreai-fp32"),
         )
+
+    def test_download_default_group_is_platform_aware_and_int8_first(self) -> None:
+        with mock.patch("scyllasband.download.coreai_host_supported", return_value=True):
+            self.assertEqual(
+                _normalize_requested_bundle_subdirs(("default",)),
+                ("coreai", "onnx-int8"),
+            )
+        with mock.patch("scyllasband.download.coreai_host_supported", return_value=False):
+            self.assertEqual(
+                _normalize_requested_bundle_subdirs(("default",)),
+                ("onnx-int8",),
+            )
+        # fp32 onnx stays available but only when explicitly requested.
+        self.assertEqual(_normalize_requested_bundle_subdirs(("onnx",)), ("onnx",))
 
     def test_android_sample_defaults_to_int8_assets(self) -> None:
         repository_root = Path(__file__).resolve().parents[1]
@@ -48,8 +65,10 @@ class BackendDefaultsTest(unittest.TestCase):
             repository_root
             / "examples/android/scyllasband-android/src/main/java/org/scyllasband/android/ScyllasBandAssetInstaller.kt"
         ).read_text(encoding="utf-8")
-        self.assertIn("scyllasband/models/onnx-int8", gradle)
+        self.assertIn("scyllasband/models", gradle)
+        self.assertIn('sequenceOf("onnx-int8", "onnx")', gradle)
         self.assertIn("into(\"scyllasband/onnx-int8\")", gradle)
+        self.assertNotIn("coreai", gradle)
         self.assertIn("DEFAULT_ASSET_ROOT = \"scyllasband/onnx-int8\"", installer)
 
     def test_litert_requires_explicit_selection(self) -> None:
@@ -63,7 +82,7 @@ class BackendDefaultsTest(unittest.TestCase):
         self.assertEqual(args.backend, "litert")
         self.assertEqual(_default_bundle_path(args.backend).name, "litert")
 
-    def test_runtime_auto_is_an_onnx_compatibility_alias(self) -> None:
+    def test_runtime_auto_prefers_coreai_only_on_supported_hosts(self) -> None:
         runtime = ScyllasBandRuntime(
             ".",
             SimpleNamespace(preferred_backends=("litert",)),
@@ -71,7 +90,12 @@ class BackendDefaultsTest(unittest.TestCase):
         )
         runtime._has_backend_artifacts = lambda backend: backend == "onnx"
         self.assertEqual(runtime._select_backend(), "onnx")
-        self.assertEqual(_validate_backends([]), ["onnx"])
+
+        runtime._has_backend_artifacts = lambda backend: backend in ("onnx", "coreai")
+        with mock.patch("scyllasband.runtime.coreai_host_supported", return_value=True):
+            self.assertEqual(runtime._select_backend(), "coreai")
+        with mock.patch("scyllasband.runtime.coreai_host_supported", return_value=False):
+            self.assertEqual(runtime._select_backend(), "onnx")
 
     def test_native_binding_defaults_to_onnx(self) -> None:
         parameters = inspect.signature(NativeScyllasBandRuntime).parameters

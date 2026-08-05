@@ -63,9 +63,9 @@ python -m scyllasband speak scyllasband/models/onnx-int8 \
     "Hello from INT8 ONNX."
 ```
 
-The INT8 bundle uses the normal `onnx` backend; its bundle path is the only required runtime selection. `--runtime-bundles both` retains its existing meaning and downloads full-precision ONNX plus LiteRT. Use `--runtime-bundles all` to download full-precision ONNX, INT8 ONNX, and LiteRT.
+The INT8 bundle uses the normal `onnx` backend; its bundle path is the only required runtime selection. `--runtime-bundles both` retains its existing meaning and downloads full-precision ONNX plus LiteRT. Use `--runtime-bundles all` to also download INT8 ONNX and Apple Core AI.
 
-The CLI defaults to `scyllasband/models/onnx` and does not fall back to another bundle. To use LiteRT, pass its bundle path and `--backend litert` explicitly. You can pass an explicit bundle path as the first positional argument to `speak`, `plan`, `stream`, `group-speak`, `validate-bundle`, or `list-voices`.
+The CLI defaults to `scyllasband/models/onnx` and does not fall back to another bundle. LiteRT and Core AI both require an explicit bundle path and backend. You can pass an explicit bundle path as the first positional argument to `speak`, `plan`, `stream`, `group-speak`, `validate-bundle`, or `list-voices`.
 
 ## CLI
 
@@ -160,7 +160,7 @@ The runtime deliberately has no fixed upper cap, so values such as `2.5` are val
 
 ### Backend Selection
 
-The default backend is `onnx`. The full-precision and INT8 bundles both use this backend; select INT8 by passing `scyllasband/models/onnx-int8`. The legacy `auto` spelling remains accepted as an alias for ONNX; it never opts into LiteRT. LiteRT requires both an explicit LiteRT bundle and `--backend litert`.
+The default backend is `onnx`. The full-precision and INT8 bundles both use this backend; select INT8 by passing `scyllasband/models/onnx-int8`. The legacy `auto` spelling remains accepted as an alias for ONNX. LiteRT and Core AI require explicit matching bundles.
 
 ```bash
 # Default ONNX path
@@ -190,9 +190,19 @@ python -m scyllasband speak scyllasband/models/litert \
     --language en_us \
     -o hello_litert.wav \
     "Hello from LiteRT."
+
+# Apple Core AI path (macOS 27 / Apple Silicon)
+python -m scyllasband download --runtime-bundles coreai
+python -m scyllasband speak scyllasband/models/coreai \
+    --backend coreai \
+    --litert-accelerator gpu \
+    --voice gwen \
+    --language en_us \
+    -o hello_coreai.wav \
+    "Finally, native Core AI on Apple."
 ```
 
-The Python ONNX backend requires `onnxruntime`. The Python LiteRT reference path requires one of `ai-edge-litert`, `tflite-runtime`, or TensorFlow. Native LiteRT uses staged LiteRT shared libraries through `libscyllasband`.
+The Python ONNX backend requires `onnxruntime`. The Python LiteRT reference path requires one of `ai-edge-litert`, `tflite-runtime`, or TensorFlow. Native LiteRT uses staged LiteRT shared libraries through `libscyllasband`. On macOS 27, the Core AI backend automatically builds the Swift/C++ bridge with Xcode 27 and uses native `.aimodel` assets; it has no ONNX or LiteRT dependency.
 
 ONNX, Python LiteRT, and native LiteRT expose the selected bundle's six-axis affect and CFG request contract. The selected bundle manifest remains authoritative, and bundles that do not declare `controls.affect.enabled` reject six-axis requests.
 
@@ -338,6 +348,7 @@ This snapshot describes the public `scyllasband` 1.0 inference release.
 | Architecture | Continuous-latent duration prediction plus rectified acoustic flow |
 | Default public backend | ONNX Runtime bundle under `onnx/` |
 | Experimental backend | LiteRT bundle under `litert/` |
+| Apple backend | Core AI bundle under `coreai/` (iOS/macOS 27) |
 | Sample rate | 24,000 Hz |
 | Acoustic features | 100 mel bins, hop length 256 |
 | Latent representation | 24-D latents, latent hop length 512 |
@@ -420,11 +431,25 @@ bundle/
 
 LiteRT currently carries more duplicated bucket-specific graph data than ONNX, but it remains useful for mobile/native runtime validation and accelerator experiments. Like ONNX, the current public bundle ships full vector graphs for the 256, 384, 512, and 640 frame buckets.
 
+### Core AI Bundle
+
+The Apple bundle stores `g2p.aimodel`, `duration_predictor.aimodel`,
+`vector_context_encoder.aimodel`, `vector_estimator.aimodel`, and
+`vocoder.aimodel` under `coreai/`. Estimator and vocoder frame buckets are
+fixed functions in shared-weight assets, avoiding per-bucket weight files.
+G2P and its `assets/g2p/` sidecars can be updated independently of the
+four-language acoustic assets.
+
 ## Native runtimes and Android
 
-`libscyllasband/` owns the native runtime, long-form planning, streaming callbacks, host-language C ABI, and ONNX/LiteRT execution paths. Native ONNX uses the same G2P, duration, reference-pack, emotion CFG, flow-sampling, target-bucket, and vocoder orchestration as native LiteRT; only the graph-session adapter changes.
+`libscyllasband/` owns the native runtime, long-form planning, streaming callbacks, host-language C ABI, and ONNX/LiteRT/Core AI execution paths. All three use the same G2P, duration, reference-pack, emotion CFG, flow-sampling, target-bucket, and vocoder orchestration; only the graph-session adapter changes.
 
 The [Android sample](examples/android/README.md) packages the CPU-optimized INT8 ONNX bundle and exposes all managed voices, manifest-declared languages, the six emotion axes with strength, and non-negative emotion CFG. Its editor uses inline speaker points and streams each completed native audio chunk while later chunks render. The Kotlin wrapper creates and warms one persistent runtime; `libscyllasband` owns a configurable target-bucket LRU, with a capacity-one memory profile used by default on Android.
+
+The [iOS sample](examples/ios/README.md) packages `ScyllasBandKit` and the Core
+AI bundle. The pod is a copyable iOS 27 static framework with no ONNX
+dependency; the SwiftUI app streams Float32 PCM through `AVAudioEngine` and
+keeps the currently spoken chunk visible in light and dark appearance.
 
 For normal CLI use, the first LiteRT-backed `speak`, `stream`, `plan`, or `group-speak` run automatically prepares the native runtime when `libscyllasband` is missing. The loader detects the host platform (`linux-x86_64`, `linux-arm64`, `macos-arm64`, or `windows-x86_64`), stages the matching LiteRT runtime from an installed `ai_edge_litert` package or downloads the prebuilt runtime, configures CMake, and builds the shared `scyllasband_native` library. This requires CMake plus a working C++ toolchain for the host.
 
@@ -539,6 +564,7 @@ Training data, trainer checkpoints, and export tooling are not part of this publ
 - Public text-input languages are limited to `en_us`, `en_gb`, `es`, and `it`.
 - The native ONNX path is available when `libscyllasband` is built with `SCYLLASBAND_ENABLE_ONNX=ON` and ONNX Runtime headers/library paths.
 - LiteRT is experimental for this release and should be validated on the target device before being treated as production.
+- Core AI requires iOS 27 or macOS 27 and Xcode 27 for local bridge builds.
 - Very long inputs are chunked. Host applications should preserve chunk-relative loudness and normalize only after stitching a full utterance if they apply extra loudness processing.
 - Affect values and CFG are conditioning controls, not guarantees of a particular perceived emotion in every voice, language, or sentence. Strong CFG should be listening-tested for the intended text.
 
@@ -552,6 +578,7 @@ Scylla's Band builds on:
 
 - [ONNX Runtime](https://onnxruntime.ai/) for the default runtime backend.
 - [LiteRT](https://ai.google.dev/edge/litert) for experimental native/mobile execution.
+- Apple Core AI for native iOS and macOS 27 model execution.
 - [Vocos](https://arxiv.org/abs/2306.00814) and `charactr/vocos-mel-24khz` for the frozen 24 kHz vocoder backbone.
 - [DeepPhonemizer](https://github.com/as-ideas/DeepPhonemizer) lineage for the Scylla's Band G2P training workflow.
 - [Montreal Forced Aligner](https://montreal-forced-aligner.readthedocs.io/) for alignment-derived duration supervision in the training pipeline.

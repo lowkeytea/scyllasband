@@ -14,14 +14,23 @@ enum StreamingAudioPlayerError: LocalizedError {
     }
 }
 
-/// A one-buffer queue keeps transcript updates aligned while allowing the
-/// native runtime to render the next chunk during current-chunk playback.
+/// Keep one buffer playing and one queued. Scheduling the next buffer only
+/// after `.dataPlayedBack` drains `AVAudioPlayerNode`; on a real device that
+/// can create gaps or cause a later buffer to be missed entirely.
 final class StreamingAudioPlayer {
+    private struct ScheduledBuffer {
+        let id: UInt64
+        var didAnnouncePlayback = false
+        let onPlaybackStarted: @MainActor () -> Void
+    }
+
+    private let maximumScheduledBufferCount = 2
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
     private let format: AVAudioFormat
     private let condition = NSCondition()
-    private var queuedBufferCount = 0
+    private var scheduledBuffers: [ScheduledBuffer] = []
+    private var nextBufferID: UInt64 = 0
     private var stopped = false
 
     init(sampleRate: Int) throws {
@@ -41,7 +50,6 @@ final class StreamingAudioPlayer {
         engine.connect(player, to: engine.mainMixerNode, format: format)
         engine.prepare()
         try engine.start()
-        player.play()
     }
 
     func enqueue(
@@ -49,17 +57,6 @@ final class StreamingAudioPlayer {
         shouldStop: () -> Bool,
         onPlaybackStarted: @escaping @MainActor () -> Void
     ) throws -> Bool {
-        condition.lock()
-        while queuedBufferCount >= 1 && !stopped && !shouldStop() {
-            _ = condition.wait(until: Date(timeIntervalSinceNow: 0.05))
-        }
-        guard !stopped, !shouldStop() else {
-            condition.unlock()
-            return false
-        }
-        queuedBufferCount += 1
-        condition.unlock()
-
         guard chunk.sampleCount >= 0,
               chunk.pcmFloat32Data.count == chunk.sampleCount * MemoryLayout<Float>.size,
               let buffer = AVAudioPCMBuffer(
@@ -67,7 +64,6 @@ final class StreamingAudioPlayer {
                 frameCapacity: AVAudioFrameCount(chunk.sampleCount)
               ),
               let samples = buffer.floatChannelData?[0] else {
-            completeBuffer()
             throw StreamingAudioPlayerError.invalidChunk
         }
         chunk.pcmFloat32Data.copyBytes(
@@ -78,16 +74,41 @@ final class StreamingAudioPlayer {
         )
         buffer.frameLength = AVAudioFrameCount(chunk.sampleCount)
 
-        Task { @MainActor in onPlaybackStarted() }
+        condition.lock()
+        while scheduledBuffers.count >= maximumScheduledBufferCount && !stopped && !shouldStop() {
+            _ = condition.wait(until: Date(timeIntervalSinceNow: 0.05))
+        }
+        guard !stopped, !shouldStop() else {
+            condition.unlock()
+            return false
+        }
+        let bufferID = nextBufferID
+        nextBufferID &+= 1
+        let shouldAnnounceImmediately = scheduledBuffers.isEmpty
+        scheduledBuffers.append(
+            ScheduledBuffer(
+                id: bufferID,
+                didAnnouncePlayback: shouldAnnounceImmediately,
+                onPlaybackStarted: onPlaybackStarted
+            )
+        )
+        condition.unlock()
+
         player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
-            self?.completeBuffer()
+            self?.completeBuffer(id: bufferID)
+        }
+        if !player.isPlaying {
+            player.play()
+        }
+        if shouldAnnounceImmediately {
+            Task { @MainActor in onPlaybackStarted() }
         }
         return true
     }
 
     func finish(shouldStop: () -> Bool) {
         condition.lock()
-        while queuedBufferCount > 0 && !stopped && !shouldStop() {
+        while !scheduledBuffers.isEmpty && !stopped && !shouldStop() {
             _ = condition.wait(until: Date(timeIntervalSinceNow: 0.05))
         }
         condition.unlock()
@@ -100,17 +121,31 @@ final class StreamingAudioPlayer {
             return
         }
         stopped = true
+        scheduledBuffers.removeAll()
         condition.broadcast()
         condition.unlock()
         player.stop()
         engine.stop()
     }
 
-    private func completeBuffer() {
+    private func completeBuffer(id: UInt64) {
+        var nextPlaybackCallback: (@MainActor () -> Void)?
         condition.lock()
-        queuedBufferCount = max(0, queuedBufferCount - 1)
+        if let index = scheduledBuffers.firstIndex(where: { $0.id == id }) {
+            let completedFrontBuffer = index == 0
+            scheduledBuffers.remove(at: index)
+            if completedFrontBuffer,
+               !scheduledBuffers.isEmpty,
+               !scheduledBuffers[0].didAnnouncePlayback {
+                scheduledBuffers[0].didAnnouncePlayback = true
+                nextPlaybackCallback = scheduledBuffers[0].onPlaybackStarted
+            }
+        }
         condition.broadcast()
         condition.unlock()
+        if let nextPlaybackCallback {
+            Task { @MainActor in nextPlaybackCallback() }
+        }
     }
 
     deinit {

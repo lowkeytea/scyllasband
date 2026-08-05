@@ -25,8 +25,21 @@ REQUIRED_COMPONENTS = (
     "vocoder",
 )
 SPLIT_VECTOR_COMPONENTS = ("vector_estimator_prefix", "vector_estimator_tail")
-SHIPPING_BACKENDS = ("onnx", "litert", "coreml")
+SHIPPING_BACKENDS = ("onnx", "litert", "coreml", "coreai")
 DEFAULT_PREFERRED_BACKENDS = ("onnx",)
+COREAI_MINIMUM_MACOS_MAJOR = 27
+
+
+def coreai_host_supported() -> bool:
+    """True when this host can execute Core AI bundles (macOS 27 or later)."""
+
+    if platform.system() != "Darwin":
+        return False
+    release = platform.mac_ver()[0]
+    try:
+        return int(release.split(".")[0]) >= COREAI_MINIMUM_MACOS_MAJOR
+    except (ValueError, IndexError):
+        return False
 AFFECT_AXES_V1 = (
     "calm",
     "joy",
@@ -332,11 +345,57 @@ def bundle_runtime_acceleration_report(
     bundle_dir: str | Path,
     manifest: ScyllasBandBundleManifest | None = None,
 ) -> dict[str, Any]:
-    """Summarize whether a bundle can use the native LiteRT GPU split path."""
+    """Summarize whether a bundle can use its declared accelerated path."""
 
     bundle_path = Path(bundle_dir)
     manifest = manifest or load_bundle_manifest(bundle_path)
     metadata, metadata_source = _runtime_acceleration_metadata(bundle_path, manifest)
+
+    if metadata.get("backend") == "coreai":
+        required = [
+            component
+            for component in manifest.components.values()
+            if component.required and "coreai" in component.artifacts
+        ]
+        model_ready = bool(required) and all(
+            (bundle_path / component.artifacts["coreai"].path).exists()
+            for component in required
+        )
+        runtime_ready = coreai_host_supported()
+        warnings = []
+        if not model_ready:
+            warnings.append("one or more required Core AI assets are missing")
+        if not runtime_ready:
+            warnings.append("Core AI execution requires iOS 27 or macOS 27")
+        vector_metadata = _dict_value(metadata, "vector_estimator")
+        return {
+            "status": "warning" if warnings else "ok",
+            "metadata_present": True,
+            "metadata_source": metadata_source,
+            "backend": "coreai",
+            "runtime_version": metadata.get("runtime_version"),
+            "gpu_ready": bool(model_ready and runtime_ready),
+            "gpu_model_ready": model_ready,
+            "native_gpu_acceleration": {
+                "cuda_required": False,
+                "platform_targets": {"ios": "27.0", "macos": "27.0"},
+                "current_platform_target": "macos" if runtime_ready else None,
+                "accelerator_plugin_declared": False,
+                "accelerator_plugin_library": None,
+                "accelerator_plugin_available": None,
+                "accelerator_plugin_path": None,
+            },
+            "vector_estimator": {
+                "execution": vector_metadata.get("execution", "fixed_shape_multifunction"),
+                "policy": vector_metadata.get("policy"),
+                "metadata_split_artifacts_available": False,
+                "min_gpu_split_vector_latent_frames": 0,
+                "split_artifacts_declared": False,
+                "split_artifacts_available": False,
+                "split_artifacts": [],
+            },
+            "warnings": warnings,
+        }
 
     native_metadata = _dict_value(metadata, "native_gpu_acceleration")
     vector_metadata = _dict_value(metadata, "vector_estimator")

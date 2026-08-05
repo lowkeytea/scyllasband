@@ -3,20 +3,29 @@ plugins {
 }
 
 val repositoryRoot = projectDir.resolve("../../..").canonicalFile
-val scyllasbandOnnxInt8BundleDir = repositoryRoot.resolve("scyllasband/models/onnx-int8")
+val scyllasbandModelsDir = repositoryRoot.resolve("scyllasband/models")
+// Android runs ONNX only. Prefer the mobile-optimized int8 bundle and fall
+// back to the full ONNX bundle the default download provides.
+val scyllasbandOnnxInt8BundleDir = sequenceOf("onnx-int8", "onnx")
+    .map(scyllasbandModelsDir::resolve)
+    .firstOrNull { it.resolve("manifest.json").isFile }
+    ?: scyllasbandModelsDir.resolve("onnx-int8")
 val exampleDataDir = repositoryRoot.resolve("data")
 val generatedAssetsDir = layout.buildDirectory.dir("generated/scyllasbandAssets/main")
 
 val prepareScyllasBandAssets by tasks.registering(Sync::class) {
     doFirst {
         check(scyllasbandOnnxInt8BundleDir.resolve("manifest.json").isFile) {
-            "Scylla's Band ONNX manifest not found at ${scyllasbandOnnxInt8BundleDir.absolutePath}. Run `python -m scyllasband download --runtime-bundles onnx-int8`."
+            "Scylla's Band ONNX manifest not found under ${scyllasbandModelsDir.absolutePath}. Run `python -m scyllasband download --runtime-bundles onnx-int8` (or `onnx`)."
         }
         check(scyllasbandOnnxInt8BundleDir.resolve("onnx/components/shared_weights.bin").isFile) {
             "Scylla's Band ONNX shared weights are missing under ${scyllasbandOnnxInt8BundleDir.absolutePath}."
         }
         check(scyllasbandOnnxInt8BundleDir.resolve("onnx/g2p/model.onnx").isFile) {
             "Scylla's Band ONNX G2P model is missing under ${scyllasbandOnnxInt8BundleDir.absolutePath}."
+        }
+        if (scyllasbandOnnxInt8BundleDir.name != "onnx-int8") {
+            logger.lifecycle("Embedding the full ONNX bundle; download onnx-int8 for a smaller APK.")
         }
     }
     from(scyllasbandOnnxInt8BundleDir) {

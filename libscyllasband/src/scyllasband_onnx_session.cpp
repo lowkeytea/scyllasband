@@ -13,6 +13,20 @@
 
 #ifdef SCYLLASBAND_WITH_ONNXRUNTIME
 
+#ifdef SCYLLASBAND_WITH_COREAI
+/*
+ * Dual-backend builds route the public graph-session ABI through
+ * scyllasband_graph_session_dispatch.cpp, which picks ONNX or Core AI per
+ * model artifact. Rename this translation unit's exports so both
+ * implementations can be linked into one binary.
+ */
+#define scyllasband_litert_session_create scyllasband_onnx_session_create
+#define scyllasband_litert_session_destroy scyllasband_onnx_session_destroy
+#define scyllasband_litert_session_has_signature scyllasband_onnx_session_has_signature
+#define scyllasband_litert_session_run scyllasband_onnx_session_run
+#define scyllasband_litert_session_run_resized scyllasband_onnx_session_run_resized
+#endif
+
 #include <onnxruntime_cxx_api.h>
 
 #include <algorithm>

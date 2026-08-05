@@ -5,7 +5,7 @@ import shutil
 import tempfile
 from typing import Iterable
 
-from .contract import validate_bundle_layout
+from .contract import coreai_host_supported, validate_bundle_layout
 
 
 DEFAULT_INFERENCE_REPO_ID = "spybyscript/scyllasband"
@@ -17,11 +17,35 @@ SUPPORTED_BUNDLE_SUBDIRS = (
     DEFAULT_BUNDLE_SUBDIR,
     DEFAULT_ONNX_INT8_BUNDLE_SUBDIR,
     "litert",
+    "coreai",
+    "coreai-fp32",
 )
+
+# Shown by the interactive download prompt. Sizes are approximate.
+BUNDLE_SUBDIR_DESCRIPTIONS = {
+    "coreai": ("Core AI int8 bundle for iOS 27 / macOS 27", "~220 MB"),
+    "coreai-fp32": ("Core AI fp32 variant of the default", "~420 MB"),
+    DEFAULT_ONNX_INT8_BUNDLE_SUBDIR: ("int8 ONNX bundle, CPU-friendly, all platforms", "~280 MB"),
+    DEFAULT_BUNDLE_SUBDIR: ("fp32 ONNX variant of the default", "~410 MB"),
+    "litert": ("LiteRT bundle for Android and embedded runtimes", ""),
+}
 BUNDLE_SUBDIR_GROUPS = {
     "both": (DEFAULT_BUNDLE_SUBDIR, "litert"),
     "all": SUPPORTED_BUNDLE_SUBDIRS,
 }
+
+
+def default_bundle_subdirs() -> tuple[str, ...]:
+    """Platform-aware download set: Core AI plus int8 ONNX on macOS 27+, int8 ONNX elsewhere.
+
+    onnx-int8 is the default ONNX artifact everywhere — desktop synthesis and
+    the sample apps both prefer it. The larger fp32 `onnx` bundle, `litert`,
+    and anything else must be requested explicitly (or via `all`).
+    """
+
+    if coreai_host_supported():
+        return ("coreai", DEFAULT_ONNX_INT8_BUNDLE_SUBDIR)
+    return (DEFAULT_ONNX_INT8_BUNDLE_SUBDIR,)
 
 
 def download_litert_bundle(
@@ -95,7 +119,7 @@ def download_base_resources(
     *,
     models_dir: str | Path = DEFAULT_MODELS_DIR,
     repo_id: str = DEFAULT_INFERENCE_REPO_ID,
-    bundle_subdir: str = DEFAULT_BUNDLE_SUBDIR,
+    bundle_subdir: str = "default",
     bundle_subdirs: Iterable[str] | None = None,
     token: str | None = None,
     revision: str | None = None,
@@ -140,7 +164,10 @@ def _normalize_bundle_subdirs(values: Iterable[str]) -> tuple[str, ...]:
         item = str(value).strip().lower()
         if not item:
             continue
-        candidates = BUNDLE_SUBDIR_GROUPS.get(item, (item,))
+        if item == "default":
+            candidates = default_bundle_subdirs()
+        else:
+            candidates = BUNDLE_SUBDIR_GROUPS.get(item, (item,))
         for candidate in candidates:
             if candidate not in SUPPORTED_BUNDLE_SUBDIRS:
                 options = ", ".join(
@@ -149,7 +176,7 @@ def _normalize_bundle_subdirs(values: Iterable[str]) -> tuple[str, ...]:
                 raise ValueError(f"Unsupported runtime bundle {candidate!r}; expected one of: {options}")
             if candidate not in output:
                 output.append(candidate)
-    return tuple(output or (DEFAULT_BUNDLE_SUBDIR,))
+    return tuple(output or default_bundle_subdirs())
 
 
 def _downloaded_voice_source(root: Path, bundle_subdir: str) -> Path | None:

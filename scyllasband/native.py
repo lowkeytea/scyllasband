@@ -26,6 +26,7 @@ SCYLLASBAND_BACKEND_AUTO = 0
 SCYLLASBAND_BACKEND_LITERT = 1
 SCYLLASBAND_BACKEND_COREML = 2
 SCYLLASBAND_BACKEND_ONNX = 3
+SCYLLASBAND_BACKEND_COREAI = 4
 
 SCYLLASBAND_SAMPLER_EULER = 0
 SCYLLASBAND_SAMPLER_HEUN = 1
@@ -47,6 +48,7 @@ _BACKEND_IDS = {
     "onnx": SCYLLASBAND_BACKEND_ONNX,
     "litert": SCYLLASBAND_BACKEND_LITERT,
     "coreml": SCYLLASBAND_BACKEND_COREML,
+    "coreai": SCYLLASBAND_BACKEND_COREAI,
 }
 _SAMPLER_IDS = {"euler": SCYLLASBAND_SAMPLER_EULER, "heun": SCYLLASBAND_SAMPLER_HEUN}
 _LITERT_ACCELERATOR_IDS = {
@@ -287,7 +289,7 @@ class NativeScyllasBandRuntime:
         backend: str = "onnx",
         validate_bundle: bool = True,
         library_path: str | Path | None = None,
-        litert_accelerator: str = "cpu",
+        litert_accelerator: str = "auto",
         max_cached_target_buckets: int = 0,
     ) -> None:
         self.bundle_dir = Path(bundle_dir)
@@ -638,13 +640,13 @@ def _resolve_library_path(
 
     root = Path(__file__).resolve().parents[1]
     names = _library_names()
-    search_dirs = _library_search_dirs(root)
+    search_dirs = _library_search_dirs(root, backend=backend)
     candidate = _find_library_path(search_dirs, names)
     if candidate is not None:
         if (
             auto_build
             and _can_auto_build(path)
-            and _managed_native_library_is_stale(root, candidate)
+            and _managed_native_library_is_stale(root, candidate, backend=backend)
         ):
             try:
                 _auto_build_native_library(
@@ -682,7 +684,8 @@ def _resolve_library_path(
     message = (
         "Could not find libscyllasband shared library. Build scyllasband/libscyllasband with "
         "-DSCYLLASBAND_ENABLE_ONNX=ON (the default backend), explicitly build with "
-        "-DSCYLLASBAND_ENABLE_LITERT=ON for LiteRT, or set SCYLLASBAND_NATIVE_LIBRARY. "
+        "-DSCYLLASBAND_ENABLE_LITERT=ON for LiteRT, run the Core AI macOS build on "
+        "macOS 27, or set SCYLLASBAND_NATIVE_LIBRARY. "
         f"Searched: {searched}"
     )
     if build_error is not None:
@@ -692,15 +695,24 @@ def _resolve_library_path(
     raise ScyllasBandNativeError(message)
 
 
-def _library_search_dirs(root: Path) -> list[Path]:
+def _library_search_dirs(root: Path, *, backend: str = "onnx") -> list[Path]:
     source_dir = root / "libscyllasband"
     default_build_dir = source_dir / "build"
-    search_dirs = [
-        default_build_dir,
-        default_build_dir / "Debug",
-        default_build_dir / "Release",
-    ]
-    if os.environ.get(_BUILD_DIR_ENV):
+    search_dirs: list[Path] = []
+    if backend == "coreai":
+        coreai_build_dir = _coreai_build_dir(source_dir)
+        search_dirs.extend([
+            coreai_build_dir,
+            coreai_build_dir / "Debug",
+            coreai_build_dir / "Release",
+        ])
+    else:
+        search_dirs.extend([
+            default_build_dir,
+            default_build_dir / "Debug",
+            default_build_dir / "Release",
+        ])
+    if os.environ.get(_BUILD_DIR_ENV) and backend != "coreai":
         override_build_dir = _native_build_dir(source_dir)
         search_dirs = [
             override_build_dir,
@@ -721,9 +733,16 @@ def _find_library_path(search_dirs: list[Path], names: list[str]) -> Path | None
     return None
 
 
-def _managed_native_library_is_stale(root: Path, library_path: Path) -> bool:
+def _managed_native_library_is_stale(
+    root: Path,
+    library_path: Path,
+    *,
+    backend: str = "onnx",
+) -> bool:
     source_dir = root / "libscyllasband"
     managed_dirs = {source_dir / "build", _native_build_dir(source_dir)}
+    if backend == "coreai":
+        managed_dirs.add(_coreai_build_dir(source_dir))
     if not any(_path_is_within(library_path, directory) for directory in managed_dirs):
         return False
     try:
@@ -744,8 +763,8 @@ def _native_build_inputs(source_dir: Path) -> list[Path]:
     cmakelists = source_dir / "CMakeLists.txt"
     if cmakelists.is_file():
         inputs.append(cmakelists)
-    source_suffixes = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".mm"}
-    for directory_name in ("include", "src"):
+    source_suffixes = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".mm", ".swift", ".sh"}
+    for directory_name in ("include", "src", "apple", "scripts"):
         directory = source_dir / directory_name
         if not directory.is_dir():
             continue
@@ -755,6 +774,16 @@ def _native_build_inputs(source_dir: Path) -> list[Path]:
             if path.is_file() and path.suffix.lower() in source_suffixes
         )
     return inputs
+
+
+def _coreai_build_dir(source_dir: Path) -> Path:
+    override = os.environ.get(_BUILD_DIR_ENV)
+    if override:
+        path = Path(override).expanduser()
+        if not path.is_absolute():
+            path = source_dir / path
+        return path.resolve()
+    return (source_dir / "build" / "coreai-macos").resolve()
 
 
 def _path_is_within(path: Path, directory: Path) -> bool:
@@ -782,6 +811,25 @@ def _auto_build_native_library(root: Path, *, reason: str, backend: str = "onnx"
     backend = str(backend).strip().lower()
     if backend == "auto":
         backend = "onnx"
+    if backend == "coreai":
+        if sys.platform != "darwin":
+            raise ScyllasBandNativeError("Core AI native execution requires macOS 27")
+        script = source_dir / "scripts" / "build_coreai_macos.sh"
+        if not script.is_file():
+            raise ScyllasBandNativeError(f"Cannot auto-build Core AI; missing {script}")
+        if not _env_flag(_QUIET_BUILD_ENV, default=False):
+            print(
+                f"Scylla's Band native runtime: {reason}; preparing the Core AI "
+                "libscyllasband backend for macOS.",
+                file=sys.stderr,
+            )
+        _run_native_build_command(
+            [str(script)],
+            cwd=root,
+            label="Core AI native build",
+            extra_env={"SCYLLASBAND_COREAI_BUILD_DIR": str(_coreai_build_dir(source_dir))},
+        )
+        return
     if backend not in {"onnx", "litert"}:
         raise ScyllasBandNativeError(
             f"Cannot auto-build the unsupported native backend {backend!r}; "
@@ -946,7 +994,13 @@ def _add_windows_dll_directory(directory: Path) -> None:
     os.environ["PATH"] = path if not current else path + os.pathsep + current
 
 
-def _run_native_build_command(cmd: list[str], *, cwd: Path, label: str) -> None:
+def _run_native_build_command(
+    cmd: list[str],
+    *,
+    cwd: Path,
+    label: str,
+    extra_env: dict[str, str] | None = None,
+) -> None:
     try:
         completed = subprocess.run(
             cmd,
@@ -954,6 +1008,7 @@ def _run_native_build_command(cmd: list[str], *, cwd: Path, label: str) -> None:
             check=False,
             capture_output=True,
             text=True,
+            env={**os.environ, **(extra_env or {})},
         )
     except OSError as exc:
         raise ScyllasBandNativeError(f"{label} could not run {shlex.join(cmd)}: {exc}") from exc
@@ -1047,7 +1102,7 @@ def _sampler_id(value: str) -> int:
 
 def _litert_accelerator_id(value: str) -> int:
     try:
-        return _LITERT_ACCELERATOR_IDS[str(value or "cpu").lower()]
+        return _LITERT_ACCELERATOR_IDS[str(value or "auto").lower()]
     except KeyError as exc:
         raise ValueError(f"Unsupported Scylla's Band LiteRT accelerator: {value!r}") from exc
 

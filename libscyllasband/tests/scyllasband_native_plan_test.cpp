@@ -49,6 +49,12 @@ int main() {
     if (scyllasband_detail::scyllasband_select_backend(SCYLLASBAND_BACKEND_LITERT) != SCYLLASBAND_BACKEND_LITERT) {
         return fail("explicit LiteRT backend selection was not preserved");
     }
+    if (scyllasband_detail::scyllasband_select_backend(SCYLLASBAND_BACKEND_COREAI) != SCYLLASBAND_BACKEND_COREAI) {
+        return fail("explicit Core AI backend selection was not preserved");
+    }
+    if (std::string(scyllasband_detail::scyllasband_backend_name(SCYLLASBAND_BACKEND_COREAI)) != "coreai") {
+        return fail("Core AI backend name does not match the bundle contract");
+    }
 
     const char* text =
         "Alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu. "

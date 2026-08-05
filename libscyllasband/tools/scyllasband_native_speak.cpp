@@ -46,7 +46,7 @@ struct Options {
     bool preflight_chunks = false;
     bool progress = true;
     bool validate_bundle = true;
-    ScyllasBandBackend backend = SCYLLASBAND_BACKEND_ONNX;
+    ScyllasBandBackend backend = SCYLLASBAND_BACKEND_AUTO;
     ScyllasBandLiteRtAccelerator litert_accelerator = SCYLLASBAND_LITERT_ACCELERATOR_CPU;
 };
 
@@ -78,7 +78,7 @@ void usage(std::ostream& out) {
            "  --min-clause-pause-ms N       In-chunk clause punctuation floor, default 160\n"
            "  --no-prefix-latents           Disable long-form prefix carryover\n"
            "  --preflight-chunks            Run full duration preflight before synthesis\n"
-           "  --backend auto|onnx|litert|coreml  Backend selection, default onnx; auto aliases onnx\n"
+           "  --backend auto|onnx|litert|coreml|coreai  Backend selection, default auto\n"
            "  --litert-accelerator MODE     LiteRT accelerator auto|cpu|gpu|npu, default cpu\n"
            "  --no-validate-bundle          Skip manifest file validation\n";
 }
@@ -139,6 +139,10 @@ bool parse_backend(const std::string& value, ScyllasBandBackend* out) {
     }
     if (value == "onnx") {
         *out = SCYLLASBAND_BACKEND_ONNX;
+        return true;
+    }
+    if (value == "coreai") {
+        *out = SCYLLASBAND_BACKEND_COREAI;
         return true;
     }
     return false;

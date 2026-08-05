@@ -9,15 +9,21 @@ import threading
 import time
 from typing import Any, Mapping
 
-from .contract import ScyllasBandBundleManifest, VoiceSpec, load_bundle_manifest, validate_bundle_layout
+from .contract import (
+    ScyllasBandBundleManifest,
+    VoiceSpec,
+    coreai_host_supported,
+    load_bundle_manifest,
+    validate_bundle_layout,
+)
 from .litert import LiteRTRunner
 from .native import NativeScyllasBandRuntime
 from .onnx import ONNXRunner
 from .text_normalizer import normalize_spoken_text
 
 
-SUPPORTED_BACKENDS = ("auto", "onnx", "litert", "coreml")
-IMPLEMENTED_BACKENDS = ("onnx", "litert")
+SUPPORTED_BACKENDS = ("auto", "onnx", "litert", "coreml", "coreai")
+IMPLEMENTED_BACKENDS = ("onnx", "litert", "coreai")
 SUPPORTED_SAMPLERS = ("euler", "heun")
 
 
@@ -74,7 +80,7 @@ class ScyllasBandRuntime:
         bundle_dir: str | Path,
         manifest: ScyllasBandBundleManifest,
         backends: list[str] | None = None,
-        litert_accelerator: str = "cpu",
+        litert_accelerator: str = "auto",
         onnx_providers: list[str] | None = None,
         onnx_intra_op_num_threads: int = 0,
         onnx_inter_op_num_threads: int = 0,
@@ -84,7 +90,7 @@ class ScyllasBandRuntime:
     ) -> None:
         self.bundle_dir = Path(bundle_dir)
         self.manifest = manifest
-        self.backends = _validate_backends(backends or ["onnx"])
+        self.backends = _validate_backends(backends or ["auto"])
         self.litert_accelerator = litert_accelerator
         self.onnx_providers = list(onnx_providers) if onnx_providers else None
         self.onnx_intra_op_num_threads = int(onnx_intra_op_num_threads)
@@ -112,7 +118,7 @@ class ScyllasBandRuntime:
         *,
         backends: list[str] | None = None,
         validate_files: bool = True,
-        litert_accelerator: str = "cpu",
+        litert_accelerator: str = "auto",
         onnx_providers: list[str] | None = None,
         onnx_intra_op_num_threads: int = 0,
         onnx_inter_op_num_threads: int = 0,
@@ -366,8 +372,8 @@ class ScyllasBandRuntime:
             text = self.normalize_text(text, language=language, voice_id=request.voice_id)
         backend = self._select_backend()
         self._validate_affect_request(request, backend=backend)
-        if backend == "litert":
-            if self._litert_runner is not None:
+        if backend in {"litert", "coreai"}:
+            if backend == "litert" and self._litert_runner is not None:
                 metadata = self._litert_runner.estimate_latent_frames(request, text=text, language=language)
             else:
                 native_request = SynthesisRequest(
@@ -425,8 +431,8 @@ class ScyllasBandRuntime:
             text = self.normalize_text(text, language=language, voice_id=request.voice_id)
         backend = self._select_backend()
         self._validate_affect_request(request, backend=backend)
-        if backend == "litert":
-            if self._litert_runner is not None:
+        if backend in {"litert", "coreai"}:
+            if backend == "litert" and self._litert_runner is not None:
                 result = self._litert_runner.synthesize(request, text=text, language=language)
                 return SynthesisResult(
                     audio=result.audio,
@@ -490,18 +496,20 @@ class ScyllasBandRuntime:
                 latents=result.latents,
             )
         raise NotImplementedError(
-            f"{backend} graph execution is not implemented yet. Use a LiteRT bundle "
+            f"{backend} graph execution is not implemented yet. Use a Core AI, LiteRT, or ONNX bundle "
             "or export a runtime path with an implemented backend first."
         )
 
     def _select_backend(self) -> str:
+        auto_order = ("coreai", "onnx") if coreai_host_supported() else ("onnx",)
         requested: list[str] = []
         for backend in self.backends:
-            # Keep `auto` as a compatibility spelling, but do not use it to
-            # opt callers into an experimental backend implicitly.
-            resolved = "onnx" if backend == "auto" else backend
-            if resolved not in requested:
-                requested.append(resolved)
+            # `auto` prefers Core AI on macOS 27+ hosts when the bundle ships
+            # Core AI artifacts, and resolves to ONNX everywhere else.
+            resolved = auto_order if backend == "auto" else (backend,)
+            for name in resolved:
+                if name not in requested:
+                    requested.append(name)
         for backend in requested:
             if backend not in IMPLEMENTED_BACKENDS:
                 continue
@@ -512,11 +520,11 @@ class ScyllasBandRuntime:
             options = ", ".join(unimplemented)
             raise NotImplementedError(
                 f"Backend(s) {options} are declared but not implemented yet. "
-                "Use the default ONNX backend, or select LiteRT explicitly."
+                "Use ONNX, LiteRT, or Core AI on a supported Apple host."
             )
         raise ValueError(
             f"No usable backend artifacts found for {requested!r}. "
-            "ONNX is the default; LiteRT must be selected explicitly with a matching bundle."
+            "ONNX is the default; LiteRT and Core AI require an explicit matching bundle."
         )
 
     def _has_backend_artifacts(self, backend: str) -> bool:

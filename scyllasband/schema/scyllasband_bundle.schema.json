@@ -28,7 +28,7 @@
     "default_language": { "type": "string" },
     "preferred_backends": {
       "type": "array",
-      "items": { "enum": ["onnx", "litert", "coreml"] },
+      "items": { "enum": ["onnx", "litert", "coreml", "coreai"] },
       "minItems": 1
     },
     "voices": {

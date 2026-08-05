@@ -224,7 +224,7 @@ private:
     ScyllasBandBundleInfo bundle_info_;
 };
 
-#if defined(SCYLLASBAND_WITH_LITERT) || defined(SCYLLASBAND_WITH_ONNXRUNTIME)
+#if defined(SCYLLASBAND_WITH_LITERT) || defined(SCYLLASBAND_WITH_ONNXRUNTIME) || defined(SCYLLASBAND_WITH_COREAI)
 
 struct ScyllasBandLiteRtInputStorage {
     std::vector<std::string> names;
@@ -3690,11 +3690,11 @@ public:
                  << "\"litert_g2p_accelerator\":\""
                  << litert_accelerator_name_backend(frontend_litert_accelerator()) << "\","
                  << "\"litert_g2p_accelerator_policy\":\""
-                 << litert_frontend_accelerator_policy_backend(litert_accelerator_) << "\","
+                 << frontend_accelerator_policy() << "\","
                  << "\"litert_duration_accelerator\":\""
                  << litert_accelerator_name_backend(frontend_litert_accelerator()) << "\","
                  << "\"litert_duration_accelerator_policy\":\""
-                 << litert_frontend_accelerator_policy_backend(litert_accelerator_) << "\","
+                 << frontend_accelerator_policy() << "\","
                  << "\"litert_vector_accelerator\":\""
                  << litert_accelerator_name_backend(vector_litert_accelerator(split_vector_for_request)) << "\","
                  << "\"litert_vector_tail_accelerator\":\""
@@ -3712,9 +3712,7 @@ public:
                  << "\"litert_vocoder_requested_accelerator\":\""
                  << litert_accelerator_name_backend(vocoder_litert_accelerator()) << "\","
                  << "\"litert_vocoder_accelerator_policy\":\""
-                 << (actual_vocoder_accelerator == vocoder_litert_accelerator()
-                     ? litert_vocoder_accelerator_policy_backend(litert_accelerator_)
-                     : "cpu_fallback_after_vocoder_gpu_compile_failure") << "\","
+                 << vocoder_accelerator_policy(actual_vocoder_accelerator) << "\","
                  << "\"litert_vocoder_fallback_error\":"
                  << vocoder_fallback_error_json << ","
                  << "\"litert_max_threads\":" << litert_max_threads_ << ","
@@ -3905,6 +3903,11 @@ public:
     }
 
     void set_target_bucket_cache_capacity(int capacity) override {
+        if (backend_name_ == "coreai") {
+            // All fixed frame buckets are functions in one shared-weight
+            // .aimodel. Evicting by logical bucket would discard that one model.
+            return;
+        }
         evict_target_buckets(target_bucket_cache_policy_.set_capacity(capacity));
     }
 
@@ -4406,6 +4409,9 @@ private:
     }
 
     ScyllasBandLiteRtAccelerator frontend_litert_accelerator() const {
+        if (backend_name_ == "coreai") {
+            return litert_accelerator_;
+        }
         return litert_frontend_accelerator_backend(litert_accelerator_);
     }
 
@@ -4427,6 +4433,9 @@ private:
     }
 
     ScyllasBandLiteRtAccelerator vector_full_litert_accelerator(bool split_vector_for_request) const {
+        if (backend_name_ == "coreai") {
+            return litert_accelerator_;
+        }
         if (litert_accelerator_ == SCYLLASBAND_LITERT_ACCELERATOR_GPU && !split_vector_for_request) {
             return SCYLLASBAND_LITERT_ACCELERATOR_CPU;
         }
@@ -4452,6 +4461,9 @@ private:
     }
 
     const char* vector_litert_accelerator_policy(bool split_vector_for_request) const {
+        if (backend_name_ == "coreai") {
+            return "coreai_preferred_compute_unit";
+        }
         if (split_vector_for_request) {
             return "gpu_prefix_cpu_tail_split_vector";
         }
@@ -4465,7 +4477,27 @@ private:
     }
 
     ScyllasBandLiteRtAccelerator vocoder_litert_accelerator() const {
+        if (backend_name_ == "coreai") {
+            return litert_accelerator_;
+        }
         return litert_vocoder_accelerator_backend(litert_accelerator_);
+    }
+
+    const char* frontend_accelerator_policy() const {
+        return backend_name_ == "coreai"
+            ? "coreai_preferred_compute_unit"
+            : litert_frontend_accelerator_policy_backend(litert_accelerator_);
+    }
+
+    const char* vocoder_accelerator_policy(
+        ScyllasBandLiteRtAccelerator actual_accelerator
+    ) const {
+        if (backend_name_ == "coreai") {
+            return "coreai_preferred_compute_unit";
+        }
+        return actual_accelerator == vocoder_litert_accelerator()
+            ? litert_vocoder_accelerator_policy_backend(litert_accelerator_)
+            : "cpu_fallback_after_vocoder_gpu_compile_failure";
     }
 
     std::string bundle_dir_;
@@ -4492,7 +4524,7 @@ private:
     std::string vocoder_fallback_error_;
 };
 
-#endif  // SCYLLASBAND_WITH_LITERT || SCYLLASBAND_WITH_ONNXRUNTIME
+#endif  // graph runtime enabled
 
 }  // namespace
 
@@ -4508,7 +4540,7 @@ std::unique_ptr<ScyllasBandBackendEngine> create_backend_engine(
     bundle_info.bundle_dir = bundle_dir;
     bundle_info.selected_backend = scyllasband_backend_name(selected);
     const bool must_load_bundle = validate_bundle || selected == SCYLLASBAND_BACKEND_LITERT ||
-        selected == SCYLLASBAND_BACKEND_ONNX;
+        selected == SCYLLASBAND_BACKEND_ONNX || selected == SCYLLASBAND_BACKEND_COREAI;
     if (must_load_bundle) {
         try {
             bundle_info = load_scyllasband_bundle_info(bundle_dir, selected);
@@ -4530,6 +4562,17 @@ std::unique_ptr<ScyllasBandBackendEngine> create_backend_engine(
 #endif
 #ifdef SCYLLASBAND_WITH_LITERT
     if (selected == SCYLLASBAND_BACKEND_LITERT) {
+        return std::make_unique<DurationFlowBackend>(
+            std::move(bundle_dir),
+            std::move(bundle_info),
+            scyllasband_backend_name(selected),
+            litert_accelerator,
+            litert_max_threads
+        );
+    }
+#endif
+#ifdef SCYLLASBAND_WITH_COREAI
+    if (selected == SCYLLASBAND_BACKEND_COREAI) {
         return std::make_unique<DurationFlowBackend>(
             std::move(bundle_dir),
             std::move(bundle_info),

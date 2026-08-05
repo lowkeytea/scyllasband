@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -24,7 +25,7 @@ from .jobs import load_run, model_contract_fingerprint, selected_jobs
 
 
 RENDER_SCHEMA_VERSION = 1
-SUPPORTED_PUBLIC_BACKENDS = {"onnx", "litert", "coreml"}
+SUPPORTED_PUBLIC_BACKENDS = {"onnx", "litert", "coreml", "coreai"}
 
 
 class ValidationRenderError(RuntimeError):
@@ -120,15 +121,33 @@ def _component_inventory(bundle_dir: Path, backend: str, *, hash_components: boo
         if not declared:
             continue
         path = bundle_dir / declared
+        exists = path.is_file() or (backend == "coreai" and path.is_dir())
         record: dict[str, Any] = {
             "path": declared,
-            "exists": path.is_file(),
-            "size_bytes": path.stat().st_size if path.is_file() else None,
+            "exists": exists,
+            "size_bytes": _artifact_size(path) if exists else None,
         }
-        if hash_components and path.is_file():
-            record["sha256"] = sha256_file(path)
+        if hash_components and exists:
+            record["sha256"] = (
+                sha256_file(path) if path.is_file() else _artifact_tree_sha256(path)
+            )
         output[name] = record
     return output
+
+
+def _artifact_size(path: Path) -> int:
+    if path.is_file():
+        return path.stat().st_size
+    return sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
+
+
+def _artifact_tree_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    for item in sorted(candidate for candidate in path.rglob("*") if candidate.is_file()):
+        digest.update(item.relative_to(path).as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(bytes.fromhex(sha256_file(item)))
+    return digest.hexdigest()
 
 
 def _backend_metadata(

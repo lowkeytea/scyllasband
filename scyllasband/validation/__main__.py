@@ -64,7 +64,7 @@ def _parser() -> argparse.ArgumentParser:
 
     render = commands.add_parser("render", help="Render frozen jobs with a public backend")
     render.add_argument("--run", type=Path, required=True)
-    render.add_argument("--backend", choices=("onnx", "litert", "coreml"), required=True)
+    render.add_argument("--backend", choices=("onnx", "litert", "coreml", "coreai"), required=True)
     render.add_argument("--bundle", type=Path, required=True)
     render.add_argument("--overwrite-failed", action="store_true")
     render.add_argument("--fail-fast", action="store_true")

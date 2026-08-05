@@ -346,16 +346,33 @@ static int32_t forward_stream_event(const ScyllasBandStreamingEvent *event, void
                affectAxes:string_array(axisValues)];
     _cancelRequested.store(false, std::memory_order_relaxed);
 
+    // Pick the runtime from the bundle itself: Core AI bundles declare
+    // preferred_backends=["coreai"] and need iOS/macOS 27; everything else
+    // runs on the ONNX session.
+    NSArray *preferredBackends = [manifest[@"preferred_backends"] isKindOfClass:NSArray.class]
+        ? manifest[@"preferred_backends"] : @[];
+    const BOOL wantsCoreAI = [preferredBackends containsObject:@"coreai"];
+    if (wantsCoreAI) {
+        if (@available(iOS 27.0, macOS 27.0, *)) {
+        } else {
+            fail(error, SBScyllasBandErrorRuntime,
+                 @"This Core AI bundle requires iOS 27 or macOS 27; embed an ONNX bundle for earlier systems.");
+            return nil;
+        }
+    }
+
     ScyllasBandRuntimeOptions options{};
     options.bundle_dir = bundleURL.fileSystemRepresentation;
-    options.backend = SCYLLASBAND_BACKEND_ONNX;
+    options.backend = wantsCoreAI ? SCYLLASBAND_BACKEND_COREAI : SCYLLASBAND_BACKEND_ONNX;
     options.validate_bundle = 1;
-    options.litert_accelerator = SCYLLASBAND_LITERT_ACCELERATOR_CPU;
+    options.litert_accelerator = wantsCoreAI
+        ? SCYLLASBAND_LITERT_ACCELERATOR_GPU
+        : SCYLLASBAND_LITERT_ACCELERATOR_CPU;
     options.litert_max_threads = static_cast<int32_t>(std::min<NSInteger>(threadCount, INT32_MAX));
     const ScyllasBandStatus createStatus = scyllasband_runtime_create(&options, &_runtime);
     if (createStatus != SCYLLASBAND_STATUS_OK || _runtime == nullptr) {
         fail(error, SBScyllasBandErrorRuntime,
-             last_error_or(@"Unable to create the Scylla's Band ONNX runtime."));
+             last_error_or(@"Unable to create the Scylla's Band native runtime."));
         return nil;
     }
     const ScyllasBandStatus cacheStatus = scyllasband_runtime_set_target_bucket_cache_capacity(

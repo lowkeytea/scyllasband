@@ -5,7 +5,7 @@ import Foundation
 final class StudioViewModel: ObservableObject {
     @Published var bundleInfo: SBScyllasBandBundleInfo?
     @Published var segments: [ScriptSegment] = []
-    @Published var status = "Preparing the bundled ONNX model…"
+    @Published var status = "Preparing the bundled speech model…"
     @Published var isInitializing = true
     @Published var isPlaying = false
     @Published var nowPlayingText: String?
@@ -20,13 +20,29 @@ final class StudioViewModel: ObservableObject {
         bundleInfo != nil && !isInitializing && segments.contains { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
 
+    /// Core AI on iOS 27+ when the Core AI bundle was embedded; otherwise the
+    /// embedded ONNX bundle (int8 preferred). Mirrors the download defaults.
+    private static func embeddedBundleURL() -> URL? {
+        var candidates: [String] = []
+        if #available(iOS 27.0, *) {
+            candidates.append("coreai")
+        }
+        candidates.append(contentsOf: ["onnx-int8", "onnx"])
+        for name in candidates {
+            if let url = Bundle.main.url(
+                forResource: name,
+                withExtension: nil,
+                subdirectory: "scyllasband"
+            ) {
+                return url
+            }
+        }
+        return nil
+    }
+
     func initialize() {
         guard runtime == nil else { return }
-        guard let bundleURL = Bundle.main.url(
-            forResource: "onnx-int8",
-            withExtension: nil,
-            subdirectory: "scyllasband"
-        ) else {
+        guard let bundleURL = Self.embeddedBundleURL() else {
             isInitializing = false
             status = "Model bundle missing. Run the asset preparation script or set SCYLLASBAND_IOS_BUNDLE_DIR."
             return
@@ -104,7 +120,7 @@ final class StudioViewModel: ObservableObject {
         guard isPlaying else { return }
         runtime?.requestCancellation()
         audioPlayer?.stop()
-        status = "Stopping after the current ONNX call…"
+        status = "Stopping after the current synthesis call…"
     }
 
     private func startPlayback() {

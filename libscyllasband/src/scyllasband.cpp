@@ -26,7 +26,8 @@ namespace {
 
 bool valid_backend(ScyllasBandBackend backend) {
     return backend == SCYLLASBAND_BACKEND_AUTO || backend == SCYLLASBAND_BACKEND_LITERT ||
-           backend == SCYLLASBAND_BACKEND_COREML || backend == SCYLLASBAND_BACKEND_ONNX;
+           backend == SCYLLASBAND_BACKEND_COREML || backend == SCYLLASBAND_BACKEND_ONNX ||
+           backend == SCYLLASBAND_BACKEND_COREAI;
 }
 
 bool valid_litert_accelerator(ScyllasBandLiteRtAccelerator accelerator) {
@@ -1154,8 +1155,14 @@ const char* backend_name_for_plan(ScyllasBandBackend backend) {
             return "coreml";
         case SCYLLASBAND_BACKEND_ONNX:
             return "onnx";
+        case SCYLLASBAND_BACKEND_COREAI:
+            return "coreai";
         case SCYLLASBAND_BACKEND_AUTO:
+#if defined(SCYLLASBAND_WITH_COREAI)
+            return "coreai";
+#else
             return "onnx";
+#endif
     }
     return "onnx";
 }

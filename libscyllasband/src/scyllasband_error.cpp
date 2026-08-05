@@ -29,4 +29,8 @@ void scyllasband_clear_error(void) {
     scyllasband_detail::clear_error();
 }
 
+void scyllasband_graph_session_set_error(const char* message) {
+    scyllasband_detail::set_error(message == nullptr ? "" : message);
+}
+
 }  // extern "C"

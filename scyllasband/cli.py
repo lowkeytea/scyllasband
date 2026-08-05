@@ -21,8 +21,10 @@ from .download import (
     DEFAULT_BUNDLE_SUBDIR,
     DEFAULT_INFERENCE_REPO_ID,
     DEFAULT_MODELS_DIR,
+    DEFAULT_ONNX_INT8_BUNDLE_SUBDIR,
     SUPPORTED_BUNDLE_SUBDIRS,
     bundle_dirs_for_subdirs,
+    default_bundle_subdirs,
     download_base_resources,
 )
 from .g2p_phrases import DEFAULT_G2P_PHRASE_MAX_CHARS
@@ -60,18 +62,29 @@ _GROUP_EMOTION_PRESET_TAGS = frozenset(SUPPORTED_AFFECT_AXES) | frozenset(
 
 
 def _default_bundle_path(backend: str | None = None) -> Path:
-    backend = str(backend or DEFAULT_BUNDLE_SUBDIR).strip().lower()
-    bundle_subdir = DEFAULT_BUNDLE_SUBDIR if backend == "auto" else backend
+    backend = str(backend or "auto").strip().lower()
+    if backend == "auto":
+        # Match the runtime's auto policy: Core AI first on macOS 27+ hosts,
+        # then int8 ONNX, then the fp32 ONNX bundle if that is all that is
+        # available locally.
+        subdir_preference = (*default_bundle_subdirs(), DEFAULT_BUNDLE_SUBDIR)
+    elif backend == "onnx":
+        # The int8 bundle is the default ONNX artifact; fp32 is opt-in via an
+        # explicit bundle path.
+        subdir_preference = (DEFAULT_ONNX_INT8_BUNDLE_SUBDIR, DEFAULT_BUNDLE_SUBDIR)
+    else:
+        subdir_preference = (backend,)
     roots = (
         DEFAULT_MODELS_DIR,
         Path(__file__).resolve().parent / "models",
         Path(__file__).resolve().parents[1] / "models",
     )
-    for root in roots:
-        bundle = root / bundle_subdir
-        if (bundle / "manifest.json").is_file():
-            return bundle
-    return Path(__file__).resolve().parents[1] / "models" / bundle_subdir
+    for bundle_subdir in subdir_preference:
+        for root in roots:
+            bundle = root / bundle_subdir
+            if (bundle / "manifest.json").is_file():
+                return bundle
+    return Path(__file__).resolve().parents[1] / "models" / subdir_preference[-1]
 
 
 def _looks_like_bundle_path(value: object) -> bool:
@@ -165,8 +178,65 @@ def _normalize_text(args: argparse.Namespace) -> int:
     return 0
 
 
+def _prompt_bundle_selection(default_subdirs: tuple[str, ...]) -> tuple[str, ...] | None:
+    """Checkbox-style bundle picker; returns the selection or None if cancelled."""
+
+    from .download import BUNDLE_SUBDIR_DESCRIPTIONS
+
+    entries = list(BUNDLE_SUBDIR_DESCRIPTIONS)
+    selected = {name for name in default_subdirs if name in entries}
+    while True:
+        print("\nScylla's Band model download — select bundles:\n")
+        for index, name in enumerate(entries, start=1):
+            description, size = BUNDLE_SUBDIR_DESCRIPTIONS[name]
+            mark = "x" if name in selected else " "
+            default_tag = "  (default)" if name in default_subdirs else ""
+            size_tag = f"  {size}" if size else ""
+            print(f"  [{mark}] {index}. {name:12s} {description}{size_tag}{default_tag}")
+        print("\nVoice packs are always included.")
+        try:
+            answer = input(
+                "Toggle with numbers (e.g. \"2\" or \"2 4\"), Enter to download, q to quit: "
+            ).strip().lower()
+        except EOFError:
+            return tuple(sorted(selected)) if selected else None
+        if answer in {"q", "quit", "exit"}:
+            return None
+        if answer in {"", "d", "download"}:
+            if not selected:
+                print("Nothing selected; toggle at least one bundle or press q to quit.")
+                continue
+            return tuple(name for name in entries if name in selected)
+        toggled_any = False
+        for token in answer.replace(",", " ").split():
+            if token.isdigit() and 1 <= int(token) <= len(entries):
+                name = entries[int(token) - 1]
+                selected.symmetric_difference_update({name})
+                toggled_any = True
+            elif token in entries:
+                selected.symmetric_difference_update({token})
+                toggled_any = True
+        if not toggled_any:
+            print("Enter bundle numbers to toggle, Enter to start, or q to quit.")
+
+
 def _download(args: argparse.Namespace) -> int:
     bundle_subdirs = _download_bundle_subdirs(args)
+    explicit_request = bool(
+        str(getattr(args, "bundle_subdir", "") or "").strip()
+        or (getattr(args, "runtime_bundles", None) or "default") != "default"
+    )
+    if (
+        not explicit_request
+        and not bool(getattr(args, "yes", False))
+        and sys.stdin.isatty()
+        and sys.stdout.isatty()
+    ):
+        chosen = _prompt_bundle_selection(bundle_subdirs)
+        if chosen is None:
+            print("Download cancelled.")
+            return 1
+        bundle_subdirs = _normalize_requested_bundle_subdirs(chosen)
     bundle_dir, voices_dir = download_base_resources(
         models_dir=args.models_dir,
         repo_id=args.repo_id,
@@ -197,7 +267,7 @@ def _download_bundle_subdirs(args: argparse.Namespace) -> tuple[str, ...]:
     override = str(getattr(args, "bundle_subdir", "") or "").strip()
     if override:
         return _normalize_requested_bundle_subdirs((override,))
-    return _normalize_requested_bundle_subdirs((getattr(args, "runtime_bundles", None) or DEFAULT_BUNDLE_SUBDIR,))
+    return _normalize_requested_bundle_subdirs((getattr(args, "runtime_bundles", None) or "default",))
 
 
 def _normalize_requested_bundle_subdirs(values: tuple[str, ...]) -> tuple[str, ...]:
@@ -206,7 +276,10 @@ def _normalize_requested_bundle_subdirs(values: tuple[str, ...]) -> tuple[str, .
         item = str(value).strip().lower()
         if not item:
             continue
-        candidates = BUNDLE_SUBDIR_GROUPS.get(item, (item,))
+        if item == "default":
+            candidates = default_bundle_subdirs()
+        else:
+            candidates = BUNDLE_SUBDIR_GROUPS.get(item, (item,))
         for candidate in candidates:
             if candidate not in (*SUPPORTED_BUNDLE_SUBDIRS,):
                 options = ", ".join(
@@ -215,7 +288,7 @@ def _normalize_requested_bundle_subdirs(values: tuple[str, ...]) -> tuple[str, .
                 raise ValueError(f"Unsupported runtime bundle {candidate!r}; expected one of: {options}")
             if candidate not in output:
                 output.append(candidate)
-    return tuple(output or (DEFAULT_BUNDLE_SUBDIR,))
+    return tuple(output or default_bundle_subdirs())
 
 
 def _compare_metadata(args: argparse.Namespace) -> int:
@@ -403,17 +476,20 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     download_parser.add_argument("--repo-id", default=DEFAULT_INFERENCE_REPO_ID)
     download_parser.add_argument(
         "--runtime-bundles",
-        choices=(*SUPPORTED_BUNDLE_SUBDIRS, *BUNDLE_SUBDIR_GROUPS),
-        default=DEFAULT_BUNDLE_SUBDIR,
+        choices=(*SUPPORTED_BUNDLE_SUBDIRS, *BUNDLE_SUBDIR_GROUPS, "default"),
+        default="default",
         help=(
-            "Runtime bundle(s) to download; onnx-int8 is the smaller CPU-optimized "
-            "ONNX option, both keeps ONNX plus LiteRT, and all downloads every option"
+            "Runtime bundle(s) to download; default fetches onnx-int8 plus "
+            "Core AI on macOS 27+ hosts and onnx-int8 alone elsewhere. The "
+            "fp32 onnx bundle, litert, and other options must be requested "
+            "explicitly; all downloads every option"
         ),
     )
     download_parser.add_argument("--bundle-subdir", default=None, help="Legacy/expert override for the exact HF bundle subdir to download")
     download_parser.add_argument("--token", help="Hugging Face token; defaults to the hub client configuration")
     download_parser.add_argument("--revision", help="Optional Hugging Face revision")
     download_parser.add_argument("--force", action="store_true", help="Replace existing local bundle/voice directories")
+    download_parser.add_argument("-y", "--yes", action="store_true", help="Skip the interactive bundle selection and download the platform defaults")
     download_parser.add_argument("--no-voices", action="store_true", help="Only download the runtime bundle")
     download_parser.add_argument("--no-validate-bundle", action="store_true", help="Skip bundle layout validation after download")
     download_parser.set_defaults(func=_download)
@@ -618,11 +694,11 @@ def _add_synthesis_args(
     )
     parser.add_argument(
         "--backend",
-        default="onnx",
+        default="auto",
         choices=SUPPORTED_BACKENDS,
-        help="Runtime backend; defaults to onnx (auto is a compatibility alias for onnx)",
+        help="Runtime backend; auto prefers Core AI on macOS 27+ hosts with a Core AI bundle and resolves to onnx otherwise",
     )
-    parser.add_argument("--litert-accelerator", default="cpu", choices=("auto", "cpu", "gpu", "npu"), help="Native LiteRT accelerator for libscyllasband-backed execution")
+    parser.add_argument("--litert-accelerator", default="auto", choices=("auto", "cpu", "gpu", "npu"), help="Native LiteRT accelerator or preferred Core AI compute unit; auto keeps LiteRT on CPU and Core AI on GPU")
     parser.add_argument("--onnx-providers", default=None, help="ONNX Runtime providers, comma-separated, e.g. CUDAExecutionProvider,CPUExecutionProvider; defaults to CPUExecutionProvider")
     parser.add_argument("--onnx-intra-op-threads", type=int, default=0, help="ONNX intra-op thread count; 0 uses ONNX Runtime or a cached Scylla's Band tuning result")
     parser.add_argument("--onnx-inter-op-threads", type=int, default=0, help="ONNX inter-op thread count; only relevant to parallel graph execution")

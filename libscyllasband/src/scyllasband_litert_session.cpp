@@ -870,7 +870,7 @@ int scyllasband_litert_session_run_resized(
 
 }  // extern "C"
 
-#elif !defined(SCYLLASBAND_WITH_ONNXRUNTIME)  // no graph runtime enabled
+#elif !defined(SCYLLASBAND_WITH_ONNXRUNTIME) && !defined(SCYLLASBAND_WITH_COREAI)  // no graph runtime enabled
 
 extern "C" {
 

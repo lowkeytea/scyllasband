@@ -417,12 +417,25 @@ std::string scyllasband_backend_name(ScyllasBandBackend backend) {
             return "coreml";
         case SCYLLASBAND_BACKEND_ONNX:
             return "onnx";
+        case SCYLLASBAND_BACKEND_COREAI:
+            return "coreai";
     }
     return "unknown";
 }
 
 ScyllasBandBackend scyllasband_select_backend(ScyllasBandBackend backend) {
-    return backend == SCYLLASBAND_BACKEND_AUTO ? SCYLLASBAND_BACKEND_ONNX : backend;
+    if (backend != SCYLLASBAND_BACKEND_AUTO) {
+        return backend;
+    }
+#if defined(SCYLLASBAND_WITH_COREAI)
+    return SCYLLASBAND_BACKEND_COREAI;
+#elif defined(SCYLLASBAND_WITH_ONNXRUNTIME)
+    return SCYLLASBAND_BACKEND_ONNX;
+#elif defined(SCYLLASBAND_WITH_LITERT)
+    return SCYLLASBAND_BACKEND_LITERT;
+#else
+    return SCYLLASBAND_BACKEND_ONNX;
+#endif
 }
 
 ScyllasBandBundleInfo load_scyllasband_bundle_info(
@@ -680,7 +693,7 @@ ScyllasBandBundleInfo load_scyllasband_bundle_info(
         info.component_inputs[component_name] = string_array_for_key(component, "inputs");
         info.component_outputs[component_name] = string_array_for_key(component, "outputs");
     };
-    const bool require_split_bucket_components = info.selected_backend != "onnx";
+    const bool require_split_bucket_components = info.selected_backend == "litert";
     for (const ScyllasBandTargetBucketInfo& bucket : info.target_buckets) {
         load_bucket_component(bucket.vector_component, true);
         load_bucket_component(bucket.vocoder_component, true);
@@ -784,7 +797,11 @@ std::string bundle_summary_json(const ScyllasBandBundleInfo& bundle) {
     const bool split_vector_available =
         bundle.component_artifacts.count("vector_estimator_prefix") > 0 &&
         bundle.component_artifacts.count("vector_estimator_tail") > 0;
-    const bool gpu_ready = split_vector_available && !bundle.runtime_acceleration_cuda_required;
+    const bool coreai_gpu_ready =
+        bundle.runtime_acceleration_metadata_present &&
+        bundle.runtime_acceleration_backend == "coreai";
+    const bool gpu_ready = coreai_gpu_ready ||
+        (split_vector_available && !bundle.runtime_acceleration_cuda_required);
     std::string vector_execution = bundle.runtime_acceleration_vector_execution;
     if (vector_execution.empty()) {
         vector_execution = split_vector_available ? "split_prefix_tail" : "single_graph_or_unknown";

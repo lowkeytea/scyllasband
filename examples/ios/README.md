@@ -1,77 +1,82 @@
 # Scylla's Band iOS sample
 
-This sample mirrors the Android Studio app's important integration behavior on
-iPhone and iPad. It uses one persistent native ONNX runtime, warms it once,
-reads voices/languages/affect axes from `manifest.json`, renders each speaker
-segment with native long-form planning, and streams mono Float32 audio into
-`AVAudioEngine` while subsequent chunks render.
+This SwiftUI sample mirrors the Android app's integration behavior on iPhone
+and iPad while using Apple's native Core AI runtime. It keeps one warmed
+`SBScyllasBand`, reads voices/languages/affect axes from `manifest.json`, plans
+native long-form chunks, streams mono Float32 audio into `AVAudioEngine`, and
+keeps the currently spoken text visible while playback continues.
 
 The UI represents Android's inline speaker points as explicit speaker-segment
-cards. This is friendlier to SwiftUI's text system while preserving the same
-document model: settings apply to text until the next speaker segment. Tagged
-`groupSpeak` scripts become editable segment cards when imported.
+cards. Settings apply until the next segment, and tagged `groupSpeak` scripts
+become editable segment cards when imported. All colors use semantic system
+colors so light and dark appearance remain readable.
 
 ## Build and run
 
 Requirements:
 
-- Xcode 16 or newer
+- macOS with Xcode; the Core AI path needs Xcode 27 (its SDK ships
+  `CoreAI.framework` for devices only, so Core AI does not run in Simulator)
+- An iOS 16+ device or simulator; Core AI synthesis activates on iOS 27+
 - CocoaPods
-- An ONNX model bundle at `scyllasband/models/onnx-int8` (preferred) or
-  `scyllasband/models/onnx`
-
-From this directory:
+- Downloaded model bundles: run `python -m scyllasband download` at the
+  repository root (fetches Core AI plus ONNX on macOS 27 hosts, ONNX
+  elsewhere)
 
 ```bash
+python -m scyllasband download
+
+cd examples/ios
 pod install
-open ScyllasBandStudio.xcworkspace
-```
 
-Choose the `ScyllasBandStudio` scheme. Select a Development Team when running
-on a device. The app has no network, microphone, or user-storage permission.
-
-The build phase embeds the complete model for a self-contained sample. It uses
-`onnx-int8` when available and falls back to the larger repository-local ONNX
-bundle. To use another bundle without editing the project:
-
-```bash
-SCYLLASBAND_IOS_BUNDLE_DIR=/absolute/path/to/bundle \
-  xcodebuild -workspace ScyllasBandStudio.xcworkspace \
+xcodebuild -workspace ScyllasBandStudio.xcworkspace \
   -scheme ScyllasBandStudio \
-  -destination 'generic/platform=iOS Simulator' build
+  -destination 'generic/platform=iOS' build
 ```
 
-The Xcode project is checked in. If sources are added, regenerate it with:
+Then open `ScyllasBandStudio.xcworkspace`, choose the
+`ScyllasBandStudio` scheme, select a Development Team, and run it. The app
+needs no network, microphone, or user-storage permission.
+
+The asset build phase embeds every bundle it finds under the downloaded
+`scyllasband/models` directory: `coreai` (validated for all five accelerated
+assets — `g2p`, duration, context, estimator, and vocoder) plus one ONNX
+bundle (`onnx-int8` preferred, `onnx` otherwise). At launch the app picks
+Core AI on iOS 27+ when it was embedded and falls back to the ONNX bundle on
+earlier systems. Set `SCYLLASBAND_IOS_BUNDLE_DIR` to embed one specific
+bundle instead.
+
+The Xcode project is checked in. Regenerate it only after adding sources or
+changing generated build settings:
 
 ```bash
 Scripts/generate_xcode_project.rb
 pod install
 ```
 
+Always open the `.xcworkspace` after installing pods. Opening only the
+`.xcodeproj` produces `No such module 'ScyllasBandKit'`.
+
 ## Reusing the bridge
 
-The app owns no C or C++ integration code. That code lives with the native
-runtime in `libscyllasband` and is packaged by
-`libscyllasband/ScyllasBandKit.podspec`.
-
-To bring it into another app today:
+The app owns no C or C++ integration code. To move synthesis into another app:
 
 1. Copy the complete `libscyllasband` directory into the destination
-   repository. Keeping the native sources beside the bridge avoids fragile
-   relative paths and makes the copied unit self-contained.
-2. Add the local pod to the app target:
+   repository.
+2. Add the local static pod:
 
    ```ruby
+   platform :ios, '16.0'
    use_frameworks! :linkage => :static
    pod 'ScyllasBandKit', :path => '../path/to/libscyllasband'
    ```
 
-3. Run `pod install` and import `ScyllasBandKit` from Swift or Objective-C.
-4. Deliver a complete model directory as an app resource, install-time asset,
-   or one-time download. Preserve its internal directory layout and pass the
-   directory's file URL to `SBScyllasBand`.
-5. Create and warm one `SBScyllasBand` on a serial worker queue. Reuse it for
-   all synthesis and release it when the owning service shuts down.
+3. Run `pod install`, open the workspace, and import `ScyllasBandKit`.
+4. Deliver a complete bundle (Core AI for iOS 27+, ONNX for anything
+   earlier) as an app resource, install-time asset, or one-time download.
+   Preserve its layout and pass its directory URL to `SBScyllasBand`; the
+   runtime picks the backend from the bundle's `preferred_backends`.
+5. Create and warm one runtime on a serial queue and reuse it for synthesis.
 
 Minimal Swift integration:
 
@@ -84,15 +89,15 @@ let runtime = try SBScyllasBand(
 try runtime.warmUp()
 
 let settings = SBScyllasBandSegmentSettings(
-    voiceIdentifier: "scylla",
+    voiceIdentifier: "gwen",
     language: "en_us",
-    emotion: "joy",
+    emotion: "neutral",
     emotionStrength: 0.6,
     emotionCFG: 1.2
 )
 
 try runtime.synthesizeText(
-    "Hello from an iPhone.",
+    "Finally, Scylla's Band is singing on Apple hardware.",
     settings: settings,
     seed: 31_415,
     chunkStarted: { index, count, text in
@@ -100,30 +105,18 @@ try runtime.synthesizeText(
         return true
     },
     audioChunk: { chunk in
-        // Copy or schedule chunk.pcmFloat32Data before returning.
-        // The bridge has already copied it out of libscyllasband-owned memory.
+        // Schedule chunk.pcmFloat32Data before returning.
         return true
     }
 )
 ```
 
-`targetBucketCacheCapacity = 1` is the memory-first mobile profile. Zero keeps
-every target bucket warm and uses substantially more memory. Keep synthesis on
-one serial queue; `requestCancellation()` is the exception and is safe to call
-from UI code. Call `resetCancellation()` once before enqueueing a new playback
-run; individual synthesis calls deliberately do not erase an in-flight stop.
+The public bridge owns manifest discovery, runtime lifetime, warmup,
+cancellation, safe PCM copies, and language-boundary types. `libscyllasband`
+owns normalization, Core AI G2P, duration prediction, long-form planning,
+shared-weight function selection, acoustic sampling, and waveform generation.
+The app owns document editing, playback, interruptions, lifecycle, and UI.
 
-## Bridge boundary
-
-- `libscyllasband` owns text normalization, G2P, duration prediction, chunk
-  planning, ONNX sessions, target-bucket LRU, and waveform generation.
-- `ScyllasBandKit` owns Objective-C/Swift value types, manifest discovery,
-  runtime lifetime, validation, warmup defaults, cancellation, and safe PCM
-  copies across the native callback boundary.
-- The sample app owns document editing, preset import, lifecycle, status,
-  transcript presentation, and `AVAudioEngine` playback.
-
-ONNX Runtime's official iOS C/C++ distribution is the `onnxruntime-c`
-CocoaPod. The podspec pins the compatible 1.21 release line; update and test
-that dependency deliberately alongside Android rather than using an unbounded
-version.
+The G2P asset is versioned independently: a future seven-language G2P update
+can replace `coreai/g2p.aimodel` plus `assets/g2p/` without reconverting the
+four-language acoustic checkpoints.
