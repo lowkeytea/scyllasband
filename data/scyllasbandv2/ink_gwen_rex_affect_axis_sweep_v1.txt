@@ -1,0 +1,18 @@
+[ink:en_gb:calm=0.75] The harbour was still that morning, and the colour of the water had not yet decided what it wanted to be.
+[ink:en_gb:joy=0.9] Marvellous! The theatre reopened, the catalogue sold out, and every neighbour turned up in their best coat.
+[ink:en_gb:anger=0.8] I will not apologise again. The defence was thorough, the licence was valid, and you cancelled it anyway.
+[ink:en_gb:sadness=0.8] They travelled that road for forty years, and now the old programme is just a rumour nobody bothers to repeat.
+[ink:en_gb:sarcasm=0.85] Oh, splendid. Another organised endeavour, run entirely by people who have never organised anything.
+[ink:en_gb:whisper=0.9] Don't wake her. The manoeuvre starts at half four, and the jeweller swears the safe is behind the panelling.
+[gwen:en_us:calm=0.75] Yesterday I read the report, and tomorrow I will read the revision before anyone else arrives.
+[gwen:en_us:joy=0.9] We set a new record! Twelve judges recognized it, and the whole neighborhood is still celebrating.
+[gwen:en_us:anger=0.8] I object to that entirely. You signed the contract, you refuse to honor it, and now you want my signature.
+[gwen:en_us:sadness=0.8] A single tear rolled down her cheek. She could not bring herself to tear the letter open.
+[gwen:en_us:sarcasm=0.85] Sure, the invalid argument from the guy who thinks a minute crack in the hull is a minute problem.
+[gwen:en_us:whisper=0.9] Close the door and sit close to me. The lead pipe is still warm, which means somebody was here.
+[rex:en_us:calm=0.6,joy=0.4] The desert cooled quickly after sunset, and for once nobody wanted to desert the campfire.
+[rex:en_us:joy=0.7,sarcasm=0.3] They produce fresh produce, they record every record, and somehow the paperwork still multiplies.
+[rex:en_us:anger=0.9] Do not subject me to another briefing. The suspect is gone, the escort left, and the project is over budget.
+[rex:en_us:sadness=0.7,calm=0.3] He was content to read the content of the letter twice, then set it down without a word.
+[rex:en_us:sarcasm=0.9] Fantastic. A live broadcast about where the musicians live, hosted by a man who cannot pronounce Worcestershire.
+[rex:en_us:whisper=0.85,anger=0.25] Wind the clock before the wind picks up. If that bass hears us, the whole dock will know by morning.

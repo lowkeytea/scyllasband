@@ -1,0 +1,18 @@
+[max:en_us:calm=0.7] The lighthouse keeper watched the storm roll in, counting the seconds between the light and the thunder.
+[max:es:joy=0.85] ¡Guillermo llegó por fin! Cinco cigüeñas volaron sobre el jardín y todo el pueblo salió a mirar.
+[max:it:anger=0.8] Sfortunatamente l'aeroplano atterrò con tre ore di ritardo, e nessuno si è degnato di avvisarci.
+[max:fr:sadness=0.75] Malheureusement, le train pour Marseille avait déjà quitté le quai, et la vallée était complètement silencieuse.
+[max:de:sarcasm=0.85] Großartig. Das Bundesverfassungsgericht entschied über die Beschwerde, und niemand hat es bemerkt.
+[max:vi:whisper=0.9] Bà tôi thường kể chuyện cổ tích mỗi buổi tối, khi cả nhà đã ngủ say.
+[scylla:en_us:sarcasm=0.8,calm=0.3] Right, the archaeologist catalogued Mesopotamian cuneiform tablets meticulously, and lost the only photograph.
+[scylla:es:calm=0.75] La construcción del acueducto duró aproximadamente dos siglos, y aún hoy sigue en pie.
+[scylla:it:joy=0.8,sarcasm=0.25] Gli gnocchi con lo sciroppo non sono affatto squisiti, ma il violoncello di zio Giovanni salva la serata.
+[scylla:fr:anger=0.85] L'architecte dessinait des bâtiments extraordinairement complexes, puis refusait d'expliquer quoi que ce soit.
+[scylla:de:whisper=0.85] Die Universitätsbibliothek besitzt zahlreiche mittelalterliche Handschriften, und niemand darf sie berühren.
+[scylla:vi:sadness=0.8] Những con đường ở Hà Nội rất đông đúc vào buổi sáng, nhưng tối nay chẳng còn ai.
+[felix:en_us:whisper=0.85,sadness=0.3] Subpoenaed witnesses testified about the alleged malfeasance, then left before anyone could ask a follow-up.
+[felix:es:anger=0.8,sarcasm=0.3] Ningún ciudadano debería renunciar a sus derechos fundamentales, y sin embargo aquí estamos otra vez.
+[felix:it:calm=0.75] Nel mezzo del cammin di nostra vita mi ritrovai smarrito, in una sera di pioggia leggera.
+[felix:fr:joy=0.9] Deux cent quatre-vingt-dix-neuf personnes attendaient patiemment, et toutes ont applaudi en même temps!
+[felix:de:sadness=0.75,calm=0.25] Zwölf Flüchtlinge erhielten endlich eine Aufenthaltsgenehmigung, viel zu spät für die anderen.
+[felix:vi:joy=0.85] Chúng tôi đã hoàn thành dự án đúng thời hạn, và cả nhóm cùng nhau ăn mừng suốt buổi tối.
