@@ -192,6 +192,12 @@ if(SCYLLASBAND_BUILD_TESTS)
         target_link_libraries(scyllasband_native_plan_test PRIVATE scyllasband::native)
         add_test(NAME scyllasband_native_plan_test COMMAND scyllasband_native_plan_test)
 
+        add_executable(scyllasband_request_affect_test tests/scyllasband_request_affect_test.cpp)
+        target_compile_features(scyllasband_request_affect_test PRIVATE cxx_std_17)
+        target_include_directories(scyllasband_request_affect_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+        target_link_libraries(scyllasband_request_affect_test PRIVATE scyllasband::native)
+        add_test(NAME scyllasband_request_affect_test COMMAND scyllasband_request_affect_test)
+
         add_executable(scyllasband_boundary_policy_test tests/scyllasband_boundary_policy_test.cpp)
         target_compile_features(scyllasband_boundary_policy_test PRIVATE cxx_std_17)
         target_include_directories(scyllasband_boundary_policy_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")

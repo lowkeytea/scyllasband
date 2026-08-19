@@ -56,10 +56,13 @@ AFFECT_AXES_V2 = (
     "sarcasm",
     "whisper",
 )
+AFFECT_AXES_V3 = ("calm", "joy", "anger", "sadness", "whisper")
 AFFECT_AXIS_ORDERS = {
     1: AFFECT_AXES_V1,
     2: AFFECT_AXES_V2,
+    3: AFFECT_AXES_V3,
 }
+AFFECT_VALUE_SEMANTICS = "independent_continuous_intensities_no_simplex_v1"
 CANONICAL_AFFECT_AXES = AFFECT_AXES_V1
 SUPPORTED_AFFECT_AXES = (*AFFECT_AXES_V1, "whisper")
 _AFFECT_DURATION_INPUTS = (
@@ -91,6 +94,42 @@ _AFFECT_VECTOR_INPUTS = (
     "reference_prosody",
     "reference_mask",
     "reference_condition_mask",
+    "prefix_latents",
+    "prefix_mask",
+)
+_V4_AFFECT_DURATION_INPUTS = (
+    "phone_ids",
+    "voice_id",
+    "language_id",
+    "affect_values",
+    "boundary_before_id",
+    "boundary_after_id",
+    "phone_mask",
+    "affect_condition_mask",
+    "identity_reference",
+    "identity_reference_mask",
+    "prosody_baseline",
+    "prosody_delta",
+    "prosody_feature_mask",
+    "prosody_confidence",
+)
+_V4_AFFECT_VECTOR_INPUTS = (
+    "noise",
+    "time",
+    "expanded_phone_ids",
+    "voice_id",
+    "language_id",
+    "affect_values",
+    "boundary_before_id",
+    "boundary_after_id",
+    "latent_mask",
+    "affect_condition_mask",
+    "identity_reference",
+    "identity_reference_mask",
+    "prosody_baseline",
+    "prosody_delta",
+    "prosody_feature_mask",
+    "prosody_confidence",
     "prefix_latents",
     "prefix_mask",
 )
@@ -601,7 +640,7 @@ def _validate_affect_contract(manifest: ScyllasBandBundleManifest) -> None:
     expected_graph_contract = f"scyllasband_affect_v{axis_order_version}"
     if graph_input_contract != expected_graph_contract:
         raise BundleValidationError(
-            "Six-axis affect bundles must declare graph_input_contract "
+            "Affect bundles must declare graph_input_contract "
             f"{expected_graph_contract!r}"
         )
     axes = tuple(str(item) for item in affect.get("axes", ()))
@@ -610,7 +649,9 @@ def _validate_affect_contract(manifest: ScyllasBandBundleManifest) -> None:
             f"Affect axes must be {list(expected_axes)!r}, got {list(axes)!r}"
         )
     if int(affect.get("dimension") or 0) != len(expected_axes):
-        raise BundleValidationError("Affect dimension must be 6")
+        raise BundleValidationError(
+            f"Affect dimension must be {len(expected_axes)}"
+        )
     # The affect contract is self-describing: axis_order_version alone fixes both
     # the axis names and the graph input contract, and both are checked above, so
     # v1 `questioning` can never be read as v2 `whisper`. model_version is release
@@ -622,9 +663,14 @@ def _validate_affect_contract(manifest: ScyllasBandBundleManifest) -> None:
         raise BundleValidationError("Affect contract must enable affect_condition_mask")
     if not bool(affect.get("all_zero_is_explicit", False)):
         raise BundleValidationError("Affect contract must distinguish explicit all-zero from null")
+    value_semantics = affect.get("value_semantics")
+    if value_semantics is not None and value_semantics != AFFECT_VALUE_SEMANTICS:
+        raise BundleValidationError(
+            "Affect values must be independent continuous intensities, not a simplex"
+        )
     emotions = controls.get("emotions")
     if isinstance(emotions, dict) and bool(emotions.get("enabled", False)):
-        raise BundleValidationError("Categorical emotion inputs cannot be enabled with six-axis affect")
+        raise BundleValidationError("Categorical emotion inputs cannot be enabled with affect conditioning")
 
     presets = affect.get("presets")
     if not isinstance(presets, dict) or not presets:
@@ -634,16 +680,74 @@ def _validate_affect_contract(manifest: ScyllasBandBundleManifest) -> None:
         raise BundleValidationError("Affect default_preset must name a declared preset")
     for name, vector in presets.items():
         if not isinstance(vector, list) or len(vector) != len(expected_axes):
-            raise BundleValidationError(f"Affect preset {name!r} must contain six values")
+            raise BundleValidationError(
+                f"Affect preset {name!r} must contain {len(expected_axes)} values"
+            )
         try:
             values = [float(item) for item in vector]
         except (TypeError, ValueError) as exc:
             raise BundleValidationError(f"Affect preset {name!r} contains a non-numeric value") from exc
         if any(not math.isfinite(value) or value < 0.0 or value > 1.0 for value in values):
             raise BundleValidationError(f"Affect preset {name!r} values must be within [0, 1]")
+    partial_defaults = affect.get("partial_defaults")
+    axis_minimums = affect.get("axis_minimums")
+    axis_maximums = affect.get("axis_maximums")
+    for field, raw in (
+        ("partial_defaults", partial_defaults),
+        ("axis_minimums", axis_minimums),
+        ("axis_maximums", axis_maximums),
+    ):
+        if raw is None:
+            continue
+        if not isinstance(raw, dict) or not set(raw).issubset(expected_axes):
+            raise BundleValidationError(
+                f"Affect {field} must map declared axes to numeric values"
+            )
+        try:
+            values = [float(value) for value in raw.values()]
+        except (TypeError, ValueError) as exc:
+            raise BundleValidationError(f"Affect {field} contains a non-numeric value") from exc
+        if any(not math.isfinite(value) or value < 0.0 or value > 1.0 for value in values):
+            raise BundleValidationError(f"Affect {field} values must be within [0, 1]")
+    minimums = {str(key): float(value) for key, value in (axis_minimums or {}).items()}
+    maximums = {str(key): float(value) for key, value in (axis_maximums or {}).items()}
+    for axis in set(minimums).intersection(maximums):
+        if minimums[axis] > maximums[axis]:
+            raise BundleValidationError(
+                f"Affect minimum exceeds maximum for axis {axis!r}"
+            )
+    for axis, value in (partial_defaults or {}).items():
+        numeric = float(value)
+        if numeric < minimums.get(axis, 0.0) or numeric > maximums.get(axis, 1.0):
+            raise BundleValidationError(
+                f"Affect partial default violates bounds for axis {axis!r}"
+            )
+    for name, vector in presets.items():
+        for axis, value in zip(expected_axes, vector, strict=True):
+            numeric = float(value)
+            if numeric < minimums.get(axis, 0.0) or numeric > maximums.get(axis, 1.0):
+                raise BundleValidationError(
+                    f"Affect preset {name!r} violates bounds for axis {axis!r}"
+                )
 
+    reference_packs = controls.get("reference_packs")
+    reference_schema = (
+        int(reference_packs.get("schema_version") or 0)
+        if isinstance(reference_packs, dict)
+        else 0
+    )
+    duration_inputs = (
+        _V4_AFFECT_DURATION_INPUTS
+        if reference_schema == 4
+        else _AFFECT_DURATION_INPUTS
+    )
+    vector_inputs = (
+        _V4_AFFECT_VECTOR_INPUTS
+        if reference_schema == 4
+        else _AFFECT_VECTOR_INPUTS
+    )
     duration = manifest.components.get("duration_predictor")
-    if duration is None or duration.inputs != _AFFECT_DURATION_INPUTS:
+    if duration is None or duration.inputs != duration_inputs:
         raise BundleValidationError(
             f"Affect duration_predictor inputs do not match {expected_graph_contract}"
         )
@@ -656,7 +760,7 @@ def _validate_affect_contract(manifest: ScyllasBandBundleManifest) -> None:
         )
     ]
     for component in vector_components:
-        expected = _AFFECT_VECTOR_INPUTS + (
+        expected = vector_inputs + (
             ("span_context_hidden",) if "span_context_hidden" in component.inputs else ()
         )
         if component.inputs != expected:

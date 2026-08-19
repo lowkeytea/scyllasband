@@ -15,6 +15,8 @@ int fail(const std::string& message) {
 int main() {
     using scyllasband_detail::host_pause_after_ms;
     using scyllasband_detail::is_terminal_pause_target;
+    using scyllasband_detail::is_non_acoustic_modifier_phone;
+    using scyllasband_detail::is_zero_duration_punctuation_phone;
     using scyllasband_detail::pause_ms_to_latent_frames;
     using scyllasband_detail::punctuation_duration_floor_frames;
     using scyllasband_detail::trailing_boundary_pause_phone;
@@ -45,6 +47,28 @@ int main() {
     }
     if (punctuation_duration_floor_frames("<ctx_chunk_continue>", 0, clause_floor) != 0) {
         return fail("artificial chunk context received a clause duration floor");
+    }
+    if (punctuation_duration_floor_frames("<ellipsis>", 0, 0, 12) != 12) {
+        return fail("calibrated ellipsis floor was not applied");
+    }
+    if (punctuation_duration_floor_frames("<end_stmt>", 15, 0, 12) != 15) {
+        return fail("explicit sentence override did not exceed calibrated floor");
+    }
+    if (punctuation_duration_floor_frames("<pause_colon>", 0, 8, 12) != 12) {
+        return fail("calibrated colon floor was not retained over broad clause floor");
+    }
+    if (!is_zero_duration_punctuation_phone("<end_question>") ||
+        !is_zero_duration_punctuation_phone("<pause_comma>") ||
+        is_zero_duration_punctuation_phone("<ctx_sentence_end>") ||
+        is_zero_duration_punctuation_phone("<sil>")) {
+        return fail("explicit-silence punctuation classification is inconsistent");
+    }
+    if (!is_non_acoustic_modifier_phone(u8"ˈ") ||
+        !is_non_acoustic_modifier_phone(u8"ː") ||
+        !is_non_acoustic_modifier_phone(u8"̃") ||
+        is_non_acoustic_modifier_phone("t") ||
+        is_non_acoustic_modifier_phone("<sil>")) {
+        return fail("non-acoustic modifier classification is inconsistent");
     }
     if (!is_terminal_pause_target(2, 3)) {
         return fail("final explicit silence was not recognized as terminal");

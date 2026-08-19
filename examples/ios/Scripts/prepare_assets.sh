@@ -11,7 +11,9 @@ scyllasband_root="${script_dir}/../../.."
 models_dir="${scyllasband_root}/scyllasband/models"
 destination_root="$1/scyllasband"
 
-# Embed whatever the download script fetched into scyllasband/models:
+# Embed one release from scyllasband/models. Discovery prefers v2, then v1,
+# then the legacy flat v1 layout; Core AI and ONNX always come from that same
+# release so an app cannot accidentally mix model generations:
 #   coreai    -> used on iOS 27+
 #   onnx-int8 -> ONNX fallback for earlier iOS (preferred: smaller)
 #   onnx      -> ONNX fallback when int8 was not downloaded
@@ -68,19 +70,30 @@ if [[ -n "${SCYLLASBAND_IOS_BUNDLE_DIR:-}" ]]; then
         embed_names+=("onnx-int8")
     fi
 else
-    if [[ -f "${models_dir}/coreai/manifest.json" ]]; then
-        verify_coreai_bundle "${models_dir}/coreai"
-        embed_sources+=("${models_dir}/coreai")
-        embed_names+=("coreai")
-    fi
-    for onnx_name in onnx-int8 onnx; do
-        if [[ -f "${models_dir}/${onnx_name}/manifest.json" ]]; then
-            verify_onnx_bundle "${models_dir}/${onnx_name}"
-            embed_sources+=("${models_dir}/${onnx_name}")
-            embed_names+=("${onnx_name}")
+    selected_models_dir=""
+    for candidate in "${models_dir}/v2" "${models_dir}/v1" "${models_dir}"; do
+        if [[ -f "${candidate}/coreai/manifest.json" || \
+              -f "${candidate}/onnx-int8/manifest.json" || \
+              -f "${candidate}/onnx/manifest.json" ]]; then
+            selected_models_dir="${candidate}"
             break
         fi
     done
+    if [[ -n "${selected_models_dir}" ]]; then
+        if [[ -f "${selected_models_dir}/coreai/manifest.json" ]]; then
+            verify_coreai_bundle "${selected_models_dir}/coreai"
+            embed_sources+=("${selected_models_dir}/coreai")
+            embed_names+=("coreai")
+        fi
+        for onnx_name in onnx-int8 onnx; do
+            if [[ -f "${selected_models_dir}/${onnx_name}/manifest.json" ]]; then
+                verify_onnx_bundle "${selected_models_dir}/${onnx_name}"
+                embed_sources+=("${selected_models_dir}/${onnx_name}")
+                embed_names+=("${onnx_name}")
+                break
+            fi
+        done
+    fi
 fi
 
 if (( ${#embed_sources[@]} == 0 )); then

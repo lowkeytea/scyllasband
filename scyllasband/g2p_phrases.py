@@ -8,6 +8,7 @@ phrase model's character budget without chopping words.
 from __future__ import annotations
 
 import re
+import unicodedata
 
 
 DEFAULT_G2P_PHRASE_MAX_CHARS = 140
@@ -43,6 +44,7 @@ CONTEXT_PHONE_TOKENS = (
     "<ctx_sentence_end>",
     "<ctx_chunk_continue>",
 )
+NON_ACOUSTIC_IPA_MODIFIERS = frozenset({"ˈ", "ˌ", "ː", "ˑ"})
 
 _WHITESPACE_RE = re.compile(r"\s+")
 _WHITESPACE_ONLY_RE = re.compile(r"^\s*$")
@@ -82,33 +84,44 @@ _PUNCTUATION_FOLD = str.maketrans(
         "\u201e": '"',
         "\u201f": '"',
         "\uff02": '"',
-        "\u2010": "-",
-        "\u2011": "-",
-        "\u2012": "-",
-        "\u2013": "-",
-        "\u2014": "-",
-        "\u2015": "-",
-        "\u2212": "-",
-        "\ufe58": "-",
-        "\ufe63": "-",
-        "\uff0d": "-",
         "\u2026": "...",
     }
 )
 
 
 def normalize_g2p_phrase_punctuation(text: str) -> str:
-    return str(text or "").translate(_PUNCTUATION_FOLD)
+    value = str(text or "")
+    for hyphen in ("\u2010", "\u2011"):
+        value = value.replace(hyphen, "-")
+    for dash in ("\u2012", "\u2013", "\u2014", "\u2015", "\u2212", "\ufe58", "\ufe63", "\uff0d"):
+        value = value.replace(dash, " — ")
+    value = re.sub(r"-{2,}", " — ", value)
+    value = re.sub(r"(?:(?<=\s)-+|-+(?=\s))", " — ", value)
+    value = value.translate(_PUNCTUATION_FOLD)
+    value = re.sub(r"\.{2,}", "...", value)
+    value = re.sub(r"([!?])[!?]+", lambda match: match.group(1), value)
+    return _WHITESPACE_RE.sub(" ", value).strip()
+
+
+def is_non_acoustic_phone_modifier(phone: str) -> bool:
+    """Return whether a frontend symbol modifies a phone but owns no audio."""
+    value = str(phone or "")
+    if value in NON_ACOUSTIC_IPA_MODIFIERS:
+        return True
+    if not value or value.startswith("<"):
+        return False
+    return all(unicodedata.category(char).startswith("M") for char in value)
 
 
 def punctuation_run_phone_token(punctuation: str) -> str | None:
     run = str(punctuation or "")
     if not run:
         return None
-    if "?" in run:
-        return "<end_question>"
-    if "!" in run:
-        return "<end_exclaim>"
+    for char in run:
+        if char == "?":
+            return "<end_question>"
+        if char == "!":
+            return "<end_exclaim>"
     if "\u2026" in run or run.count(".") >= 2:
         return "<ellipsis>"
     if "." in run:

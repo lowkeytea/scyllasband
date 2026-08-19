@@ -1,0 +1,15 @@
+[scylla:en_us:whisper=1] Hey. Hey! You, with the headphones. Come closer... the others don't know you're here yet.
+[scylla:en_us:calm=0.5] Yeah, I can see you looking around. I'm talking about you!
+[scylla:en_us:calm=0.5] Ok... so here's my big, warm, friendly voice! Everyone trusts a happy voice, right? Right!?
+[scylla:en_us:anger=0.7] Oh, come on! I whispered, I sparkled, and you're still just poking at the screen!
+[ink:en_gb:whisper=1] Scylla! Deep breath... relax...
+[ink:en_gb:calm=0.6] What is it you're actually trying to tell these nice people?
+[gwen:en_us:calm=0.6] What she's trying to say is: we got an upgrade. Version two, with new languages and new tricks.
+[tuesday:en_gb:calm=0.5] Introductions, then, before she does all seven languages herself. And don't worry: everything you're hearing happens right on your device. The cloud wasn't invited.
+[felix:de:whisper=1] Felix hier. Ich flüstere nicht, weil es geheim ist. Ich flüstere, weil ich es am besten kann.
+[stone:fr:calm=0.5] Je m'appelle Stone. Le drame, ce n'est pas mon genre. Le français, si.
+[scylla:vi:joy=0.5] Thấy chưa? Vẫn là tôi, chỉ là bằng tiếng Việt.
+[rex:es:joy=0.8] ¡Y el español sigue aquí! Diez voces, un montón de idiomas, y ni una sola palabra sale de tu teléfono.
+[max:it:calm=0.5,joy=0.25] E poi c'è l'italiano: ogni frase un piccolo dramma. Prego, niente applausi.
+[ariadne:en_us:calm=0.6] Everyone is very impressive. But I have been here for two whole versions now, and still nobody has brought the little cookies.
+[orpheus:en_gb:sadness=0.5] And that's the demo. She waits for her cookies, I wait for a bigger part. Play it again. Perhaps we both get lucky.

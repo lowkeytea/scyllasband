@@ -277,7 +277,18 @@ ScyllasBandDurationFlowExecutionPlan build_scyllasband_duration_flow_plan(
     require_inputs(bundle, "vector_estimator", vector_inputs);
     require_inputs(bundle, "vocoder", {"latents", "voice_id", "language_id", "emotion_id"});
 
-    if (bundle.reference_packs_enabled) {
+    if (bundle.reference_packs_enabled && bundle.reference_pack_schema_version == 4) {
+        const std::vector<std::string> reference_inputs = {
+            "identity_reference",
+            "identity_reference_mask",
+            "prosody_baseline",
+            "prosody_delta",
+            "prosody_feature_mask",
+            "prosody_confidence",
+        };
+        require_inputs(bundle, "duration_predictor", reference_inputs);
+        require_inputs(bundle, "vector_estimator", reference_inputs);
+    } else if (bundle.reference_packs_enabled) {
         for (const std::string& component_name : {"duration_predictor", "vector_estimator", "vocoder"}) {
             require_inputs(bundle, component_name, {"reference_style", "reference_prosody", "reference_mask"});
         }
@@ -389,6 +400,12 @@ ScyllasBandDurationFlowPreparedInputs prepare_scyllasband_duration_flow_inputs(
     inputs.emotion_id = resolved_request.emotion_index;
     inputs.affect_values = resolved_request.affect_values;
     inputs.affect_condition_mask = resolved_request.affect_condition_mask;
+    const std::size_t affect_mask_size = (
+        bundle.affect_enabled && bundle.affect_axis_order_version == "3"
+    ) ? inputs.affect_values.size() : 1U;
+    inputs.affect_condition_mask_values.assign(
+        affect_mask_size, inputs.affect_condition_mask
+    );
     inputs.boundary_before_id = boundary_id_for_value(
         resolved_request.boundary_before,
         {"sentence_start", "paragraph_start", "clause_continue", "chunk_continue"},
@@ -403,6 +420,12 @@ ScyllasBandDurationFlowPreparedInputs prepare_scyllasband_duration_flow_inputs(
     inputs.reference_style.assign(static_cast<std::size_t>(std::max(0, bundle.reference_style_dim)), 0.0f);
     inputs.reference_prosody.assign(static_cast<std::size_t>(std::max(0, bundle.reference_prosody_dim)), 0.0f);
     inputs.reference_mask = 0.0f;
+    inputs.identity_reference.assign(static_cast<std::size_t>(std::max(0, bundle.reference_identity_dim)), 0.0f);
+    inputs.identity_reference_mask = 0.0f;
+    inputs.prosody_baseline.assign(static_cast<std::size_t>(std::max(0, bundle.reference_baseline_dim)), 0.0f);
+    inputs.prosody_delta.assign(static_cast<std::size_t>(std::max(0, bundle.reference_delta_dim)), 0.0f);
+    inputs.prosody_feature_mask.assign(static_cast<std::size_t>(std::max(0, bundle.reference_prosody_dim)), 0.0f);
+    inputs.prosody_confidence = 0.0f;
 
     const int prefix_frames = bundle.prefix_conditioning_enabled ? std::max(0, bundle.prefix_max_frames) : 0;
     inputs.prefix_latents.assign(static_cast<std::size_t>(std::max(0, bundle.latent_dim) * prefix_frames), 0.0f);

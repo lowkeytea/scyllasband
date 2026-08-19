@@ -23,6 +23,29 @@ inline bool is_clause_punctuation_phone(const std::string& phone) {
            phone == "<ctx_continuation>";
 }
 
+inline bool is_zero_duration_punctuation_phone(const std::string& phone) {
+    return phone == "<pause_comma>" ||
+           phone == "<pause_semicolon>" ||
+           phone == "<pause_colon>" ||
+           phone == "<pause_dash>" ||
+           phone == "<ellipsis>" ||
+           phone == "<end_stmt>" ||
+           phone == "<end_question>" ||
+           phone == "<end_exclaim>";
+}
+
+inline bool is_non_acoustic_modifier_phone(const std::string& phone) {
+    // Existing eSpeak frontend vocabulary: stress, length, and combining
+    // modifiers. These tokens condition duration but never own waveform frames.
+    return phone == u8"ˈ" ||
+           phone == u8"ˌ" ||
+           phone == u8"ː" ||
+           phone == u8"ˑ" ||
+           phone == u8"̃" ||
+           phone == u8"̩" ||
+           phone == u8"̪";
+}
+
 inline std::string trailing_boundary_pause_phone(
     const std::string& boundary_after,
     bool has_pause_comma,
@@ -54,15 +77,17 @@ inline int64_t pause_ms_to_latent_frames(
 inline int64_t punctuation_duration_floor_frames(
     const std::string& phone,
     int64_t sentence_pause_floor,
-    int64_t clause_pause_floor
+    int64_t clause_pause_floor,
+    int64_t calibrated_class_floor = 0
 ) {
+    int64_t floor = std::max<int64_t>(0, calibrated_class_floor);
     if (sentence_pause_floor > 0 && is_sentence_punctuation_phone(phone)) {
-        return sentence_pause_floor;
+        floor = std::max(floor, sentence_pause_floor);
     }
     if (clause_pause_floor > 0 && is_clause_punctuation_phone(phone)) {
-        return clause_pause_floor;
+        floor = std::max(floor, clause_pause_floor);
     }
-    return 0;
+    return floor;
 }
 
 inline bool is_terminal_pause_target(int phone_index, int phone_count) {

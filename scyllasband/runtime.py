@@ -573,7 +573,7 @@ class ScyllasBandRuntime:
             raise ValueError("emotion_scale must be finite and non-negative")
         requested = request.affect is not None or scale != 1.0
         if requested and not self._affect_bundle_enabled():
-            raise ValueError("This bundle does not support six-axis emotion conditioning")
+            raise ValueError("This bundle does not support continuous affect conditioning")
 
     def _onnx(self) -> ONNXRunner:
         if self._onnx_runner is None:

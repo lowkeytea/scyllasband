@@ -56,8 +56,13 @@ struct ScyllasBandBundleInfo {
     bool g2p_lowercase = true;
     bool emotions_enabled = false;
     bool reference_packs_enabled = false;
+    int reference_pack_schema_version = 0;
     int reference_style_dim = 0;
     int reference_prosody_dim = 0;
+    int reference_identity_dim = 0;
+    int reference_baseline_dim = 0;
+    int reference_delta_dim = 0;
+    std::string reference_affect_routing_version;
     float reference_fallback_weight = 0.25f;
     bool prefix_conditioning_enabled = false;
     int prefix_max_frames = 0;
@@ -73,8 +78,14 @@ struct ScyllasBandBundleInfo {
     int affect_preset_version = 0;
     std::map<std::string, std::vector<float>> affect_presets;
     std::map<std::string, std::vector<float>> affect_legacy_presets;
+    std::map<std::string, float> affect_partial_defaults;
+    std::map<std::string, float> affect_axis_minimums;
+    std::map<std::string, float> affect_axis_maximums;
     float affect_guidance_default_scale = 1.0f;
     std::string punctuation_silence_target = "merge_into_punctuation";
+    bool punctuation_pause_floors_calibrated = false;
+    std::map<std::string, float> punctuation_pause_floor_table_ms;
+    std::string punctuation_pause_floor_table_sha256;
     bool runtime_acceleration_metadata_present = false;
     std::string runtime_acceleration_backend;
     std::string runtime_acceleration_runtime_version;

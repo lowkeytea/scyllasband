@@ -12,13 +12,13 @@ types. The current ABI and public bundle contract are version `1.0.0`.
 
 A synthesis request can provide raw text or explicit phones, a managed voice,
 language, speed, deterministic seed, Euler or Heun flow sampling, prefix
-latents, neighboring text context, chunk boundaries, and the six-axis affect
-vector:
+latents, neighboring text context, chunk boundaries, and the selected bundle's
+manifest-declared affect vector. Current v2 bundles use:
 
-`calm, joy, anger, sadness, sarcasm, questioning`
+`calm, joy, anger, sadness, whisper`
 
 Pass affect as a comma-separated `axis=value` string such as
-`anger=0.75,sarcasm=0.25`. Axis strengths are independently bounded to
+`anger=0.75,whisper=0.25`. Axis strengths are independently bounded to
 `[0, 1]`. `affect_guidance_scale` is separate CFG guidance: `0` selects
 the learned null-affect branch, `1` uses the requested vector directly, and
 values above `1` amplify it. The runtime does not impose an upper cap, but
@@ -36,6 +36,9 @@ overrides, and managed NPZ voice/reference packs. The returned
 `ScyllasBandSynthesisResult` owns waveform samples, metadata, and generated
 latent-tail storage; release them with
 `scyllasband_synthesis_result_free()`.
+
+Schema-v4 runtime packs must use stored ZIP members (`ZIP_STORED`). This keeps
+the mobile/native loader dependency-free; compressed training packs are repacked during export.
 
 ## Runtime lifetime and target-bucket memory
 
@@ -148,7 +151,7 @@ can preserve metadata for comparison:
     --text "Oh, wonderful. The alarm is singing again." \
     --voice scylla \
     --language en_us \
-    --emotion anger=0.75,sarcasm=0.25 \
+    --emotion anger=0.75,whisper=0.25 \
     --emotion-scale 1.5 \
     --steps 8 \
     --sampler heun \

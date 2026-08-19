@@ -43,8 +43,9 @@ int expect_contains(const std::string& payload, const std::string& needle) {
 }  // namespace
 
 int main() {
-    if (scyllasband_detail::scyllasband_select_backend(SCYLLASBAND_BACKEND_AUTO) != SCYLLASBAND_BACKEND_ONNX) {
-        return fail("SCYLLASBAND_BACKEND_AUTO did not resolve to ONNX");
+    if (scyllasband_detail::scyllasband_select_backend(SCYLLASBAND_BACKEND_AUTO) ==
+        SCYLLASBAND_BACKEND_AUTO) {
+        return fail("SCYLLASBAND_BACKEND_AUTO did not resolve to a compiled backend");
     }
     if (scyllasband_detail::scyllasband_select_backend(SCYLLASBAND_BACKEND_LITERT) != SCYLLASBAND_BACKEND_LITERT) {
         return fail("explicit LiteRT backend selection was not preserved");

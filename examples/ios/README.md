@@ -20,11 +20,10 @@ Requirements:
 - An iOS 16+ device or simulator; Core AI synthesis activates on iOS 27+
 - CocoaPods
 - Downloaded model bundles: run `python -m scyllasband download` at the
-  repository root (fetches Core AI plus ONNX on macOS 27 hosts, ONNX
-  elsewhere)
+  repository root and select v2 plus the desired ONNX bundle
 
 ```bash
-python -m scyllasband download
+python -m scyllasband download --model-version v2 --runtime-bundles onnx-int8 --yes
 
 cd examples/ios
 pod install
@@ -38,10 +37,10 @@ Then open `ScyllasBandStudio.xcworkspace`, choose the
 `ScyllasBandStudio` scheme, select a Development Team, and run it. The app
 needs no network, microphone, or user-storage permission.
 
-The asset build phase embeds every bundle it finds under the downloaded
-`scyllasband/models` directory: `coreai` (validated for all five accelerated
-assets — `g2p`, duration, context, estimator, and vocoder) plus one ONNX
-bundle (`onnx-int8` preferred, `onnx` otherwise). At launch the app picks
+The asset build phase searches `scyllasband/models/v2` before `models/v1` and
+the legacy flat layout. It embeds Core AI, when present, plus one ONNX bundle
+(`onnx-int8` preferred, `onnx` otherwise) from the same release, preventing
+cross-generation model mixing. At launch the app picks
 Core AI on iOS 27+ when it was embedded and falls back to the ONNX bundle on
 earlier systems. Set `SCYLLASBAND_IOS_BUNDLE_DIR` to embed one specific
 bundle instead.

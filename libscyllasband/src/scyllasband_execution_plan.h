@@ -29,11 +29,18 @@ struct ScyllasBandDurationFlowPreparedInputs {
     int64_t emotion_id = -1;
     std::vector<float> affect_values;
     float affect_condition_mask = 0.0f;
+    std::vector<float> affect_condition_mask_values;
     int64_t boundary_before_id = 0;
     int64_t boundary_after_id = 0;
     std::vector<float> reference_style;
     std::vector<float> reference_prosody;
     float reference_mask = 0.0f;
+    std::vector<float> identity_reference;
+    float identity_reference_mask = 0.0f;
+    std::vector<float> prosody_baseline;
+    std::vector<float> prosody_delta;
+    std::vector<float> prosody_feature_mask;
+    float prosody_confidence = 0.0f;
     float native_reference_mask = 0.0f;
     float fallback_reference_mask = 0.0f;
     std::string reference_key;

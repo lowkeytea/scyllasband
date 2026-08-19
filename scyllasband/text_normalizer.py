@@ -7,8 +7,34 @@ normalization before G2P for every language declared by the selected bundle.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import json
 import re
 import unicodedata
+
+
+SPOKEN_TEXT_NORMALIZER_CONTRACT = {
+    "version": "scyllasband_spoken_text_v2_2026_08_05",
+    "training_phone_source": "espeak",
+    "ok_spoken_form": "okay",
+    "mixed_question_exclamation": "leading_mark",
+    "homogeneous_terminal_runs": "single_mark",
+    "dot_runs_two_or_more": "ellipsis_three_dots",
+    "colon_semicolon_classes": "preserved",
+    "lexical_hyphen": "space_no_pause",
+    "syntactic_dash": "em_dash_pause",
+    "punctuation_silence_target": "explicit_silence",
+    "non_acoustic_modifiers": ["stress", "length", "unicode_combining"],
+}
+SPOKEN_TEXT_NORMALIZER_VERSION = str(SPOKEN_TEXT_NORMALIZER_CONTRACT["version"])
+SPOKEN_TEXT_NORMALIZER_SHA256 = hashlib.sha256(
+    json.dumps(
+        SPOKEN_TEXT_NORMALIZER_CONTRACT,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+).hexdigest()
 
 try:
     import inflect
@@ -457,13 +483,6 @@ class SpokenTextNormalizer:
             "\u201f": '"',
             "\u2033": '"',
             "\uff02": '"',
-            "\u2010": "-",
-            "\u2011": "-",
-            "\u2012": "-",
-            "\u2013": "-",
-            "\u2014": "-",
-            "\u2015": "-",
-            "\u2212": "-",
             "\u2026": "...",
             "\u2044": "/",
             "\u2215": "/",
@@ -478,6 +497,11 @@ class SpokenTextNormalizer:
     _MIXED_FRACTION_RE = re.compile(r"\b(\d+)\s+(\d+/\d+)\b")
     _SIMPLE_FRACTION_RE = re.compile(r"\b(\d+)\s*/\s*(\d+)\b")
     _DOTTED_INITIALISM_RE = re.compile(r"(?<![A-Za-zÀ-ÖØ-öø-ÿÑñ])(?:[A-Za-zÑñ]\.){2,}")
+    _EN_OK_RE = re.compile(r"(?<![A-Za-z0-9])ok(?![A-Za-z0-9])", re.IGNORECASE)
+    _MIXED_TERMINAL_PUNCTUATION_RE = re.compile(r"([!?])[!?]+")
+    _DOT_RUN_RE = re.compile(r"\.{2,}")
+    _LEXICAL_HYPHENS = ("\u2010", "\u2011")
+    _SYNTACTIC_DASHES = ("\u2012", "\u2013", "\u2014", "\u2015", "\u2212", "\ufe58", "\ufe63", "\uff0d")
     _EN_MONTH_DATE_RE = re.compile(
         r"\b("
         r"Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
@@ -571,6 +595,11 @@ class SpokenTextNormalizer:
         value = unicodedata.normalize("NFC", str(text or ""))
         if self.config.normalize_punctuation:
             value = self._normalize_punctuation(value, lang)
+        if lang == "en":
+            # eSpeak and the distilled G2P read bare ``ok`` as /oʊk/ ("oak").
+            # The spoken lexical form is "okay"; keep following punctuation
+            # untouched so ``Ok...`` retains its ellipsis boundary.
+            value = self._EN_OK_RE.sub("okay", value)
         if self.config.normalize_at_sign:
             value = self._normalize_at_symbols(value, lang)
         value = self._expand_dotted_initialisms(value, lang)
@@ -655,12 +684,25 @@ class SpokenTextNormalizer:
     @classmethod
     def _normalize_punctuation(cls, text: str, lang: str) -> str:
         value = cls._ZERO_WIDTH_RE.sub("", str(text or ""))
+        value = cls._normalize_dash_contract(value)
         value = value.translate(cls._UNICODE_TRANSLATION)
+        value = cls._DOT_RUN_RE.sub("...", value)
+        value = cls._MIXED_TERMINAL_PUNCTUATION_RE.sub(lambda match: match.group(1), value)
         equals_word = {"en": "equals", "es": "igual", "it": "uguale", "fr": "égal", "de": "gleich", "vi": "bằng"}.get(lang, "equals")
         degrees_word = {"en": "degrees", "es": "grados", "it": "gradi", "fr": "degrés", "de": "Grad", "vi": "độ"}.get(lang, "degrees")
         value = value.replace("=", f" {equals_word} ")
         value = value.replace("°", f" {degrees_word} ")
-        value = re.sub(r"(?<!\d):|:(?!\d)", ",", value)
+        return cls._WHITESPACE_RE.sub(" ", value).strip()
+
+    @classmethod
+    def _normalize_dash_contract(cls, text: str) -> str:
+        value = str(text or "")
+        for hyphen in cls._LEXICAL_HYPHENS:
+            value = value.replace(hyphen, "-")
+        for dash in cls._SYNTACTIC_DASHES:
+            value = value.replace(dash, " — ")
+        value = re.sub(r"-{2,}", " — ", value)
+        value = re.sub(r"(?:(?<=\s)-+|-+(?=\s))", " — ", value)
         return cls._WHITESPACE_RE.sub(" ", value).strip()
 
     @classmethod

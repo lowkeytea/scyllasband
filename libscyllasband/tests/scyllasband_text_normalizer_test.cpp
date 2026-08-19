@@ -75,5 +75,10 @@ int main() {
         "It grossed forty seven thousand five hundred dollars, cost ninety nine dollars and ninety nine cents, "
         "and moved at zero point zero three miles per hour."
     );
+    failures += expect_equal(
+        "en_us",
+        "Ok... Wait!?! Really?! No!! Maybe?? well-known - pause — now: yes; done.",
+        "okay... Wait! Really? No! Maybe? well known — pause — now: yes; done."
+    );
     return failures == 0 ? 0 : 1;
 }

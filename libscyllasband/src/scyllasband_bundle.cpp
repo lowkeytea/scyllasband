@@ -221,6 +221,19 @@ std::map<std::string, int> int_map_for_object(const std::string& object_json) {
     return values;
 }
 
+std::map<std::string, float> float_map_for_object(const std::string& object_json) {
+    std::map<std::string, float> values;
+    const std::regex pair_pattern(
+        "\\\"([^\\\"]+)\\\"\\s*:\\s*(-?[0-9]+(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)"
+    );
+    for (std::sregex_iterator it(object_json.begin(), object_json.end(), pair_pattern), end;
+         it != end;
+         ++it) {
+        values[(*it)[1].str()] = std::stof((*it)[2].str());
+    }
+    return values;
+}
+
 std::string decode_json_string_token(const std::string& token) {
     std::string out;
     bool escaped = false;
@@ -505,8 +518,15 @@ ScyllasBandBundleInfo load_scyllasband_bundle_info(
     });
     const std::string reference = object_for_key(controls, "reference_packs");
     info.reference_packs_enabled = bool_for_key(reference, "enabled", false);
+    info.reference_pack_schema_version = int_for_key(reference, "schema_version");
     info.reference_style_dim = int_for_key(reference, "style_dim");
     info.reference_prosody_dim = int_for_key(reference, "prosody_dim");
+    info.reference_identity_dim = int_for_key(reference, "identity_dim");
+    info.reference_baseline_dim = int_for_key(reference, "prosody_baseline_dim");
+    info.reference_delta_dim = int_for_key(reference, "prosody_delta_dim");
+    info.reference_affect_routing_version = string_for_key(
+        object_for_key(reference, "affect_routing"), "version"
+    );
     info.reference_fallback_weight = float_for_key(reference, "fallback_weight", 0.25f);
     const std::string prefix = object_for_key(controls, "prefix_conditioning");
     info.prefix_conditioning_enabled = bool_for_key(prefix, "enabled", false);
@@ -531,6 +551,15 @@ ScyllasBandBundleInfo load_scyllasband_bundle_info(
         info.affect_preset_version = int_for_key(affect, "preset_version", 0);
         info.affect_presets = float_array_map_for_object(object_for_key(affect, "presets"));
         info.affect_legacy_presets = float_array_map_for_object(object_for_key(affect, "legacy_presets"));
+        info.affect_partial_defaults = float_map_for_object(
+            object_for_key(affect, "partial_defaults")
+        );
+        info.affect_axis_minimums = float_map_for_object(
+            object_for_key(affect, "axis_minimums")
+        );
+        info.affect_axis_maximums = float_map_for_object(
+            object_for_key(affect, "axis_maximums")
+        );
         const std::string affect_guidance = object_for_key(affect, "guidance");
         info.affect_guidance_default_scale = float_for_key(affect_guidance, "default_scale", 1.0f);
         const int axis_version = int_for_key(affect, "axis_order_version", 0);
@@ -541,6 +570,10 @@ ScyllasBandBundleInfo load_scyllasband_bundle_info(
             : axis_version == 2
             ? std::vector<std::string>{
                 "calm", "joy", "anger", "sadness", "sarcasm", "whisper"
+            }
+            : axis_version == 3
+            ? std::vector<std::string>{
+                "calm", "joy", "anger", "sadness", "whisper"
             }
             : std::vector<std::string>{};
         if (expected_axes.empty()) {
@@ -556,7 +589,9 @@ ScyllasBandBundleInfo load_scyllasband_bundle_info(
             );
         }
         if (info.affect_axes != expected_axes) {
-            throw std::runtime_error("Affect axes must use the canonical Scylla's Band six-axis order");
+            throw std::runtime_error(
+                "Affect axes do not match axis_order_version " + std::to_string(axis_version)
+            );
         }
         // The affect contract is self-describing: axis_order_version alone fixes
         // both the axis names and the graph input contract, and both are checked
@@ -567,17 +602,72 @@ ScyllasBandBundleInfo load_scyllasband_bundle_info(
         auto validate_presets = [&](const std::map<std::string, std::vector<float>>& presets) {
             for (const auto& item : presets) {
                 if (item.second.size() != expected_axes.size()) {
-                    throw std::runtime_error("Affect preset '" + item.first + "' must contain six values");
+                    throw std::runtime_error(
+                        "Affect preset '" + item.first + "' must contain " +
+                        std::to_string(expected_axes.size()) + " values"
+                    );
                 }
-                for (float value : item.second) {
+                for (std::size_t index = 0; index < item.second.size(); ++index) {
+                    const float value = item.second[index];
                     if (!std::isfinite(value) || value < 0.0f || value > 1.0f) {
                         throw std::runtime_error("Affect preset '" + item.first + "' contains an invalid value");
+                    }
+                    const std::string& axis = expected_axes[index];
+                    const float minimum = info.affect_axis_minimums.count(axis) > 0
+                        ? info.affect_axis_minimums.at(axis)
+                        : 0.0f;
+                    const float maximum = info.affect_axis_maximums.count(axis) > 0
+                        ? info.affect_axis_maximums.at(axis)
+                        : 1.0f;
+                    if (value < minimum || value > maximum) {
+                        throw std::runtime_error(
+                            "Affect preset '" + item.first + "' violates bounds for '" + axis + "'"
+                        );
                     }
                 }
             }
         };
+        auto validate_axis_policy = [&](const std::map<std::string, float>& policy,
+                                        const std::string& label) {
+            for (const auto& item : policy) {
+                if (std::find(expected_axes.begin(), expected_axes.end(), item.first) == expected_axes.end()) {
+                    throw std::runtime_error(
+                        "Affect " + label + " contains unknown axis '" + item.first + "'"
+                    );
+                }
+                if (!std::isfinite(item.second) || item.second < 0.0f || item.second > 1.0f) {
+                    throw std::runtime_error(
+                        "Affect " + label + " contains an invalid value for '" + item.first + "'"
+                    );
+                }
+            }
+        };
+        validate_axis_policy(info.affect_partial_defaults, "partial_defaults");
+        validate_axis_policy(info.affect_axis_minimums, "axis_minimums");
+        validate_axis_policy(info.affect_axis_maximums, "axis_maximums");
+        for (const std::string& axis : expected_axes) {
+            const float minimum = info.affect_axis_minimums.count(axis) > 0
+                ? info.affect_axis_minimums.at(axis)
+                : 0.0f;
+            const float maximum = info.affect_axis_maximums.count(axis) > 0
+                ? info.affect_axis_maximums.at(axis)
+                : 1.0f;
+            if (minimum > maximum) {
+                throw std::runtime_error("Affect minimum exceeds maximum for '" + axis + "'");
+            }
+            const auto partial = info.affect_partial_defaults.find(axis);
+            if (partial != info.affect_partial_defaults.end() &&
+                (partial->second < minimum || partial->second > maximum)) {
+                throw std::runtime_error(
+                    "Affect partial default violates bounds for '" + axis + "'"
+                );
+            }
+        }
         validate_presets(info.affect_presets);
         validate_presets(info.affect_legacy_presets);
+        if (info.affect_presets.count(info.affect_default_preset) == 0) {
+            throw std::runtime_error("Affect default_preset must name a declared preset");
+        }
     }
     const std::string punctuation_silence = object_for_key(controls, "punctuation_silence");
     info.punctuation_silence_target = string_for_key(
@@ -588,6 +678,38 @@ ScyllasBandBundleInfo load_scyllasband_bundle_info(
     if (info.punctuation_silence_target != "explicit_silence" &&
         info.punctuation_silence_target != "merge_into_punctuation") {
         info.punctuation_silence_target = "merge_into_punctuation";
+    }
+    info.punctuation_pause_floors_calibrated = bool_for_key(
+        punctuation_silence,
+        "calibrated_floors",
+        false
+    );
+    info.punctuation_pause_floor_table_ms = float_map_for_object(
+        object_for_key(punctuation_silence, "floor_table_ms")
+    );
+    info.punctuation_pause_floor_table_sha256 = string_for_key(
+        punctuation_silence,
+        "floor_table_sha256"
+    );
+    if (!info.punctuation_pause_floor_table_ms.empty() &&
+        !info.punctuation_pause_floors_calibrated) {
+        throw std::runtime_error(
+            "Punctuation pause floor table is present but not marked calibrated"
+        );
+    }
+    if (info.punctuation_pause_floors_calibrated &&
+        (info.punctuation_pause_floor_table_ms.empty() ||
+         info.punctuation_pause_floor_table_sha256.empty())) {
+        throw std::runtime_error(
+            "Calibrated punctuation pause floors require a table and SHA-256"
+        );
+    }
+    for (const auto& item : info.punctuation_pause_floor_table_ms) {
+        if (!std::isfinite(item.second) || item.second < 0.0f) {
+            throw std::runtime_error(
+                "Invalid punctuation pause floor for '" + item.first + "'"
+            );
+        }
     }
     const std::string emotions = object_for_key(controls, "emotions");
     info.emotions_enabled = bool_for_key(emotions, "enabled", false);
@@ -864,7 +986,14 @@ std::string bundle_summary_json(const ScyllasBandBundleInfo& bundle) {
              << "\"affect_enabled\":" << (bundle.affect_enabled ? "true" : "false") << ","
              << "\"affect_graph_input_contract\":\"" << json_escape(bundle.affect_graph_input_contract) << "\","
              << "\"affect_axis_count\":" << bundle.affect_axes.size() << ","
-             << "\"punctuation_silence_target\":\"" << json_escape(bundle.punctuation_silence_target) << "\""
+             << "\"punctuation_silence_target\":\"" << json_escape(bundle.punctuation_silence_target) << "\","
+             << "\"punctuation_pause_floors_calibrated\":"
+             << (bundle.punctuation_pause_floors_calibrated ? "true" : "false") << ","
+             << "\"punctuation_pause_floor_entries\":"
+             << bundle.punctuation_pause_floor_table_ms.size() << ","
+             << "\"punctuation_pause_floor_table_sha256\":";
+    append_json_string_or_null(metadata, bundle.punctuation_pause_floor_table_sha256);
+    metadata
              << "}";
     return metadata.str();
 }

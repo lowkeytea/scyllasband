@@ -20,12 +20,18 @@ from .download import (
     BUNDLE_SUBDIR_GROUPS,
     DEFAULT_BUNDLE_SUBDIR,
     DEFAULT_INFERENCE_REPO_ID,
+    DEFAULT_MODEL_VERSION,
     DEFAULT_MODELS_DIR,
     DEFAULT_ONNX_INT8_BUNDLE_SUBDIR,
+    MODEL_VERSION_REPO_IDS,
     SUPPORTED_BUNDLE_SUBDIRS,
+    SUPPORTED_MODEL_VERSIONS,
     bundle_dirs_for_subdirs,
     default_bundle_subdirs,
+    delete_model_release,
     download_base_resources,
+    model_release_installed,
+    normalize_model_version,
 )
 from .g2p_phrases import DEFAULT_G2P_PHRASE_MAX_CHARS
 from .metadata_compare import DEFAULT_CHUNK_FIELDS, compare_metadata_files
@@ -81,10 +87,13 @@ def _default_bundle_path(backend: str | None = None) -> Path:
     )
     for bundle_subdir in subdir_preference:
         for root in roots:
-            bundle = root / bundle_subdir
-            if (bundle / "manifest.json").is_file():
-                return bundle
-    return Path(__file__).resolve().parents[1] / "models" / subdir_preference[-1]
+            for release in ("v2", "v1", None):
+                bundle = root / release / bundle_subdir if release else root / bundle_subdir
+                if (bundle / "manifest.json").is_file():
+                    return bundle
+    return (
+        Path(__file__).resolve().parents[1] / "models" / DEFAULT_MODEL_VERSION / subdir_preference[-1]
+    )
 
 
 def _looks_like_bundle_path(value: object) -> bool:
@@ -178,6 +187,31 @@ def _normalize_text(args: argparse.Namespace) -> int:
     return 0
 
 
+def _prompt_model_version(default_version: str = DEFAULT_MODEL_VERSION) -> str | None:
+    """Choose one mutually exclusive public model release before bundle types."""
+
+    default_version = normalize_model_version(default_version)
+    entries = list(SUPPORTED_MODEL_VERSIONS)
+    while True:
+        print("\nScylla's Band model download — select release:\n")
+        for index, version in enumerate(entries, start=1):
+            mark = "x" if version == default_version else " "
+            repo_id = MODEL_VERSION_REPO_IDS[version]
+            print(f"  [{mark}] {index}. {version:2s}  {repo_id}")
+        try:
+            answer = input("Choose 1 or 2, Enter for v2, q to quit: ").strip().lower()
+        except EOFError:
+            return default_version
+        if answer in {"", "d", "default"}:
+            return default_version
+        if answer in {"q", "quit", "exit"}:
+            return None
+        for index, version in enumerate(entries, start=1):
+            if answer in {str(index), version, version.removeprefix("v")}:
+                return version
+        print("Choose v1 or v2, press Enter for v2, or q to quit.")
+
+
 def _prompt_bundle_selection(default_subdirs: tuple[str, ...]) -> tuple[str, ...] | None:
     """Checkbox-style bundle picker; returns the selection or None if cancelled."""
 
@@ -220,26 +254,70 @@ def _prompt_bundle_selection(default_subdirs: tuple[str, ...]) -> tuple[str, ...
             print("Enter bundle numbers to toggle, Enter to start, or q to quit.")
 
 
+def _prompt_delete_v1_checkbox() -> bool:
+    """Optional destructive checkbox shown only after v2 and bundle selection."""
+
+    selected = False
+    while True:
+        mark = "x" if selected else " "
+        print("\nOptional cleanup after the validated v2 download:\n")
+        print(f"  [{mark}] 1. Delete locally installed v1 models and v1 voice packs")
+        try:
+            answer = input("Toggle with 1, Enter to continue, q to keep v1: ").strip().lower()
+        except EOFError:
+            return False
+        if answer in {"", "d", "continue"}:
+            return selected
+        if answer in {"q", "quit", "keep"}:
+            return False
+        if answer in {"1", "v1", "delete", "remove"}:
+            selected = not selected
+        else:
+            print("Enter 1 to toggle v1 deletion, Enter to continue, or q to keep v1.")
+
+
 def _download(args: argparse.Namespace) -> int:
+    interactive = (
+        not bool(getattr(args, "yes", False))
+        and sys.stdin.isatty()
+        and sys.stdout.isatty()
+    )
+    requested_version = getattr(args, "model_version", None)
+    if interactive and requested_version is None:
+        chosen_version = _prompt_model_version()
+        if chosen_version is None:
+            print("Download cancelled.")
+            return 1
+        requested_version = chosen_version
+    model_version = normalize_model_version(requested_version or DEFAULT_MODEL_VERSION)
+    delete_v1 = bool(getattr(args, "delete_v1", False))
+    if delete_v1 and model_version != "v2":
+        raise ValueError("--delete-v1 is valid only when downloading --model-version v2")
+
     bundle_subdirs = _download_bundle_subdirs(args)
     explicit_request = bool(
         str(getattr(args, "bundle_subdir", "") or "").strip()
         or (getattr(args, "runtime_bundles", None) or "default") != "default"
     )
-    if (
-        not explicit_request
-        and not bool(getattr(args, "yes", False))
-        and sys.stdin.isatty()
-        and sys.stdout.isatty()
-    ):
+    if not explicit_request and interactive:
         chosen = _prompt_bundle_selection(bundle_subdirs)
         if chosen is None:
             print("Download cancelled.")
             return 1
         bundle_subdirs = _normalize_requested_bundle_subdirs(chosen)
+    if (
+        model_version == "v2"
+        and not delete_v1
+        and interactive
+        and model_release_installed(args.models_dir, "v1")
+    ):
+        delete_v1 = _prompt_delete_v1_checkbox()
+
+    repo_id = str(args.repo_id or MODEL_VERSION_REPO_IDS[model_version])
     bundle_dir, voices_dir = download_base_resources(
         models_dir=args.models_dir,
-        repo_id=args.repo_id,
+        repo_id=repo_id,
+        model_version=model_version,
         bundle_subdirs=bundle_subdirs,
         token=args.token,
         revision=args.revision,
@@ -247,15 +325,24 @@ def _download(args: argparse.Namespace) -> int:
         validate=not bool(args.no_validate_bundle),
         include_voices=not bool(args.no_voices),
     )
-    bundle_dirs = bundle_dirs_for_subdirs(args.models_dir, bundle_subdirs)
+    bundle_dirs = bundle_dirs_for_subdirs(
+        args.models_dir,
+        bundle_subdirs,
+        model_version=model_version,
+    )
+    deleted_v1_paths: tuple[Path, ...] = ()
+    if delete_v1:
+        deleted_v1_paths = delete_model_release(args.models_dir, "v1")
     print(
         json.dumps(
             {
-                "repo_id": args.repo_id,
+                "model_version": model_version,
+                "repo_id": repo_id,
                 "runtime_bundles": list(bundle_subdirs),
                 "bundle_dir": str(bundle_dir),
                 "bundle_dirs": {key: str(value) for key, value in bundle_dirs.items()},
                 "voices_dir": str(voices_dir) if voices_dir is not None else None,
+                "deleted_v1_paths": [str(path) for path in deleted_v1_paths],
             },
             indent=2,
         )
@@ -473,7 +560,17 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
 
     download_parser = subparsers.add_parser("download", allow_abbrev=False)
     download_parser.add_argument("--models-dir", type=Path, default=DEFAULT_MODELS_DIR)
-    download_parser.add_argument("--repo-id", default=DEFAULT_INFERENCE_REPO_ID)
+    download_parser.add_argument(
+        "--model-version",
+        choices=SUPPORTED_MODEL_VERSIONS,
+        default=None,
+        help="Public model release; defaults to v2 (interactive downloads ask first)",
+    )
+    download_parser.add_argument(
+        "--repo-id",
+        default=None,
+        help=f"Expert repository override; defaults by release (v2: {DEFAULT_INFERENCE_REPO_ID})",
+    )
     download_parser.add_argument(
         "--runtime-bundles",
         choices=(*SUPPORTED_BUNDLE_SUBDIRS, *BUNDLE_SUBDIR_GROUPS, "default"),
@@ -489,7 +586,12 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     download_parser.add_argument("--token", help="Hugging Face token; defaults to the hub client configuration")
     download_parser.add_argument("--revision", help="Optional Hugging Face revision")
     download_parser.add_argument("--force", action="store_true", help="Replace existing local bundle/voice directories")
-    download_parser.add_argument("-y", "--yes", action="store_true", help="Skip the interactive bundle selection and download the platform defaults")
+    download_parser.add_argument(
+        "--delete-v1",
+        action="store_true",
+        help="After a validated v2 download, delete locally installed v1 bundles and voice packs",
+    )
+    download_parser.add_argument("-y", "--yes", action="store_true", help="Skip interactive release/bundle selection and download v2 platform defaults")
     download_parser.add_argument("--no-voices", action="store_true", help="Only download the runtime bundle")
     download_parser.add_argument("--no-validate-bundle", action="store_true", help="Skip bundle layout validation after download")
     download_parser.set_defaults(func=_download)
@@ -647,7 +749,7 @@ def _add_synthesis_args(
         metavar="EMOTION",
         help=(
             "Emotion preset or comma-separated axis values, for example "
-            "joy or calm=0.2,joy=0.8,sarcasm=0.3"
+            "joy or calm=0.5,joy=0.8,whisper=0.3"
         ),
     )
     emotion_group.add_argument(

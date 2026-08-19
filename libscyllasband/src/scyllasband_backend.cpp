@@ -231,8 +231,13 @@ struct ScyllasBandLiteRtInputStorage {
     std::vector<int64_t> phone_shape;
     std::vector<int64_t> scalar_shape;
     std::vector<int64_t> affect_shape;
+    std::vector<int64_t> affect_condition_mask_shape;
     std::vector<int64_t> reference_style_shape;
     std::vector<int64_t> reference_prosody_shape;
+    std::vector<int64_t> identity_reference_shape;
+    std::vector<int64_t> prosody_baseline_shape;
+    std::vector<int64_t> prosody_delta_shape;
+    std::vector<int64_t> prosody_feature_mask_shape;
     std::vector<int64_t> latent_shape;
     std::vector<int64_t> latent_frame_shape;
     std::vector<int64_t> hidden_shape;
@@ -258,6 +263,12 @@ struct ScyllasBandLiteRtInputStorage {
     std::vector<float> reference_style;
     std::vector<float> reference_prosody;
     std::vector<float> reference_mask;
+    std::vector<float> identity_reference;
+    std::vector<float> identity_reference_mask;
+    std::vector<float> prosody_baseline;
+    std::vector<float> prosody_delta;
+    std::vector<float> prosody_feature_mask;
+    std::vector<float> prosody_confidence;
     std::vector<float> reference_condition_mask;
     std::vector<float> prefix_latents;
     std::vector<uint8_t> prefix_mask;
@@ -975,6 +986,7 @@ std::vector<float> parse_npy_float_values(const std::vector<uint8_t>& payload) {
     const bool is_float64 = header.find("'descr': '<f8'") != std::string::npos || header.find("\"descr\": \"<f8\"") != std::string::npos;
     const bool is_int64 = header.find("'descr': '<i8'") != std::string::npos || header.find("\"descr\": \"<i8\"") != std::string::npos;
     const bool is_int32 = header.find("'descr': '<i4'") != std::string::npos || header.find("\"descr\": \"<i4\"") != std::string::npos;
+    const bool is_int8 = header.find("'descr': '|i1'") != std::string::npos || header.find("\"descr\": \"|i1\"") != std::string::npos;
     const bool fortran = header.find("'fortran_order': True") != std::string::npos || header.find("\"fortran_order\": true") != std::string::npos;
     if (fortran) {
         throw std::runtime_error("fortran-order NPY arrays are not supported in reference packs");
@@ -984,6 +996,8 @@ std::vector<float> parse_npy_float_values(const std::vector<uint8_t>& payload) {
         element_size = 4;
     } else if (is_float64 || is_int64) {
         element_size = 8;
+    } else if (is_int8) {
+        element_size = 1;
     } else {
         throw std::runtime_error("unsupported NPY dtype in reference pack");
     }
@@ -1006,16 +1020,192 @@ std::vector<float> parse_npy_float_values(const std::vector<uint8_t>& payload) {
             values.push_back(finite_or_zero(static_cast<float>(value)));
         } else if (is_int64) {
             values.push_back(static_cast<float>(static_cast<int64_t>(read_le64(payload, offset))));
+        } else if (is_int8) {
+            values.push_back(static_cast<float>(static_cast<int8_t>(payload[offset])));
         } else if (is_int32) {
             values.push_back(static_cast<float>(static_cast<int32_t>(read_le32(payload, offset))));
         }
     }
     return values;
 }
+struct ScyllasBandNpyArray {
+    std::vector<std::size_t> shape;
+    std::vector<float> values;
+    std::vector<std::string> strings;
+};
 
-std::map<std::string, std::vector<float>> load_uncompressed_npz(const std::filesystem::path& path) {
+using ScyllasBandNpyPack = std::map<std::string, ScyllasBandNpyArray>;
+
+std::size_t npy_data_offset(
+    const std::vector<uint8_t>& payload,
+    std::string& header
+) {
+    if (payload.size() < 10 || payload[0] != 0x93 || payload[1] != 'N' || payload[2] != 'U' ||
+        payload[3] != 'M' || payload[4] != 'P' || payload[5] != 'Y') {
+        throw std::runtime_error("reference pack entry is not an NPY array");
+    }
+    const uint8_t major = payload[6];
+    std::size_t header_len = 0;
+    std::size_t data_offset = 0;
+    if (major == 1) {
+        header_len = read_le16(payload, 8);
+        data_offset = 10 + header_len;
+    } else if (major == 2 || major == 3) {
+        header_len = read_le32(payload, 8);
+        data_offset = 12 + header_len;
+    } else {
+        throw std::runtime_error("unsupported NPY version in reference pack");
+    }
+    if (data_offset > payload.size() || data_offset < header_len) {
+        throw std::runtime_error("invalid NPY header length in reference pack");
+    }
+    header.assign(
+        reinterpret_cast<const char*>(payload.data() + data_offset - header_len),
+        header_len
+    );
+    return data_offset;
+}
+
+std::string npy_descriptor(const std::string& header) {
+    const std::size_t key = header.find("descr");
+    const std::size_t colon = key == std::string::npos ? key : header.find(':', key);
+    const std::size_t quote = colon == std::string::npos
+        ? colon
+        : header.find_first_of("'\"", colon + 1);
+    if (quote == std::string::npos) {
+        throw std::runtime_error("NPY header lacks a dtype descriptor");
+    }
+    const std::size_t end = header.find(header[quote], quote + 1);
+    if (end == std::string::npos) {
+        throw std::runtime_error("NPY dtype descriptor is unterminated");
+    }
+    return header.substr(quote + 1, end - quote - 1);
+}
+
+std::vector<std::size_t> npy_shape(const std::string& header) {
+    const std::size_t key = header.find("shape");
+    const std::size_t begin = key == std::string::npos ? key : header.find('(', key);
+    const std::size_t end = begin == std::string::npos ? begin : header.find(')', begin + 1);
+    if (begin == std::string::npos || end == std::string::npos) {
+        throw std::runtime_error("NPY header lacks a valid shape");
+    }
+    std::vector<std::size_t> shape;
+    std::size_t cursor = begin + 1;
+    while (cursor < end) {
+        while (cursor < end && !std::isdigit(static_cast<unsigned char>(header[cursor]))) {
+            ++cursor;
+        }
+        if (cursor >= end) {
+            break;
+        }
+        std::size_t value = 0;
+        while (cursor < end && std::isdigit(static_cast<unsigned char>(header[cursor]))) {
+            value = value * 10U + static_cast<std::size_t>(header[cursor] - '0');
+            ++cursor;
+        }
+        shape.push_back(value);
+    }
+    return shape;
+}
+
+std::size_t npy_element_count(
+    const std::vector<std::size_t>& shape,
+    std::size_t available,
+    std::size_t element_size
+) {
+    if (element_size == 0 || available % element_size != 0) {
+        throw std::runtime_error("NPY payload byte count is not divisible by element size");
+    }
+    const std::size_t payload_count = available / element_size;
+    if (shape.empty()) {
+        if (payload_count != 1) {
+            throw std::runtime_error("scalar NPY payload must contain exactly one element");
+        }
+        return 1;
+    }
+    std::size_t shape_count = 1;
+    for (std::size_t dim : shape) {
+        if (dim != 0 && shape_count > std::numeric_limits<std::size_t>::max() / dim) {
+            throw std::runtime_error("NPY shape element count overflow");
+        }
+        shape_count *= dim;
+    }
+    if (shape_count != payload_count) {
+        throw std::runtime_error("NPY shape does not match payload element count");
+    }
+    return shape_count;
+}
+
+void append_npy_utf8_codepoint(std::string& out, uint32_t codepoint) {
+    if (codepoint <= 0x7fU) {
+        out.push_back(static_cast<char>(codepoint));
+    } else if (codepoint <= 0x7ffU) {
+        out.push_back(static_cast<char>(0xc0U | (codepoint >> 6)));
+        out.push_back(static_cast<char>(0x80U | (codepoint & 0x3fU)));
+    } else if (codepoint <= 0xffffU) {
+        out.push_back(static_cast<char>(0xe0U | (codepoint >> 12)));
+        out.push_back(static_cast<char>(0x80U | ((codepoint >> 6) & 0x3fU)));
+        out.push_back(static_cast<char>(0x80U | (codepoint & 0x3fU)));
+    } else if (codepoint <= 0x10ffffU) {
+        out.push_back(static_cast<char>(0xf0U | (codepoint >> 18)));
+        out.push_back(static_cast<char>(0x80U | ((codepoint >> 12) & 0x3fU)));
+        out.push_back(static_cast<char>(0x80U | ((codepoint >> 6) & 0x3fU)));
+        out.push_back(static_cast<char>(0x80U | (codepoint & 0x3fU)));
+    }
+}
+
+ScyllasBandNpyArray parse_npy_array(const std::vector<uint8_t>& payload) {
+    std::string header;
+    const std::size_t data_offset = npy_data_offset(payload, header);
+    const std::string descriptor = npy_descriptor(header);
+    const bool fortran = header.find("'fortran_order': True") != std::string::npos ||
+                         header.find("\"fortran_order\": true") != std::string::npos;
+    if (fortran) {
+        throw std::runtime_error("fortran-order NPY arrays are not supported in reference packs");
+    }
+
+    ScyllasBandNpyArray array;
+    array.shape = npy_shape(header);
+    if (descriptor.rfind("<U", 0) == 0) {
+        const std::size_t codepoints = static_cast<std::size_t>(
+            std::stoul(descriptor.substr(2))
+        );
+        const std::size_t element_size = codepoints * sizeof(uint32_t);
+        const std::size_t count = npy_element_count(
+            array.shape, payload.size() - data_offset, element_size
+        );
+        array.strings.reserve(count);
+        for (std::size_t index = 0; index < count; ++index) {
+            std::string value;
+            const std::size_t offset = data_offset + index * element_size;
+            for (std::size_t char_index = 0; char_index < codepoints; ++char_index) {
+                const uint32_t codepoint = read_le32(
+                    payload, offset + char_index * sizeof(uint32_t)
+                );
+                if (codepoint == 0U) {
+                    break;
+                }
+                append_npy_utf8_codepoint(value, codepoint);
+            }
+            array.strings.push_back(std::move(value));
+        }
+        return array;
+    }
+
+    array.values = parse_npy_float_values(payload);
+    std::size_t expected = 1U;
+    for (std::size_t dim : array.shape) {
+        expected *= dim;
+    }
+    if (array.values.size() != expected) {
+        throw std::runtime_error("NPY numeric shape does not match decoded values");
+    }
+    return array;
+}
+
+ScyllasBandNpyPack load_uncompressed_npz(const std::filesystem::path& path) {
     std::vector<uint8_t> bytes = read_binary_file(path);
-    std::map<std::string, std::vector<float>> arrays;
+    ScyllasBandNpyPack arrays;
     std::size_t offset = 0;
     while (offset + 30 <= bytes.size()) {
         const uint32_t signature = read_le32(bytes, offset);
@@ -1095,7 +1285,7 @@ std::map<std::string, std::vector<float>> load_uncompressed_npz(const std::files
         if (name.size() > 4 && name.substr(name.size() - 4) == ".npy") {
             name = name.substr(0, name.size() - 4);
         }
-        arrays[name] = parse_npy_float_values(payload);
+        arrays[name] = parse_npy_array(payload);
         offset = data_end;
     }
     if (arrays.empty()) {
@@ -1105,7 +1295,7 @@ std::map<std::string, std::vector<float>> load_uncompressed_npz(const std::files
 }
 
 std::vector<float> array_or_zeros(
-    const std::map<std::string, std::vector<float>>& arrays,
+    const ScyllasBandNpyPack& arrays,
     const std::string& key,
     int dim
 ) {
@@ -1114,19 +1304,305 @@ std::vector<float> array_or_zeros(
     if (it == arrays.end()) {
         return out;
     }
-    const std::size_t count = std::min(out.size(), it->second.size());
+    const std::size_t count = std::min(out.size(), it->second.values.size());
     for (std::size_t index = 0; index < count; ++index) {
-        out[index] = finite_or_zero(it->second[index]);
+        out[index] = finite_or_zero(it->second.values[index]);
     }
     return out;
 }
 
-float mask_value(const std::map<std::string, std::vector<float>>& arrays, const std::string& key) {
+float mask_value(const ScyllasBandNpyPack& arrays, const std::string& key) {
     const auto it = arrays.find(key);
-    if (it == arrays.end() || it->second.empty()) {
+    if (it == arrays.end() || it->second.values.empty()) {
         return 0.0f;
     }
-    return it->second[0] > 0.0f ? 1.0f : 0.0f;
+    return it->second.values[0] > 0.0f ? 1.0f : 0.0f;
+}
+struct ScyllasBandReferenceRouteV4 {
+    std::vector<float> identity;
+    std::vector<float> prosody_baseline;
+    std::vector<float> prosody_delta;
+    std::vector<float> prosody_feature_mask;
+    float prosody_confidence = 0.0f;
+    int baseline_index = -1;
+    int prototype_index = -1;
+    std::string route_kind = "global_affect_only";
+};
+
+const ScyllasBandNpyArray& required_npy_array(
+    const ScyllasBandNpyPack& pack,
+    const std::string& key
+) {
+    const auto it = pack.find(key);
+    if (it == pack.end()) {
+        throw std::runtime_error("schema-v4 reference pack lacks array '" + key + "'");
+    }
+    return it->second;
+}
+
+const std::vector<float>& required_npy_values(
+    const ScyllasBandNpyPack& pack,
+    const std::string& key
+) {
+    const auto& array = required_npy_array(pack, key);
+    if (array.values.empty()) {
+        throw std::runtime_error("schema-v4 reference array '" + key + "' is not numeric");
+    }
+    return array.values;
+}
+
+const std::vector<std::string>& required_npy_strings(
+    const ScyllasBandNpyPack& pack,
+    const std::string& key
+) {
+    const auto& array = required_npy_array(pack, key);
+    if (array.strings.empty()) {
+        throw std::runtime_error("schema-v4 reference array '" + key + "' is not text");
+    }
+    return array.strings;
+}
+
+void require_npy_shape(
+    const ScyllasBandNpyArray& array,
+    const std::vector<std::size_t>& expected,
+    const std::string& key
+) {
+    if (array.shape != expected) {
+        throw std::runtime_error("schema-v4 reference array '" + key + "' has an invalid shape");
+    }
+}
+
+std::vector<float> npy_numeric_row(
+    const ScyllasBandNpyPack& pack,
+    const std::string& key,
+    std::size_t row,
+    std::size_t width
+) {
+    const auto& array = required_npy_array(pack, key);
+    if (array.shape.size() != 2 || array.shape[1] != width || row >= array.shape[0]) {
+        throw std::runtime_error("schema-v4 reference array '" + key + "' has an invalid row shape");
+    }
+    const std::size_t begin = row * width;
+    if (begin + width > array.values.size()) {
+        throw std::runtime_error("schema-v4 reference array '" + key + "' row exceeds payload");
+    }
+    return std::vector<float>(
+        array.values.begin() + static_cast<std::ptrdiff_t>(begin),
+        array.values.begin() + static_cast<std::ptrdiff_t>(begin + width)
+    );
+}
+
+ScyllasBandReferenceRouteV4 route_reference_pack_v4_native(
+    const ScyllasBandNpyPack& pack,
+    const std::string& language,
+    const std::vector<float>& affect_values,
+    const std::vector<float>& affect_mask
+) {
+    const auto& schema = required_npy_strings(pack, "schema_version");
+    if (schema.size() != 1 || schema[0] != "scyllasband_reference_pack_v4") {
+        throw std::runtime_error("reference pack does not implement scyllasband_reference_pack_v4");
+    }
+    static const std::vector<std::string> expected_axes = {
+        "calm", "joy", "anger", "sadness", "whisper",
+    };
+    if (required_npy_strings(pack, "affect_axis_order") != expected_axes) {
+        throw std::runtime_error("schema-v4 reference pack has an invalid affect axis order");
+    }
+    if (affect_values.size() != 5 || affect_mask.size() != 5) {
+        throw std::runtime_error("schema-v4 routing requires five affect values and masks");
+    }
+
+    const auto& baseline_languages = required_npy_strings(pack, "baseline_languages");
+    std::size_t baseline_index = baseline_languages.size();
+    for (std::size_t index = 0; index < baseline_languages.size(); ++index) {
+        if (baseline_languages[index] == language) {
+            baseline_index = index;
+            break;
+        }
+    }
+    if (baseline_index >= baseline_languages.size()) {
+        throw std::runtime_error("no native prosody baseline for language '" + language + "'");
+    }
+
+    constexpr std::size_t kProsodyDim = 32;
+    constexpr std::size_t kIdentityDim = 512;
+    const auto& global_location_array = required_npy_array(pack, "prosody_global_locations");
+    const auto& global_scale_array = required_npy_array(pack, "prosody_global_scales");
+    require_npy_shape(global_location_array, {kProsodyDim}, "prosody_global_locations");
+    require_npy_shape(global_scale_array, {kProsodyDim}, "prosody_global_scales");
+    const auto& global_location = global_location_array.values;
+    const auto& global_scale = global_scale_array.values;
+    const std::vector<float> baseline_raw = npy_numeric_row(
+        pack, "baseline_locations", baseline_index, kProsodyDim
+    );
+    const std::vector<float> baseline_mask = npy_numeric_row(
+        pack, "baseline_feature_masks", baseline_index, kProsodyDim
+    );
+    const auto& baseline_confidence = required_npy_values(pack, "baseline_confidence");
+    if (baseline_confidence.size() != baseline_languages.size()) {
+        throw std::runtime_error("schema-v4 baseline confidence count is invalid");
+    }
+
+    ScyllasBandReferenceRouteV4 routed;
+    routed.baseline_index = static_cast<int>(baseline_index);
+    routed.prosody_baseline.resize(kProsodyDim, 0.0f);
+    routed.prosody_delta.assign(kProsodyDim, 0.0f);
+    routed.prosody_feature_mask = baseline_mask;
+    routed.prosody_confidence = baseline_confidence[baseline_index];
+    for (std::size_t index = 0; index < kProsodyDim; ++index) {
+        const float scale = global_scale[index];
+        if (!std::isfinite(scale) || scale <= 0.0f) {
+            throw std::runtime_error("schema-v4 prosody global scale must be positive");
+        }
+        routed.prosody_baseline[index] = (
+            (baseline_raw[index] - global_location[index]) / scale
+        ) * baseline_mask[index];
+    }
+
+    const auto& prototype_languages = required_npy_strings(pack, "prototype_languages");
+    const auto& prototype_baselines = required_npy_values(pack, "prototype_baseline_indices");
+    const auto& prototype_centers = required_npy_array(pack, "prototype_affect_centers");
+    const auto& prototype_masks = required_npy_array(pack, "prototype_affect_masks");
+    const auto& prototype_confidence = required_npy_values(pack, "prototype_confidence");
+    const auto& prototype_support = required_npy_values(pack, "prototype_distinct_source_counts");
+    const std::size_t prototype_count = prototype_languages.size();
+    require_npy_shape(prototype_centers, {prototype_count, 5}, "prototype_affect_centers");
+    require_npy_shape(prototype_masks, {prototype_count, 5}, "prototype_affect_masks");
+    if (
+        prototype_baselines.size() != prototype_count ||
+        prototype_confidence.size() != prototype_count ||
+        prototype_support.size() != prototype_count
+    ) {
+        throw std::runtime_error("schema-v4 prototype metadata counts are inconsistent");
+    }
+
+    int selected = -1;
+    float selected_confidence = -std::numeric_limits<float>::infinity();
+    float selected_support = -std::numeric_limits<float>::infinity();
+    for (std::size_t row = 0; row < prototype_count; ++row) {
+        if (
+            prototype_languages[row] != language ||
+            static_cast<int>(prototype_baselines[row]) != static_cast<int>(baseline_index)
+        ) {
+            continue;
+        }
+        bool exact = true;
+        for (std::size_t axis = 0; axis < 5; ++axis) {
+            const bool target_active = affect_mask[axis] > 0.5f;
+            const bool center_active = prototype_masks.values[row * 5 + axis] > 0.5f;
+            if (target_active != center_active) {
+                exact = false;
+                break;
+            }
+            if (
+                target_active &&
+                std::fabs(prototype_centers.values[row * 5 + axis] - affect_values[axis]) > 1.0e-6f
+            ) {
+                exact = false;
+                break;
+            }
+        }
+        if (!exact) {
+            continue;
+        }
+        const float confidence = prototype_confidence[row];
+        const float support = prototype_support[row];
+        if (
+            selected < 0 ||
+            confidence > selected_confidence ||
+            (confidence == selected_confidence && support > selected_support)
+        ) {
+            selected = static_cast<int>(row);
+            selected_confidence = confidence;
+            selected_support = support;
+        }
+    }
+
+    if (selected >= 0) {
+        const auto& reference_indices = required_npy_array(pack, "prototype_reference_indices");
+        if (reference_indices.shape.size() != 2 ||
+            static_cast<std::size_t>(selected) >= reference_indices.shape[0]) {
+            throw std::runtime_error("schema-v4 prototype reference indices have an invalid shape");
+        }
+        bool has_reference = false;
+        const std::size_t width = reference_indices.shape[1];
+        for (std::size_t column = 0; column < width; ++column) {
+            if (reference_indices.values[static_cast<std::size_t>(selected) * width + column] >= 0.0f) {
+                has_reference = true;
+                break;
+            }
+        }
+        if (has_reference) {
+            routed.prototype_index = selected;
+            routed.route_kind = "native_exact";
+            routed.prosody_delta = npy_numeric_row(
+                pack, "prototype_prosody_deltas", static_cast<std::size_t>(selected), kProsodyDim
+            );
+            const std::vector<float> prototype_mask = npy_numeric_row(
+                pack, "prototype_feature_masks", static_cast<std::size_t>(selected), kProsodyDim
+            );
+            for (std::size_t index = 0; index < kProsodyDim; ++index) {
+                routed.prosody_feature_mask[index] = baseline_mask[index] * prototype_mask[index];
+                routed.prosody_delta[index] *= routed.prosody_feature_mask[index];
+            }
+            routed.prosody_confidence = prototype_confidence[static_cast<std::size_t>(selected)];
+        }
+    }
+
+    const auto& identity_array = required_npy_array(pack, "identity_embeddings");
+    if (
+        identity_array.shape.size() != 2 ||
+        identity_array.shape[0] == 0 ||
+        identity_array.shape[1] != kIdentityDim
+    ) {
+        throw std::runtime_error("schema-v4 identity embeddings have an invalid shape");
+    }
+    const auto& identity_weights = required_npy_values(pack, "identity_embedding_weights");
+    const auto& identity_references = required_npy_values(pack, "identity_window_reference_indices");
+    const std::size_t identity_count = identity_array.shape[0];
+    if (identity_weights.size() != identity_count || identity_references.size() != identity_count) {
+        throw std::runtime_error("schema-v4 identity metadata counts are inconsistent");
+    }
+    double weight_sum = 0.0;
+    for (float weight : identity_weights) {
+        weight_sum += static_cast<double>(weight);
+    }
+    if (!std::isfinite(weight_sum) || weight_sum <= 0.0) {
+        throw std::runtime_error("schema-v4 identity weights must have positive mass");
+    }
+    routed.identity.assign(kIdentityDim, 0.0f);
+    for (std::size_t row = 0; row < identity_count; ++row) {
+        const float weight = static_cast<float>(
+            static_cast<double>(identity_weights[row]) / weight_sum
+        );
+        for (std::size_t dim = 0; dim < kIdentityDim; ++dim) {
+            routed.identity[dim] += identity_array.values[row * kIdentityDim + dim] * weight;
+        }
+    }
+    double norm_squared = 0.0;
+    for (float value : routed.identity) {
+        norm_squared += static_cast<double>(value) * static_cast<double>(value);
+    }
+    const double norm = std::sqrt(norm_squared);
+    if (norm > 1.0e-12) {
+        for (float& value : routed.identity) {
+            value = static_cast<float>(static_cast<double>(value) / norm);
+        }
+    }
+    routed.prosody_confidence = std::max(0.0f, std::min(1.0f, routed.prosody_confidence));
+    for (const auto* values : {
+        &routed.identity,
+        &routed.prosody_baseline,
+        &routed.prosody_delta,
+        &routed.prosody_feature_mask,
+    }) {
+        for (float value : *values) {
+            if (!std::isfinite(value)) {
+                throw std::runtime_error("schema-v4 reference routing produced non-finite values");
+            }
+        }
+    }
+    return routed;
 }
 
 std::vector<float> transform_prosody(std::vector<float> values) {
@@ -1260,7 +1736,7 @@ std::filesystem::path reference_pack_path_for_voice(const ScyllasBandBundleInfo&
 }
 
 std::string select_reference_suffix(
-    const std::map<std::string, std::vector<float>>& pack,
+    const ScyllasBandNpyPack& pack,
     const std::string& language,
     const std::string& emotion
 ) {
@@ -2297,8 +2773,13 @@ ScyllasBandLiteRtInputStorage build_duration_predictor_inputs(
     storage.phone_shape = {1, static_cast<int64_t>(prepared.phone_ids.size())};
     storage.scalar_shape = {1};
     storage.affect_shape = {1, static_cast<int64_t>(prepared.affect_values.size())};
+    storage.affect_condition_mask_shape = {1, static_cast<int64_t>(prepared.affect_condition_mask_values.size())};
     storage.reference_style_shape = {1, static_cast<int64_t>(prepared.reference_style.size())};
     storage.reference_prosody_shape = {1, static_cast<int64_t>(prepared.reference_prosody.size())};
+    storage.identity_reference_shape = {1, static_cast<int64_t>(prepared.identity_reference.size())};
+    storage.prosody_baseline_shape = {1, static_cast<int64_t>(prepared.prosody_baseline.size())};
+    storage.prosody_delta_shape = {1, static_cast<int64_t>(prepared.prosody_delta.size())};
+    storage.prosody_feature_mask_shape = {1, static_cast<int64_t>(prepared.prosody_feature_mask.size())};
     storage.phone_ids = prepared.phone_ids;
     storage.phone_mask = prepared.phone_mask;
     storage.voice_id = {prepared.voice_id};
@@ -2308,7 +2789,18 @@ ScyllasBandLiteRtInputStorage build_duration_predictor_inputs(
     storage.boundary_after_id = {prepared.boundary_after_id};
     storage.emotion_condition_mask = {emotion_condition_scale};
     storage.affect_values = prepared.affect_values;
-    storage.affect_condition_mask = {prepared.affect_condition_mask * emotion_condition_scale};
+    storage.affect_condition_mask = prepared.affect_condition_mask_values;
+    for (float& value : storage.affect_condition_mask) {
+        value *= emotion_condition_scale;
+    }
+    storage.identity_reference = prepared.identity_reference;
+    storage.identity_reference_mask = {
+        prepared.identity_reference_mask * reference_condition_scale
+    };
+    storage.prosody_baseline = prepared.prosody_baseline;
+    storage.prosody_delta = prepared.prosody_delta;
+    storage.prosody_feature_mask = prepared.prosody_feature_mask;
+    storage.prosody_confidence = {prepared.prosody_confidence};
     storage.reference_style = prepared.reference_style;
     storage.reference_prosody = prepared.reference_prosody;
     storage.reference_mask = {prepared.reference_mask};
@@ -2345,8 +2837,26 @@ ScyllasBandLiteRtInputStorage build_duration_predictor_inputs(
             append_tensor_view(storage, raw_name, SCYLLASBAND_TENSOR_FLOAT32, storage.affect_shape,
                                storage.affect_values.data(), storage.affect_values.size() * sizeof(float));
         } else if (semantic == "affect_condition_mask") {
+            append_tensor_view(storage, raw_name, SCYLLASBAND_TENSOR_FLOAT32, storage.affect_condition_mask_shape,
+                               storage.affect_condition_mask.data(), storage.affect_condition_mask.size() * sizeof(float));
+        } else if (semantic == "identity_reference") {
+            append_tensor_view(storage, raw_name, SCYLLASBAND_TENSOR_FLOAT32, storage.identity_reference_shape,
+                               storage.identity_reference.data(), storage.identity_reference.size() * sizeof(float));
+        } else if (semantic == "identity_reference_mask") {
             append_tensor_view(storage, raw_name, SCYLLASBAND_TENSOR_FLOAT32, storage.scalar_shape,
-                               storage.affect_condition_mask.data(), sizeof(float));
+                               storage.identity_reference_mask.data(), sizeof(float));
+        } else if (semantic == "prosody_baseline") {
+            append_tensor_view(storage, raw_name, SCYLLASBAND_TENSOR_FLOAT32, storage.prosody_baseline_shape,
+                               storage.prosody_baseline.data(), storage.prosody_baseline.size() * sizeof(float));
+        } else if (semantic == "prosody_delta") {
+            append_tensor_view(storage, raw_name, SCYLLASBAND_TENSOR_FLOAT32, storage.prosody_delta_shape,
+                               storage.prosody_delta.data(), storage.prosody_delta.size() * sizeof(float));
+        } else if (semantic == "prosody_feature_mask") {
+            append_tensor_view(storage, raw_name, SCYLLASBAND_TENSOR_FLOAT32, storage.prosody_feature_mask_shape,
+                               storage.prosody_feature_mask.data(), storage.prosody_feature_mask.size() * sizeof(float));
+        } else if (semantic == "prosody_confidence") {
+            append_tensor_view(storage, raw_name, SCYLLASBAND_TENSOR_FLOAT32, storage.scalar_shape,
+                               storage.prosody_confidence.data(), sizeof(float));
         } else if (semantic == "reference_style") {
             append_tensor_view(storage, raw_name, SCYLLASBAND_TENSOR_FLOAT32, storage.reference_style_shape,
                                storage.reference_style.data(), storage.reference_style.size() * sizeof(float));
@@ -2525,6 +3035,7 @@ ScyllasBandDurationExpansionMetadata expand_duration_values(
     const ScyllasBandBundleInfo& bundle,
     const ScyllasBandDurationFlowPreparedInputs& prepared,
     const ScyllasBandSynthesisRequest& request,
+    const std::string& language,
     const std::vector<float>& duration_values,
     bool allow_over_budget = false
 ) {
@@ -2546,17 +3057,33 @@ ScyllasBandDurationExpansionMetadata expand_duration_values(
         bundle.sample_rate,
         bundle.latent_hop_length
     );
+    auto calibrated_floor = [&](const std::string& phone) -> int64_t {
+        const auto it = bundle.punctuation_pause_floor_table_ms.find(language + "|" + phone);
+        if (it == bundle.punctuation_pause_floor_table_ms.end()) {
+            return 0;
+        }
+        return pause_ms_to_latent_frames(
+            it->second,
+            bundle.sample_rate,
+            bundle.latent_hop_length
+        );
+    };
     for (int index = 0; index < prepared.phone_count; ++index) {
         const float value = std::max(0.0f, duration_values[static_cast<std::size_t>(index)]);
         int64_t frame_count = static_cast<int64_t>(std::llround(value * expanded.duration_scale));
         const std::string& phone = prepared.phones[static_cast<std::size_t>(index)];
-        if (!phone.empty()) {
+        if (scyllasband_detail::is_non_acoustic_modifier_phone(phone) ||
+            (bundle.punctuation_silence_target == "explicit_silence" &&
+             scyllasband_detail::is_zero_duration_punctuation_phone(phone))) {
+            frame_count = 0;
+        } else if (!phone.empty()) {
             frame_count = std::max<int64_t>(1, frame_count);
         }
         const int64_t punctuation_floor = punctuation_duration_floor_frames(
             phone,
             sentence_pause_floor,
-            clause_pause_floor
+            clause_pause_floor,
+            calibrated_floor(phone)
         );
         if (punctuation_floor > 0) {
             const bool floor_following_silence = (
@@ -2571,7 +3098,8 @@ ScyllasBandDurationExpansionMetadata expand_duration_values(
             const int64_t preceding_floor = punctuation_duration_floor_frames(
                 prepared.phones[static_cast<std::size_t>(index - 1)],
                 sentence_pause_floor,
-                clause_pause_floor
+                clause_pause_floor,
+                calibrated_floor(prepared.phones[static_cast<std::size_t>(index - 1)])
             );
             if (preceding_floor > 0) {
                 frame_count = std::max<int64_t>(frame_count, preceding_floor);
@@ -2683,8 +3211,13 @@ ScyllasBandLiteRtInputStorage build_vector_estimator_inputs(
     storage.views.reserve(semantic_inputs.size());
     storage.scalar_shape = {1};
     storage.affect_shape = {1, static_cast<int64_t>(prepared.affect_values.size())};
+    storage.affect_condition_mask_shape = {1, static_cast<int64_t>(prepared.affect_condition_mask_values.size())};
     storage.reference_style_shape = {1, static_cast<int64_t>(prepared.reference_style.size())};
     storage.reference_prosody_shape = {1, static_cast<int64_t>(prepared.reference_prosody.size())};
+    storage.identity_reference_shape = {1, static_cast<int64_t>(prepared.identity_reference.size())};
+    storage.prosody_baseline_shape = {1, static_cast<int64_t>(prepared.prosody_baseline.size())};
+    storage.prosody_delta_shape = {1, static_cast<int64_t>(prepared.prosody_delta.size())};
+    storage.prosody_feature_mask_shape = {1, static_cast<int64_t>(prepared.prosody_feature_mask.size())};
     storage.latent_shape = {1, static_cast<int64_t>(bundle.latent_dim), static_cast<int64_t>(bundle.latent_frames)};
     storage.latent_frame_shape = {1, static_cast<int64_t>(bundle.latent_frames)};
     if (hidden != nullptr && hidden_shape != nullptr) {
@@ -2713,10 +3246,21 @@ ScyllasBandLiteRtInputStorage build_vector_estimator_inputs(
     storage.boundary_after_id = {prepared.boundary_after_id};
     storage.emotion_condition_mask = {emotion_condition_scale};
     storage.affect_values = prepared.affect_values;
-    storage.affect_condition_mask = {prepared.affect_condition_mask * emotion_condition_scale};
+    storage.affect_condition_mask = prepared.affect_condition_mask_values;
+    for (float& value : storage.affect_condition_mask) {
+        value *= emotion_condition_scale;
+    }
     storage.reference_style = prepared.reference_style;
     storage.reference_prosody = prepared.reference_prosody;
     storage.reference_mask = {prepared.reference_mask};
+    storage.identity_reference = prepared.identity_reference;
+    storage.identity_reference_mask = {
+        prepared.identity_reference_mask * reference_condition_scale
+    };
+    storage.prosody_baseline = prepared.prosody_baseline;
+    storage.prosody_delta = prepared.prosody_delta;
+    storage.prosody_feature_mask = prepared.prosody_feature_mask;
+    storage.prosody_confidence = {prepared.prosody_confidence};
     storage.reference_condition_mask = {reference_condition_scale};
     storage.prefix_latents = prepared.prefix_latents;
     storage.prefix_mask = prepared.prefix_mask;
@@ -2774,8 +3318,26 @@ ScyllasBandLiteRtInputStorage build_vector_estimator_inputs(
             append_tensor_view(storage, raw_name, SCYLLASBAND_TENSOR_FLOAT32, storage.affect_shape,
                                storage.affect_values.data(), storage.affect_values.size() * sizeof(float));
         } else if (semantic == "affect_condition_mask") {
+            append_tensor_view(storage, raw_name, SCYLLASBAND_TENSOR_FLOAT32, storage.affect_condition_mask_shape,
+                               storage.affect_condition_mask.data(), storage.affect_condition_mask.size() * sizeof(float));
+} else if (semantic == "identity_reference") {
+            append_tensor_view(storage, raw_name, SCYLLASBAND_TENSOR_FLOAT32, storage.identity_reference_shape,
+                               storage.identity_reference.data(), storage.identity_reference.size() * sizeof(float));
+        } else if (semantic == "identity_reference_mask") {
             append_tensor_view(storage, raw_name, SCYLLASBAND_TENSOR_FLOAT32, storage.scalar_shape,
-                               storage.affect_condition_mask.data(), sizeof(float));
+                               storage.identity_reference_mask.data(), sizeof(float));
+        } else if (semantic == "prosody_baseline") {
+            append_tensor_view(storage, raw_name, SCYLLASBAND_TENSOR_FLOAT32, storage.prosody_baseline_shape,
+                               storage.prosody_baseline.data(), storage.prosody_baseline.size() * sizeof(float));
+        } else if (semantic == "prosody_delta") {
+            append_tensor_view(storage, raw_name, SCYLLASBAND_TENSOR_FLOAT32, storage.prosody_delta_shape,
+                               storage.prosody_delta.data(), storage.prosody_delta.size() * sizeof(float));
+        } else if (semantic == "prosody_feature_mask") {
+            append_tensor_view(storage, raw_name, SCYLLASBAND_TENSOR_FLOAT32, storage.prosody_feature_mask_shape,
+                               storage.prosody_feature_mask.data(), storage.prosody_feature_mask.size() * sizeof(float));
+        } else if (semantic == "prosody_confidence") {
+            append_tensor_view(storage, raw_name, SCYLLASBAND_TENSOR_FLOAT32, storage.scalar_shape,
+                               storage.prosody_confidence.data(), sizeof(float));
         } else if (semantic == "reference_style") {
             append_tensor_view(storage, raw_name, SCYLLASBAND_TENSOR_FLOAT32, storage.reference_style_shape,
                                storage.reference_style.data(), storage.reference_style.size() * sizeof(float));
@@ -3576,6 +4138,7 @@ public:
                 bundle_info_,
                 prepared_inputs,
                 request,
+                resolved_request.language,
                 duration_prediction.values
             );
             duration_expand_ms = elapsed_ms_backend(stage_started_at, ScyllasBandSteadyClock::now());
@@ -3845,6 +4408,7 @@ public:
                 bundle_info_,
                 prepared_inputs,
                 request,
+                resolved_request.language,
                 duration_prediction.values,
                 true
             );
@@ -4062,12 +4626,27 @@ private:
         return reference_stats_;
     }
 
+
+    const ScyllasBandNpyPack& reference_pack_v4(
+        const std::filesystem::path& path
+    ) {
+        const std::string cache_key = path.string();
+        const auto cached = reference_pack_v4_cache_.find(cache_key);
+        if (cached != reference_pack_v4_cache_.end()) {
+            return cached->second;
+        }
+        auto inserted = reference_pack_v4_cache_.emplace(
+            cache_key, load_uncompressed_npz(path)
+        );
+        return inserted.first->second;
+    }
+
+
     void apply_reference_features(
         ScyllasBandDurationFlowPreparedInputs& prepared,
         const ScyllasBandResolvedRequest& resolved_request
     ) {
-        if (!bundle_info_.reference_packs_enabled || bundle_info_.reference_style_dim <= 0 ||
-            bundle_info_.reference_prosody_dim <= 0) {
+        if (!bundle_info_.reference_packs_enabled) {
             return;
         }
         const std::filesystem::path path = reference_pack_path_for_voice(bundle_info_, resolved_request.voice_id);
@@ -4079,6 +4658,58 @@ private:
             return;
         }
         const auto pack = load_uncompressed_npz(path);
+
+        if (bundle_info_.reference_pack_schema_version == 4) {
+            if (
+                bundle_info_.reference_affect_routing_version !=
+                "native_exact_primary_relative_residual_v4"
+            ) {
+                throw std::runtime_error(
+                    "unsupported schema-v4 affect-reference routing version '" +
+                    bundle_info_.reference_affect_routing_version + "'"
+                );
+            }
+            if (
+                bundle_info_.reference_identity_dim != 512 ||
+                bundle_info_.reference_baseline_dim != 32 ||
+                bundle_info_.reference_delta_dim != 32 ||
+                bundle_info_.reference_prosody_dim != 32
+            ) {
+                throw std::runtime_error(
+                    "schema-v4 reference dimensions do not match the native contract"
+                );
+            }
+            const auto routed = route_reference_pack_v4_native(
+                reference_pack_v4(path),
+                resolved_request.language,
+                prepared.affect_values,
+                prepared.affect_condition_mask_values
+            );
+            prepared.identity_reference = routed.identity;
+            prepared.identity_reference_mask = 1.0f;
+            prepared.prosody_baseline = routed.prosody_baseline;
+            prepared.prosody_delta = routed.prosody_delta;
+            prepared.prosody_feature_mask = routed.prosody_feature_mask;
+            prepared.prosody_confidence = routed.prosody_confidence;
+            prepared.reference_mask = 1.0f;
+            prepared.native_reference_mask = 1.0f;
+            prepared.fallback_reference_mask = 0.0f;
+            prepared.reference_key =
+                resolved_request.language + "|v4|" + routed.route_kind +
+                "|baseline=" + std::to_string(routed.baseline_index) +
+                "|prototype=" + (
+                    routed.prototype_index < 0
+                    ? std::string("none")
+                    : std::to_string(routed.prototype_index)
+                );
+            return;
+        }
+        if (
+            bundle_info_.reference_style_dim <= 0 ||
+            bundle_info_.reference_prosody_dim <= 0
+        ) {
+            return;
+        }
         const std::string suffix = select_reference_suffix(pack, resolved_request.language, resolved_request.emotion);
         if (suffix.empty()) {
             return;
@@ -4506,6 +5137,7 @@ private:
     ScyllasBandLiteRtAccelerator litert_accelerator_ = SCYLLASBAND_LITERT_ACCELERATOR_CPU;
     int litert_max_threads_ = 0;
     ReferenceNormalizationStats reference_stats_;
+    std::map<std::string, ScyllasBandNpyPack> reference_pack_v4_cache_;
     bool reference_stats_ready_ = false;
     ScyllasBandPronunciationOverrideMap pronunciation_overrides_;
     bool pronunciation_overrides_ready_ = false;

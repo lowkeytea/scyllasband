@@ -6,7 +6,7 @@ This sample demonstrates the current Scylla's Band duration-flow model through t
 
 - The optional `scyllasband` INT8 ONNX bundle, including external shared weights and 24 kHz audio playback.
 - All voices and each voice's supported languages, loaded from `manifest.json` rather than hard-coded UI lists.
-- Neutral delivery or any manifest-declared affect axis (`calm`, `joy`, `anger`, `sadness`, `sarcasm`, and `questioning`), a normalized strength from 0 to 1, and a separate non-negative CFG value.
+- Neutral delivery or any v2 affect axis (`calm`, `joy`, `anger`, `sadness`, and `whisper`), a normalized strength from 0 to 1, and a separate non-negative CFG value.
 - A paste-friendly text editor with inline speaker points. Double-tap or long-press to add a point; tap a point to edit or remove it. A point controls all following text until another point appears. New points copy the settings of the last point created.
 - A preset selector populated from the repository's `data/` examples. The multilingual `groupSpeak.txt` tags are converted into editable inline speaker points when loaded.
 - Language-aware spoken-text normalization matching the Python runtime for numbers, dates, times, currency, percentages, fractions, and common symbols.
@@ -22,10 +22,10 @@ From this directory:
 ./gradlew :app:assembleDebug
 ```
 
-The build defaults to the CPU-optimized bundle at `scyllasband/models/onnx-int8` in the repository root. If it is missing, run this first from the repository root:
+The build prefers the CPU-optimized v2 bundle at `scyllasband/models/v2/onnx-int8`, then v2 FP32, v1, and the legacy flat layout. If v2 is missing, run this first from the repository root:
 
 ```bash
-python -m scyllasband download --runtime-bundles onnx-int8
+python -m scyllasband download --model-version v2 --runtime-bundles onnx-int8 --yes
 ```
 
 The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`.

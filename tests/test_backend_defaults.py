@@ -66,10 +66,25 @@ class BackendDefaultsTest(unittest.TestCase):
             / "examples/android/scyllasband-android/src/main/java/org/scyllasband/android/ScyllasBandAssetInstaller.kt"
         ).read_text(encoding="utf-8")
         self.assertIn("scyllasband/models", gradle)
-        self.assertIn('sequenceOf("onnx-int8", "onnx")', gradle)
+        self.assertIn('"v2/onnx-int8"', gradle)
+        self.assertIn('"v2/onnx"', gradle)
+        self.assertIn('"v1/onnx-int8"', gradle)
+        self.assertLess(gradle.index('"v2/onnx-int8"'), gradle.index('"v1/onnx-int8"'))
+        self.assertLess(gradle.index('"v1/onnx-int8"'), gradle.index('"onnx-int8",'))
         self.assertIn("into(\"scyllasband/onnx-int8\")", gradle)
         self.assertNotIn("coreai", gradle)
         self.assertIn("DEFAULT_ASSET_ROOT = \"scyllasband/onnx-int8\"", installer)
+
+
+    def test_ios_asset_packager_keeps_backends_on_v2_first_release(self) -> None:
+        repository_root = Path(__file__).resolve().parents[1]
+        script = (repository_root / "examples/ios/Scripts/prepare_assets.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('"${models_dir}/v2" "${models_dir}/v1" "${models_dir}"', script)
+        self.assertIn('selected_models_dir="${candidate}"', script)
+        self.assertIn('${selected_models_dir}/coreai/manifest.json', script)
+        self.assertIn('${selected_models_dir}/${onnx_name}/manifest.json', script)
 
     def test_litert_requires_explicit_selection(self) -> None:
         args = self.parse_speak(

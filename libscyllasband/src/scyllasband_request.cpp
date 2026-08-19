@@ -220,13 +220,13 @@ AffectResolution resolve_affect(
     if (!bundle.affect_enabled) {
         if (!explicit_affect.empty() ||
             (request.has_affect_guidance_scale != 0 && request.affect_guidance_scale != 1.0f)) {
-            throw std::runtime_error("This bundle does not support six-axis affect conditioning");
+            throw std::runtime_error("This bundle does not support affect conditioning");
         }
         return AffectResolution{};
     }
     if (!trim(nullable_string(request.emotion_guidance)).empty()) {
         throw std::runtime_error(
-            "Categorical emotion guidance is not supported by six-axis affect bundles"
+            "Categorical emotion guidance is not supported by affect-enabled bundles"
         );
     }
 
@@ -265,6 +265,12 @@ AffectResolution resolve_affect(
         }
     } else {
         resolved.values.assign(bundle.affect_axes.size(), 0.0f);
+        for (std::size_t index = 0; index < bundle.affect_axes.size(); ++index) {
+            const auto partial = bundle.affect_partial_defaults.find(bundle.affect_axes[index]);
+            if (partial != bundle.affect_partial_defaults.end()) {
+                resolved.values[index] = partial->second;
+            }
+        }
         std::map<std::string, bool> seen;
         for (const std::string& raw_part : split_commas(spec)) {
             const std::string part = trim(raw_part);
@@ -294,6 +300,22 @@ AffectResolution resolve_affect(
     }
     if (resolved.values.size() != bundle.affect_axes.size()) {
         throw std::runtime_error("Resolved affect vector does not match the bundle axis count");
+    }
+    for (std::size_t index = 0; index < resolved.values.size(); ++index) {
+        const std::string& axis = bundle.affect_axes[index];
+        const float value = resolved.values[index];
+        const float minimum = bundle.affect_axis_minimums.count(axis) > 0
+            ? bundle.affect_axis_minimums.at(axis)
+            : 0.0f;
+        const float maximum = bundle.affect_axis_maximums.count(axis) > 0
+            ? bundle.affect_axis_maximums.at(axis)
+            : 1.0f;
+        if (!std::isfinite(value) || value < minimum || value > maximum) {
+            throw std::runtime_error(
+                "Affect value for '" + axis + "' must be within [" +
+                std::to_string(minimum) + ", " + std::to_string(maximum) + "]"
+            );
+        }
     }
     resolved.guidance_scale = request.has_affect_guidance_scale != 0
         ? request.affect_guidance_scale

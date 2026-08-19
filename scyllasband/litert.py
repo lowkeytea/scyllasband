@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import OrderedDict
 import copy
 from dataclasses import dataclass
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -20,7 +21,15 @@ from .g2p_phrases import (
     BOUNDARY_PHONE_TOKENS,
     DEFAULT_G2P_PHRASE_MAX_CHARS,
     g2p_phrase_segments,
+    is_non_acoustic_phone_modifier,
     punctuation_phone_token,
+)
+from .text_normalizer import SPOKEN_TEXT_NORMALIZER_SHA256
+from .reference_routing import (
+    REFERENCE_ROUTING_VERSION,
+    REFERENCE_ROUTING_V4_VERSION,
+    route_affect_reference,
+    route_reference_pack_v4,
 )
 
 
@@ -52,6 +61,11 @@ class _AffectFeatures:
 class _ReferenceFeatures:
     style: np.ndarray
     prosody: np.ndarray
+    identity: np.ndarray
+    prosody_baseline: np.ndarray
+    prosody_delta: np.ndarray
+    prosody_feature_mask: np.ndarray
+    prosody_confidence: np.ndarray
     mask: np.ndarray
     native_mask: float
     fallback_mask: float
@@ -92,10 +106,45 @@ class LiteRTRunner:
         self.g2p_config = _load_json(self.bundle_dir / manifest.assets["g2p_config"])
         self.g2p_tokenizer = _load_json(self.bundle_dir / manifest.assets["g2p_tokenizer"])
         self.g2p_language_map = _load_json(self.bundle_dir / manifest.assets["g2p_language_map"])
+        normalization_asset = manifest.assets.get("g2p_normalization")
+        g2p_normalization = (
+            _load_optional_json(self.bundle_dir / normalization_asset)
+            if normalization_asset
+            else None
+        ) or {}
+        # Optional bundle-declared remap for punctuation phone tokens whose
+        # embeddings the acoustic model never (or barely) trained on. A bundle
+        # that introduces typed boundary tokens without matching training data
+        # can point them back at a well-trained token (usually <sil>) instead of
+        # injecting an untrained embedding into the middle of a phone sequence.
+        self.g2p_punctuation_token_remap = {
+            str(key): str(value)
+            for key, value in dict(
+                g2p_normalization.get("punctuation_token_remap") or {}
+            ).items()
+        }
+        self.g2p_punctuation_token_remap_scope = str(
+            g2p_normalization.get("punctuation_token_remap_scope")
+            or "all_boundaries"
+        )
+        if self.g2p_punctuation_token_remap_scope not in {
+            "all_boundaries",
+            "continuation_only",
+        }:
+            raise ValueError(
+                "Unsupported punctuation_token_remap_scope: "
+                f"{self.g2p_punctuation_token_remap_scope!r}"
+            )
         override_asset = manifest.assets.get("g2p_pronunciation_overrides")
         self.g2p_pronunciation_overrides = (
             _load_optional_json(self.bundle_dir / override_asset) if override_asset else {}
         )
+        declared_normalizer_sha = str(g2p_normalization.get("contract_sha256") or "")
+        if declared_normalizer_sha and declared_normalizer_sha != SPOKEN_TEXT_NORMALIZER_SHA256:
+            raise ValueError(
+                "Bundle spoken-text normalizer contract does not match this runtime: "
+                f"bundle={declared_normalizer_sha} runtime={SPOKEN_TEXT_NORMALIZER_SHA256}"
+            )
         self.export_status = _load_optional_json(self.bundle_dir / "export_status.json")
         controls = dict(getattr(self.manifest, "controls", {}) or {})
         affect_config = controls.get("affect", {})
@@ -108,6 +157,24 @@ class LiteRTRunner:
         self.affect_legacy_presets = dict(
             self.affect_config.get("legacy_presets", {}) or {}
         )
+        self.affect_partial_defaults = {
+            str(axis): float(value)
+            for axis, value in dict(
+                self.affect_config.get("partial_defaults", {}) or {}
+            ).items()
+        }
+        self.affect_axis_minimums = {
+            str(axis): float(value)
+            for axis, value in dict(
+                self.affect_config.get("axis_minimums", {}) or {}
+            ).items()
+        }
+        self.affect_axis_maximums = {
+            str(axis): float(value)
+            for axis, value in dict(
+                self.affect_config.get("axis_maximums", {}) or {}
+            ).items()
+        }
         punctuation_silence = controls.get("punctuation_silence", {})
         if not isinstance(punctuation_silence, Mapping):
             punctuation_silence = {}
@@ -116,6 +183,10 @@ class LiteRTRunner:
             or self.g2p_config.get("punctuation_silence_target")
             or "merge_into_punctuation"
         ).strip().lower()
+        (
+            self.punctuation_pause_floor_table_ms,
+            self.punctuation_pause_floor_table_sha256,
+        ) = _load_punctuation_pause_floor_table(punctuation_silence)
         fixed_shapes = dict(self.export_status.get("fixed_shapes", {}) or controls.get("fixed_shapes", {}))
         self.g2p_text_tokens = int(fixed_shapes.get("g2p_text_tokens") or self.g2p_config.get("fixed_text_tokens") or 512)
         self.g2p_segment_config = _g2p_segment_config_for_fixed_text(
@@ -128,9 +199,37 @@ class LiteRTRunner:
         self.target_bucket_frames = _target_bucket_frames(controls, self.latent_frames)
         self.latent_dim = int(self.manifest.audio.latent_dim)
         self.reference_config = dict(controls.get("reference_packs", {}) or {})
-        self.reference_style_dim = int(self.reference_config.get("style_dim") or 128)
-        self.reference_prosody_dim = int(self.reference_config.get("prosody_dim") or 32)
-        self.reference_fallback_weight = float(self.reference_config.get("fallback_weight") or 0.25)
+        self.reference_schema_version = int(
+            self.reference_config.get("schema_version") or 0
+        )
+        self.reference_style_dim = int(
+            self.reference_config["style_dim"]
+            if "style_dim" in self.reference_config
+            else 128
+        )
+        self.reference_prosody_dim = int(
+            self.reference_config["prosody_dim"]
+            if "prosody_dim" in self.reference_config
+            else 32
+        )
+        self.reference_identity_dim = int(
+            self.reference_config.get("identity_dim") or 512
+        )
+        self.reference_baseline_dim = int(
+            self.reference_config.get("prosody_baseline_dim")
+            or self.reference_prosody_dim
+        )
+        self.reference_delta_dim = int(
+            self.reference_config.get("prosody_delta_dim")
+            or self.reference_prosody_dim
+        )
+        self.reference_fallback_weight = float(
+            self.reference_config.get("fallback_weight") or 0.25
+        )
+        routing = self.reference_config.get("affect_routing")
+        self.reference_affect_routing = (
+            dict(routing) if isinstance(routing, Mapping) else {}
+        )
         self.prefix_config = dict(controls.get("prefix_conditioning", {}) or {})
         self.prefix_max_frames = max(1, int(self.prefix_config.get("max_frames") or 64))
         self._voice_pack_cache: dict[Path, dict[str, np.ndarray]] = {}
@@ -177,6 +276,7 @@ class LiteRTRunner:
             voice_id=str(request.voice_id),
             language=language,
             emotion=emotion_name,
+            affect=affect_features,
         )
         phone_ids = [int(self.phone_to_id[phone]) for phone in phones]
         boundary_before_id, boundary_after_id = self._boundary_ids(request, phone_result)
@@ -184,6 +284,7 @@ class LiteRTRunner:
         durations = self._predict_durations(
             phone_ids,
             phones=phones,
+            language=language,
             voice_index=voice_index,
             language_index=language_index,
             emotion_index=emotion_index,
@@ -306,6 +407,7 @@ class LiteRTRunner:
             "duration_scale": duration_scale,
             "min_sentence_pause_ms": float(getattr(request, "min_sentence_pause_ms", 0.0)),
             "min_clause_pause_ms": float(getattr(request, "min_clause_pause_ms", 0.0)),
+            "punctuation_pause_floor_table_sha256": self.punctuation_pause_floor_table_sha256,
             "seed": request.seed,
             "noise_scale": float(request.temperature),
         }
@@ -360,6 +462,7 @@ class LiteRTRunner:
             voice_id=str(request.voice_id),
             language=language,
             emotion=emotion_name,
+            affect=affect_features,
         )
         phone_ids = [int(self.phone_to_id[phone]) for phone in phones]
         boundary_before_id, boundary_after_id = self._boundary_ids(request, phone_result)
@@ -367,6 +470,7 @@ class LiteRTRunner:
         durations = self._predict_durations(
             phone_ids,
             phones=phones,
+            language=language,
             voice_index=voice_index,
             language_index=language_index,
             emotion_index=emotion_index,
@@ -418,6 +522,7 @@ class LiteRTRunner:
             "duration_scale": duration_scale,
             "min_sentence_pause_ms": float(getattr(request, "min_sentence_pause_ms", 0.0)),
             "min_clause_pause_ms": float(getattr(request, "min_clause_pause_ms", 0.0)),
+            "punctuation_pause_floor_table_sha256": self.punctuation_pause_floor_table_sha256,
         }
         metadata.update(self._affect_metadata(affect_features))
         metadata.update({key: value for key, value in phone_result.items() if key not in {"phones", "phone_source"}})
@@ -490,12 +595,24 @@ class LiteRTRunner:
             phones.extend(phone for phone in prediction["phones"] if phone not in _SILENCE_PHONES)
             boundary_phone = _boundary_phone_for_segment(segment, self.phone_to_id)
             has_following_segment = index < len(segments) - 1
+            remap_at_position = (
+                self.g2p_punctuation_token_remap_scope == "all_boundaries"
+                or has_following_segment
+            )
+            if (
+                boundary_phone is not None
+                and remap_at_position
+                and boundary_phone in self.g2p_punctuation_token_remap
+            ):
+                remapped = self.g2p_punctuation_token_remap[boundary_phone]
+                boundary_phone = remapped if remapped in self.phone_to_id else None
             if boundary_phone is not None:
                 phones.append(boundary_phone)
                 boundary_tokens.append(boundary_phone)
                 if (
                     self.punctuation_silence_target == "explicit_silence"
                     and pause_phone is not None
+                    and boundary_phone != pause_phone
                 ):
                     phones.append(pause_phone)
             elif has_following_segment:
@@ -731,6 +848,7 @@ class LiteRTRunner:
         phone_ids: list[int],
         *,
         phones: list[str],
+        language: str,
         voice_index: int,
         language_index: int,
         emotion_index: int,
@@ -820,7 +938,15 @@ class LiteRTRunner:
                 boundary_before_id=boundary_before_id,
                 boundary_after_id=boundary_after_id,
             )
-        durations = _frames_to_durations(values, phones=phones, scale=duration_scale, min_phone_frames=1)
+        durations = _frames_to_durations(
+            values,
+            phones=phones,
+            scale=duration_scale,
+            min_phone_frames=1,
+            zero_duration_punctuation=(
+                self.punctuation_silence_target == "explicit_silence"
+            ),
+        )
         return _apply_punctuation_duration_floors(
             durations,
             phones=phones,
@@ -834,6 +960,17 @@ class LiteRTRunner:
                 sample_rate=int(self.manifest.audio.sample_rate),
                 latent_hop_length=int(self.manifest.audio.latent_hop_length),
             ),
+            calibrated_frames={
+                phone: _pause_ms_to_latent_frames(
+                    self.punctuation_pause_floor_table_ms.get(
+                        f"{language}|{phone}",
+                        0.0,
+                    ),
+                    sample_rate=int(self.manifest.audio.sample_rate),
+                    latent_hop_length=int(self.manifest.audio.latent_hop_length),
+                )
+                for phone in _ZERO_DURATION_PUNCTUATION_PHONES
+            },
         )
 
     def _predict_duration_values(
@@ -857,7 +994,9 @@ class LiteRTRunner:
             int(language_index),
             int(emotion_index),
             tuple(float(value) for value in affect_features.values.reshape(-1)),
-            float(affect_features.condition_mask[0]),
+            tuple(
+                float(value) for value in affect_features.condition_mask.reshape(-1)
+            ),
             float(affect_condition_scale),
             float(emotion_condition_scale),
             reference_features.key,
@@ -1436,6 +1575,44 @@ class LiteRTRunner:
         reference_condition_scale: float,
     ) -> None:
         self._add_optional_arg(args, component_name, "reference_style", reference_features.style)
+
+        self._add_optional_arg(
+            args,
+            component_name,
+            "identity_reference",
+            reference_features.identity,
+        )
+        self._add_optional_arg(
+            args,
+            component_name,
+            "identity_reference_mask",
+            reference_features.mask * float(reference_condition_scale),
+        )
+        self._add_optional_arg(
+            args,
+            component_name,
+            "prosody_baseline",
+            reference_features.prosody_baseline,
+        )
+        self._add_optional_arg(
+            args,
+            component_name,
+            "prosody_delta",
+            reference_features.prosody_delta,
+        )
+        self._add_optional_arg(
+            args,
+            component_name,
+            "prosody_feature_mask",
+            reference_features.prosody_feature_mask,
+        )
+        self._add_optional_arg(
+            args,
+            component_name,
+            "prosody_confidence",
+            reference_features.prosody_confidence
+            * float(reference_condition_scale),
+        )
         self._add_optional_arg(args, component_name, "reference_prosody", reference_features.prosody)
         self._add_optional_arg(args, component_name, "reference_mask", reference_features.mask)
         self._add_optional_arg(
@@ -1500,7 +1677,14 @@ class LiteRTRunner:
         if index is not None:
             args[int(index)] = value
 
-    def _reference_features(self, *, voice_id: str, language: str, emotion: str) -> _ReferenceFeatures:
+    def _reference_features(
+        self,
+        *,
+        voice_id: str,
+        language: str,
+        emotion: str,
+        affect: _AffectFeatures | None = None,
+    ) -> _ReferenceFeatures:
         if not self._reference_inputs_enabled():
             return self._empty_reference_features()
         pack_dir = self.manifest.assets.get("voice_packs")
@@ -1510,6 +1694,141 @@ class LiteRTRunner:
         if not path.is_file():
             return self._empty_reference_features(path=str(path))
         pack = self._load_voice_pack(path)
+
+        if self.reference_schema_version == 4:
+            if affect is None or not affect.enabled:
+                raise ValueError(
+                    "Schema-v4 reference packs require resolved five-axis affect values"
+                )
+            expected_version = str(
+                self.reference_affect_routing.get("version") or ""
+            )
+            if expected_version != REFERENCE_ROUTING_V4_VERSION:
+                raise ValueError(
+                    "Unsupported schema-v4 affect-reference routing version: "
+                    f"{expected_version!r}"
+                )
+            routed_v4 = route_reference_pack_v4(
+                pack,
+                language=language,
+                affect_values=affect.values.reshape(-1),
+                # Public requests resolve every axis, including the omitted-affect
+                # neutral preset. This matches the training-side public route.
+                affect_mask=np.ones((len(affect.axes),), dtype=np.float32),
+            )
+            if routed_v4.identity.shape != (self.reference_identity_dim,):
+                raise ValueError(
+                    "Schema-v4 identity width does not match the bundle manifest"
+                )
+            for label, value, width in (
+                (
+                    "prosody baseline",
+                    routed_v4.prosody_baseline,
+                    self.reference_baseline_dim,
+                ),
+                (
+                    "prosody delta",
+                    routed_v4.prosody_delta,
+                    self.reference_delta_dim,
+                ),
+                (
+                    "prosody feature mask",
+                    routed_v4.prosody_feature_mask,
+                    self.reference_prosody_dim,
+                ),
+            ):
+                if value.shape != (width,):
+                    raise ValueError(
+                        f"Schema-v4 {label} width does not match the bundle manifest"
+                    )
+            prototype = (
+                "none"
+                if routed_v4.prototype_index is None
+                else str(routed_v4.prototype_index)
+            )
+            return _ReferenceFeatures(
+                style=np.zeros(
+                    (1, self.reference_style_dim), dtype=np.float32
+                ),
+                prosody=np.zeros(
+                    (1, self.reference_prosody_dim), dtype=np.float32
+                ),
+                identity=routed_v4.identity.reshape(1, -1).astype(np.float32),
+                prosody_baseline=routed_v4.prosody_baseline.reshape(
+                    1, -1
+                ).astype(np.float32),
+                prosody_delta=routed_v4.prosody_delta.reshape(
+                    1, -1
+                ).astype(np.float32),
+                prosody_feature_mask=routed_v4.prosody_feature_mask.reshape(
+                    1, -1
+                ).astype(np.float32),
+                prosody_confidence=np.asarray(
+                    [routed_v4.prosody_confidence], dtype=np.float32
+                ),
+                mask=np.asarray([1.0], dtype=np.float32),
+                native_mask=float(
+                    routed_v4.route_kind.startswith("native")
+                ),
+                fallback_mask=float(
+                    routed_v4.route_kind.startswith("global_affect_only")
+                ),
+                key=(
+                    f"{language}|v4|{routed_v4.route_kind}|"
+                    f"baseline={routed_v4.baseline_index}|prototype={prototype}"
+                ),
+                path=str(path),
+            )
+        if (
+            affect is not None
+            and affect.enabled
+            and bool(self.reference_affect_routing.get("enabled", False))
+        ):
+            expected_version = str(
+                self.reference_affect_routing.get("version") or ""
+            )
+            if expected_version != REFERENCE_ROUTING_VERSION:
+                raise ValueError(
+                    "Unsupported affect-reference routing version: "
+                    f"{expected_version!r}"
+                )
+            routed = route_affect_reference(
+                pack,
+                language=language,
+                axes=affect.axes,
+                values=affect.values.reshape(-1),
+            )
+            if routed is not None:
+                style_mean, style_std, prosody_mean, prosody_std = (
+                    self._reference_normalization_stats()
+                )
+                return _ReferenceFeatures(
+                    style=_normalize_style(
+                        routed.style, style_mean, style_std
+                    ).reshape(1, -1).astype(np.float32),
+                    prosody=_normalize_prosody(
+                        routed.prosody, prosody_mean, prosody_std
+                    ).reshape(1, -1).astype(np.float32),
+
+                    identity=np.zeros(
+                        (1, self.reference_identity_dim), dtype=np.float32
+                    ),
+                    prosody_baseline=np.zeros(
+                        (1, self.reference_baseline_dim), dtype=np.float32
+                    ),
+                    prosody_delta=np.zeros(
+                        (1, self.reference_delta_dim), dtype=np.float32
+                    ),
+                    prosody_feature_mask=np.zeros(
+                        (1, self.reference_prosody_dim), dtype=np.float32
+                    ),
+                    prosody_confidence=np.zeros((1,), dtype=np.float32),
+                    mask=np.asarray([1.0], dtype=np.float32),
+                    native_mask=1.0,
+                    fallback_mask=0.0,
+                    key=routed.key,
+                    path=str(path),
+                )
         suffix = self._select_reference_suffix(pack, language=language, emotion=emotion)
         if suffix is None:
             return self._empty_reference_features(path=str(path))
@@ -1532,6 +1851,20 @@ class LiteRTRunner:
         return _ReferenceFeatures(
             style=style.reshape(1, -1).astype(np.float32),
             prosody=prosody.reshape(1, -1).astype(np.float32),
+
+            identity=np.zeros(
+                (1, self.reference_identity_dim), dtype=np.float32
+            ),
+            prosody_baseline=np.zeros(
+                (1, self.reference_baseline_dim), dtype=np.float32
+            ),
+            prosody_delta=np.zeros(
+                (1, self.reference_delta_dim), dtype=np.float32
+            ),
+            prosody_feature_mask=np.zeros(
+                (1, self.reference_prosody_dim), dtype=np.float32
+            ),
+            prosody_confidence=np.zeros((1,), dtype=np.float32),
             mask=np.asarray([effective_mask], dtype=np.float32),
             native_mask=float(native_mask),
             fallback_mask=float(fallback_mask),
@@ -1633,6 +1966,9 @@ class LiteRTRunner:
     def _reference_inputs_enabled(self) -> bool:
         return any(
             self._component_supports_input(component, "reference_style")
+            or self._component_supports_input(
+                component, "identity_reference"
+            )
             for component in ("duration_predictor", "vector_estimator", "vocoder")
         )
 
@@ -1640,6 +1976,20 @@ class LiteRTRunner:
         return _ReferenceFeatures(
             style=np.zeros((1, self.reference_style_dim), dtype=np.float32),
             prosody=np.zeros((1, self.reference_prosody_dim), dtype=np.float32),
+
+            identity=np.zeros(
+                (1, self.reference_identity_dim), dtype=np.float32
+            ),
+            prosody_baseline=np.zeros(
+                (1, self.reference_baseline_dim), dtype=np.float32
+            ),
+            prosody_delta=np.zeros(
+                (1, self.reference_delta_dim), dtype=np.float32
+            ),
+            prosody_feature_mask=np.zeros(
+                (1, self.reference_prosody_dim), dtype=np.float32
+            ),
+            prosody_confidence=np.zeros((1,), dtype=np.float32),
             mask=np.zeros((1,), dtype=np.float32),
             native_mask=0.0,
             fallback_mask=0.0,
@@ -1746,7 +2096,7 @@ class LiteRTRunner:
         raw_emotion = str(getattr(request, "emotion", None) or "").strip()
         if not self.affect_enabled:
             if raw is not None and str(raw).strip():
-                raise ValueError("This bundle does not support six-axis emotion conditioning")
+                raise ValueError("This bundle does not support continuous affect conditioning")
             return _AffectFeatures(
                 enabled=False,
                 axes=(),
@@ -1757,7 +2107,7 @@ class LiteRTRunner:
             )
         if getattr(request, "emotion_guidance", None):
             raise ValueError(
-                "Legacy categorical emotion guidance is not supported by this six-axis emotion bundle"
+                "Legacy categorical emotion guidance is not supported by this continuous-affect bundle"
             )
         if raw is not None and raw_emotion and raw_emotion.lower() not in {"default", "neutral"}:
             raise ValueError("Pass either emotion axis values or a legacy emotion preset, not both")
@@ -1808,8 +2158,10 @@ class LiteRTRunner:
                 spec = parsed
 
         values_by_axis: dict[str, float]
+        partial_request = False
         if isinstance(spec, Mapping):
             values_by_axis = {str(key).strip().lower(): float(value) for key, value in spec.items()}
+            partial_request = True
         elif isinstance(spec, (list, tuple)):
             if len(spec) != len(self.affect_axes):
                 raise ValueError(
@@ -1824,16 +2176,40 @@ class LiteRTRunner:
         if unknown:
             raise ValueError(f"Unknown emotion axis: {', '.join(unknown)}")
         vector = np.zeros((1, len(self.affect_axes)), dtype=np.float32)
+        if partial_request:
+            for index, axis in enumerate(self.affect_axes):
+                vector[0, index] = float(self.affect_partial_defaults.get(axis, 0.0))
         for index, axis in enumerate(self.affect_axes):
-            value = float(values_by_axis.get(axis, 0.0))
+            if axis not in values_by_axis:
+                continue
+            value = float(values_by_axis[axis])
             if not math.isfinite(value) or value < 0.0 or value > 1.0:
                 raise ValueError(f"Emotion value for {axis!r} must be finite and within [0, 1]")
+            minimum = float(self.affect_axis_minimums.get(axis, 0.0))
+            maximum = float(self.affect_axis_maximums.get(axis, 1.0))
+            if value < minimum or value > maximum:
+                raise ValueError(
+                    f"Emotion value for {axis!r} must be within [{minimum}, {maximum}]"
+                )
             vector[0, index] = value
+        for index, axis in enumerate(self.affect_axes):
+            value = float(vector[0, index])
+            minimum = float(self.affect_axis_minimums.get(axis, 0.0))
+            maximum = float(self.affect_axis_maximums.get(axis, 1.0))
+            if value < minimum or value > maximum:
+                raise ValueError(
+                    f"Emotion value for {axis!r} must be within [{minimum}, {maximum}]"
+                )
         return _AffectFeatures(
             enabled=True,
             axes=self.affect_axes,
             values=vector,
-            condition_mask=np.ones((1,), dtype=np.float32),
+            condition_mask=np.ones(
+                vector.shape
+                if int(self.affect_config.get("axis_order_version") or 0) == 3
+                else (1,),
+                dtype=np.float32,
+            ),
             requested=requested,
             preset=preset,
         )
@@ -1847,7 +2223,7 @@ class LiteRTRunner:
         if not math.isfinite(scale) or scale < 0.0:
             raise ValueError("emotion_scale must be finite and non-negative")
         if not affect.enabled and scale != 1.0:
-            raise ValueError("emotion_scale requires a six-axis emotion bundle")
+            raise ValueError("emotion_scale requires a continuous-affect bundle")
         return scale
 
     def _affect_metadata(self, affect: _AffectFeatures) -> dict[str, Any]:
@@ -1865,7 +2241,14 @@ class LiteRTRunner:
                 for index, axis in enumerate(affect.axes)
             },
             "affect_vector": [float(value) for value in affect.values.reshape(-1)],
-            "affect_condition_mask": float(affect.condition_mask[0]),
+            "affect_condition_mask": (
+                float(affect.condition_mask[0])
+                if affect.condition_mask.size == 1
+                else [
+                    float(value)
+                    for value in affect.condition_mask.reshape(-1)
+                ]
+            ),
         }
 
     def _parse_emotion_guidance(self, spec: str | None) -> list[_EmotionGuidanceTerm]:
@@ -2222,16 +2605,31 @@ def _frames_to_durations(
     phones: list[str],
     scale: float,
     min_phone_frames: int,
+    zero_duration_punctuation: bool = False,
 ) -> list[int]:
     durations: list[int] = []
     for value, phone in zip(values, phones):
         frame_count = int(round(max(0.0, float(value)) * float(scale)))
-        if phone and min_phone_frames > 0:
+        if is_non_acoustic_phone_modifier(phone):
+            frame_count = 0
+        elif zero_duration_punctuation and phone in _ZERO_DURATION_PUNCTUATION_PHONES:
+            frame_count = 0
+        elif phone and min_phone_frames > 0:
             frame_count = max(int(min_phone_frames), frame_count)
         durations.append(frame_count)
     return durations
 
 
+_ZERO_DURATION_PUNCTUATION_PHONES = frozenset({
+    "<pause_comma>",
+    "<pause_semicolon>",
+    "<pause_colon>",
+    "<pause_dash>",
+    "<end_stmt>",
+    "<end_question>",
+    "<end_exclaim>",
+    "<ellipsis>",
+})
 _SENTENCE_PUNCTUATION_PHONES = frozenset({"<end_stmt>", "<end_question>", "<end_exclaim>", "<ellipsis>", "<ctx_sentence_end>"})
 _CLAUSE_PUNCTUATION_PHONES = frozenset({"<pause_comma>", "<pause_semicolon>", "<pause_colon>", "<pause_dash>", "<ctx_continuation>"})
 
@@ -2252,24 +2650,63 @@ def _apply_punctuation_duration_floors(
     phones: list[str],
     sentence_frames: int,
     clause_frames: int,
+    calibrated_frames: Mapping[str, int] | None = None,
 ) -> list[int]:
-    if sentence_frames <= 0 and clause_frames <= 0:
+    calibrated = {
+        str(phone): max(0, int(frames))
+        for phone, frames in dict(calibrated_frames or {}).items()
+    }
+    if sentence_frames <= 0 and clause_frames <= 0 and not any(calibrated.values()):
         return durations
+
+    def floor_for(phone: str) -> int:
+        floor = int(calibrated.get(phone, 0))
+        if sentence_frames > 0 and phone in _SENTENCE_PUNCTUATION_PHONES:
+            floor = max(floor, int(sentence_frames))
+        if clause_frames > 0 and phone in _CLAUSE_PUNCTUATION_PHONES:
+            floor = max(floor, int(clause_frames))
+        return floor
+
     out = list(durations)
     for index, phone in enumerate(phones):
         if index >= len(out):
             break
-        if sentence_frames > 0 and phone in _SENTENCE_PUNCTUATION_PHONES:
+        punctuation_floor = floor_for(phone)
+        if punctuation_floor > 0 and (
+            phone in _SENTENCE_PUNCTUATION_PHONES
+            or phone in _CLAUSE_PUNCTUATION_PHONES
+        ):
             target_index = index + 1 if index + 1 < len(phones) and phones[index + 1] in _SILENCE_PHONES else index
             # The outer boundary pause belongs to the host assembler. Stretching
             # the final learned silence can turn it into breath or re-articulation.
             if target_index < len(out) and target_index + 1 < len(phones):
-                out[target_index] = max(out[target_index], int(sentence_frames))
-        elif clause_frames > 0 and phone in _CLAUSE_PUNCTUATION_PHONES:
-            target_index = index + 1 if index + 1 < len(phones) and phones[index + 1] in _SILENCE_PHONES else index
-            if target_index < len(out) and target_index + 1 < len(phones):
-                out[target_index] = max(out[target_index], int(clause_frames))
+                out[target_index] = max(out[target_index], punctuation_floor)
     return out
+
+
+def _load_punctuation_pause_floor_table(
+    punctuation_silence: Mapping[str, Any],
+) -> tuple[dict[str, float], str | None]:
+    raw_table = punctuation_silence.get("floor_table_ms")
+    if not isinstance(raw_table, Mapping) or not raw_table:
+        return {}, None
+    if punctuation_silence.get("calibrated_floors") is not True:
+        raise ValueError("Bundle punctuation floor table is not marked calibrated")
+    table: dict[str, float] = {}
+    for key, raw_floor in raw_table.items():
+        floor = float(raw_floor)
+        if not math.isfinite(floor) or floor < 0.0:
+            raise ValueError(f"Bundle has invalid punctuation pause floor {key}={raw_floor!r}")
+        table[str(key)] = floor
+    canonical = json.dumps(table, sort_keys=True, separators=(",", ":"))
+    actual_sha = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    expected_sha = str(punctuation_silence.get("floor_table_sha256") or "")
+    if not expected_sha or actual_sha != expected_sha:
+        raise ValueError(
+            "Bundle punctuation pause floor-table hash mismatch: "
+            f"{actual_sha} != {expected_sha or '<missing>'}"
+        )
+    return table, actual_sha
 
 
 def _expand_phone_lists_to_length(phone_ids: list[int], durations: list[int], target_length: int) -> list[int]:

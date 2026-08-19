@@ -643,6 +643,32 @@ std::string expand_dash_letter_names(const std::string& value, const std::string
     });
 }
 
+std::string normalize_ascii_dash_boundaries(const std::string& value) {
+    std::string out;
+    for (std::size_t index = 0; index < value.size(); ++index) {
+        if (value[index] != '-') {
+            out.push_back(value[index]);
+            continue;
+        }
+        std::size_t run_end = index + 1;
+        while (run_end < value.size() && value[run_end] == '-') {
+            ++run_end;
+        }
+        const bool repeated = run_end - index > 1;
+        const bool whitespace_left = index > 0 &&
+            std::isspace(static_cast<unsigned char>(value[index - 1]));
+        const bool whitespace_right = run_end < value.size() &&
+            std::isspace(static_cast<unsigned char>(value[run_end]));
+        if (repeated || whitespace_left || whitespace_right) {
+            out += u8" — ";
+            index = run_end - 1;
+        } else {
+            out.push_back('-');
+        }
+    }
+    return collapse_ws(out);
+}
+
 std::string currency_words(
     const std::string& raw,
     const std::string& symbol,
@@ -811,12 +837,23 @@ std::string normalize_punctuation(std::string value, const std::string& language
          }) {
         replace_all(value, quote, "\"");
     }
-    for (const std::string& dash : {
-             u8"\u2010", u8"\u2011", u8"\u2012", u8"\u2013", u8"\u2014", u8"\u2015", u8"\u2212",
-         }) {
-        replace_all(value, dash, "-");
+    for (const std::string& hyphen : {u8"\u2010", u8"\u2011"}) {
+        replace_all(value, hyphen, "-");
     }
+    for (const std::string& dash : {
+             u8"\u2012", u8"\u2013", u8"\u2014", u8"\u2015", u8"\u2212",
+             u8"\ufe58", u8"\ufe63", u8"\uff0d",
+         }) {
+        replace_all(value, dash, u8" — ");
+    }
+    value = normalize_ascii_dash_boundaries(value);
     replace_all(value, u8"\u2026", "...");
+    value = replace_regex(value, std::regex(R"(\.{2,})"), [](const RegexMatch&) {
+        return std::string("...");
+    });
+    value = replace_regex(value, std::regex(R"(([!?])[!?]+)"), [](const RegexMatch& match) {
+        return match[1].str();
+    });
     replace_all(value, u8"\u2044", "/");
     replace_all(value, u8"\u2215", "/");
     replace_all(value, u8"\u00bc", " 1/4 ");
@@ -834,16 +871,6 @@ std::string normalize_punctuation(std::string value, const std::string& language
         language == "vi" ? "độ" : "degrees";
     replace_all(value, "=", " " + equals_word + " ");
     replace_all(value, u8"\u00b0", " " + degrees_word + " ");
-    for (std::size_t index = 0; index < value.size(); ++index) {
-        if (value[index] != ':') {
-            continue;
-        }
-        const bool digit_left = index > 0 && std::isdigit(static_cast<unsigned char>(value[index - 1]));
-        const bool digit_right = index + 1 < value.size() && std::isdigit(static_cast<unsigned char>(value[index + 1]));
-        if (!digit_left || !digit_right) {
-            value[index] = ',';
-        }
-    }
     return collapse_ws(value);
 }
 
@@ -852,6 +879,13 @@ std::string normalize_punctuation(std::string value, const std::string& language
 std::string normalize_spoken_text(const std::string& text, const std::string& language) {
     const std::string lang = normalizer_language(language);
     std::string value = normalize_punctuation(text, lang);
+    if (lang == "en") {
+        value = replace_regex(
+            value,
+            std::regex(R"(\bok\b)", std::regex::icase),
+            [](const RegexMatch&) { return std::string("okay"); }
+        );
+    }
     value = expand_dotted_initialisms(value, lang);
 
     // Currency is expanded before generic decimals and integers.
