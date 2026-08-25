@@ -40,7 +40,7 @@ struct Options {
     int min_chunk_chars = 48;
     int pause_ms = 0;
     int continuation_pause_ms = 0;
-    float min_sentence_pause_ms = 320.0f;
+    float min_sentence_pause_ms = 107.0f;
     float min_clause_pause_ms = 160.0f;
     bool use_prefix_latents = true;
     bool preflight_chunks = false;

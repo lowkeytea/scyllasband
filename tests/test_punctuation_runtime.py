@@ -128,7 +128,7 @@ class ScyllasBandPunctuationRuntimeTest(unittest.TestCase):
     def test_direct_request_uses_public_pause_defaults(self) -> None:
         request = SynthesisRequest(text="One? Two.", voice_id="ariadne")
 
-        self.assertEqual(request.min_sentence_pause_ms, 320.0)
+        self.assertEqual(request.min_sentence_pause_ms, 107.0)
         self.assertEqual(request.min_clause_pause_ms, 160.0)
 
 

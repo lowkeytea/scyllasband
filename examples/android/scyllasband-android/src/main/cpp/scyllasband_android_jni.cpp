@@ -70,7 +70,7 @@ void configure_long_form_request(
     request.language = language;
     request.guidance_null_reference = 1;
     request.emotion_embed_scale = 1.0f;
-    request.min_sentence_pause_ms = 320.0f;
+    request.min_sentence_pause_ms = 107.0f;
     request.min_clause_pause_ms = 160.0f;
     // Match the core Python --faster sampling profile. Two Heun steps retain
     // the higher quality sampler while halving vector-estimator evaluations.

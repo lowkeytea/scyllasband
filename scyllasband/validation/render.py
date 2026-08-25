@@ -189,7 +189,7 @@ def _planner_options(job: Mapping[str, Any], backend: str) -> PlannerOptions:
         backend=backend,
         affect=job.get("affect"),
         affect_guidance_scale=float(generation.get("affect_guidance_scale", 1.0)),
-        min_sentence_pause_ms=float(generation.get("min_sentence_pause_ms", 320.0)),
+        min_sentence_pause_ms=float(generation.get("min_sentence_pause_ms", 107.0)),
         min_clause_pause_ms=float(generation.get("min_clause_pause_ms", 160.0)),
     )
 

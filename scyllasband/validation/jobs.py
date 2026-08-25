@@ -206,7 +206,7 @@ def build_run(
     affect_guidance_scale: float = 1.0,
     max_chunk_chars: int = 220,
     min_chunk_chars: int = 48,
-    min_sentence_pause_ms: float = 320.0,
+    min_sentence_pause_ms: float = 107.0,
     min_clause_pause_ms: float = 160.0,
 ) -> dict[str, Any]:
     suite = load_suite(suite_path)

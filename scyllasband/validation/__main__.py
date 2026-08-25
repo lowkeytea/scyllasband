@@ -58,7 +58,7 @@ def _parser() -> argparse.ArgumentParser:
     plan.add_argument("--affect-guidance-scale", type=float, default=1.0)
     plan.add_argument("--max-chunk-chars", type=int, default=220)
     plan.add_argument("--min-chunk-chars", type=int, default=48)
-    plan.add_argument("--min-sentence-pause-ms", type=float, default=320.0)
+    plan.add_argument("--min-sentence-pause-ms", type=float, default=107.0)
     plan.add_argument("--min-clause-pause-ms", type=float, default=160.0)
     _filters(plan)
 

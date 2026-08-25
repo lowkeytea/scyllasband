@@ -65,7 +65,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--steps", type=int, default=8)
     parser.add_argument("--sampler", choices=("euler", "heun"), default="heun")
     parser.add_argument("--seed", type=int, default=2027)
-    parser.add_argument("--min-sentence-pause-ms", type=float, default=320.0)
+    parser.add_argument("--min-sentence-pause-ms", type=float, default=107.0)
     parser.add_argument("--min-clause-pause-ms", type=float, default=160.0)
     parser.add_argument("--voices", nargs="+", help="Generate only these voice IDs")
     parser.add_argument("--deliveries", nargs="+", choices=DELIVERIES, help="Generate only these deliveries")

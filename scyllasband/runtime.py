@@ -25,7 +25,7 @@ from .text_normalizer import normalize_spoken_text
 SUPPORTED_BACKENDS = ("auto", "onnx", "litert", "coreml", "coreai")
 IMPLEMENTED_BACKENDS = ("onnx", "litert", "coreai")
 SUPPORTED_SAMPLERS = ("euler", "heun")
-DEFAULT_MIN_SENTENCE_PUNCTUATION_PAUSE_MS = 320.0
+DEFAULT_MIN_SENTENCE_PUNCTUATION_PAUSE_MS = 107.0
 DEFAULT_MIN_CLAUSE_PUNCTUATION_PAUSE_MS = 160.0
 
 
