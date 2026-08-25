@@ -241,9 +241,9 @@ ScyllasBandDurationFlowExecutionPlan build_scyllasband_duration_flow_plan(
 
     const auto& g2p_inputs = component_inputs(bundle, "g2p");
     if (!contains_string(g2p_inputs, "text_tokens") &&
-        !(contains_string(g2p_inputs, "text") && contains_string(g2p_inputs, "language"))) {
+        !contains_string(g2p_inputs, "text")) {
         throw std::runtime_error(
-            "Bundle component 'g2p' must declare text_tokens or text and language inputs"
+            "Bundle component 'g2p' must declare a text_tokens or text input"
         );
     }
     std::vector<std::string> duration_inputs = {

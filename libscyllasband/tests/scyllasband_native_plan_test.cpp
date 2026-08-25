@@ -1,5 +1,6 @@
 #include "scyllasband.h"
 #include "scyllasband_bundle.h"
+#include "scyllasband_execution_plan.h"
 
 #include <iostream>
 #include <string>
@@ -40,6 +41,33 @@ int expect_contains(const std::string& payload, const std::string& needle) {
     return 0;
 }
 
+int validate_text_only_g2p_execution_plan() {
+    scyllasband_detail::ScyllasBandBundleInfo bundle;
+    bundle.sample_rate = 24000;
+    bundle.hop_length = 256;
+    bundle.latent_dim = 128;
+    bundle.phone_frames = 384;
+    bundle.latent_frames = 384;
+    for (const std::string& name : {"g2p", "duration_predictor", "vector_estimator", "vocoder"}) {
+        bundle.component_artifacts[name] = name + ".onnx";
+    }
+    // ONNX manifests expose logical raw text. The native frontend adds the
+    // language token while encoding the graph's fixed text-token tensor.
+    bundle.component_inputs["g2p"] = {"text"};
+    bundle.component_inputs["duration_predictor"] = {"phone_ids", "voice_id", "language_id", "boundary_before_id", "boundary_after_id", "phone_mask", "emotion_id"};
+    bundle.component_inputs["vector_estimator"] = {"noise", "time", "expanded_phone_ids", "voice_id", "language_id", "boundary_before_id", "boundary_after_id", "latent_mask", "emotion_id"};
+    bundle.component_inputs["vocoder"] = {"latents", "voice_id", "language_id", "emotion_id"};
+    try {
+        const auto plan = scyllasband_detail::build_scyllasband_duration_flow_plan(bundle, scyllasband_detail::ScyllasBandResolvedRequest{});
+        if (plan.components.size() != 4) {
+            return fail("text-only ONNX G2P plan did not retain all execution components");
+        }
+    } catch (const std::exception& exc) {
+        return fail(std::string("text-only ONNX G2P plan was rejected: ") + exc.what());
+    }
+    return 0;
+}
+
 }  // namespace
 
 int main() {
@@ -55,6 +83,10 @@ int main() {
     }
     if (std::string(scyllasband_detail::scyllasband_backend_name(SCYLLASBAND_BACKEND_COREAI)) != "coreai") {
         return fail("Core AI backend name does not match the bundle contract");
+    }
+    const int execution_plan_status = validate_text_only_g2p_execution_plan();
+    if (execution_plan_status != 0) {
+        return execution_plan_status;
     }
 
     const char* text =
