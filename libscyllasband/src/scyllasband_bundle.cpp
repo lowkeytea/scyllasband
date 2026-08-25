@@ -873,6 +873,36 @@ ScyllasBandBundleInfo load_scyllasband_bundle_info(
             }
         }
     }
+    const auto g2p_normalization_asset = info.assets.find("g2p_normalization");
+    if (g2p_normalization_asset != info.assets.end()) {
+        const std::string normalization_json = read_text_file(
+            bundle_path / g2p_normalization_asset->second
+        );
+        info.g2p_punctuation_token_remap = string_map_for_object(
+            object_for_key(normalization_json, "punctuation_token_remap")
+        );
+        info.g2p_punctuation_token_remap_scope = string_for_key(
+            normalization_json,
+            "punctuation_token_remap_scope",
+            "all_boundaries"
+        );
+        if (info.g2p_punctuation_token_remap_scope != "all_boundaries" &&
+            info.g2p_punctuation_token_remap_scope != "continuation_only") {
+            throw std::runtime_error("Unsupported punctuation_token_remap_scope in G2P normalization asset");
+        }
+        for (const auto& item : info.g2p_punctuation_token_remap) {
+            if (info.phone_to_id.find(item.first) == info.phone_to_id.end()) {
+                throw std::runtime_error(
+                    "Punctuation remap source is absent from phone vocabulary: " + item.first
+                );
+            }
+            if (info.phone_to_id.find(item.second) == info.phone_to_id.end()) {
+                throw std::runtime_error(
+                    "Punctuation remap target is absent from phone vocabulary: " + item.second
+                );
+            }
+        }
+    }
     const auto g2p_language_asset = info.assets.find("g2p_language_map");
     if (g2p_language_asset != info.assets.end()) {
         info.g2p_language_map = string_map_for_object(read_text_file(bundle_path / g2p_language_asset->second));
@@ -986,6 +1016,10 @@ std::string bundle_summary_json(const ScyllasBandBundleInfo& bundle) {
              << "\"affect_enabled\":" << (bundle.affect_enabled ? "true" : "false") << ","
              << "\"affect_graph_input_contract\":\"" << json_escape(bundle.affect_graph_input_contract) << "\","
              << "\"affect_axis_count\":" << bundle.affect_axes.size() << ","
+             << "\"g2p_punctuation_token_remap_scope\":\""
+             << json_escape(bundle.g2p_punctuation_token_remap_scope) << "\","
+             << "\"g2p_punctuation_token_remap_entries\":"
+             << bundle.g2p_punctuation_token_remap.size() << ","
              << "\"punctuation_silence_target\":\"" << json_escape(bundle.punctuation_silence_target) << "\","
              << "\"punctuation_pause_floors_calibrated\":"
              << (bundle.punctuation_pause_floors_calibrated ? "true" : "false") << ","

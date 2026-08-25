@@ -38,6 +38,8 @@ struct ScyllasBandBundleInfo {
     std::map<std::string, int> g2p_text_to_id;
     std::map<int, std::string> g2p_phoneme_symbols;
     std::map<std::string, std::string> g2p_language_map;
+    std::map<std::string, std::string> g2p_punctuation_token_remap;
+    std::string g2p_punctuation_token_remap_scope = "all_boundaries";
     std::map<std::string, std::string> voice_default_language;
     std::map<std::string, std::vector<std::string>> voice_languages;
     int sample_rate = 0;

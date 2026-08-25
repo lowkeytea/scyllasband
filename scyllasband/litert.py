@@ -281,9 +281,10 @@ class LiteRTRunner:
         phone_ids = [int(self.phone_to_id[phone]) for phone in phones]
         boundary_before_id, boundary_after_id = self._boundary_ids(request, phone_result)
         duration_scale = 1.0 / float(request.speed)
-        durations = self._predict_durations(
+        durations, punctuation_floor_audit = self._predict_durations(
             phone_ids,
             phones=phones,
+            punctuation_events=list(phone_result.get("g2p_punctuation_events") or []),
             language=language,
             voice_index=voice_index,
             language_index=language_index,
@@ -298,6 +299,7 @@ class LiteRTRunner:
             duration_scale=duration_scale,
             request=request,
         )
+        phone_result["punctuation_duration_floors"] = punctuation_floor_audit
         latent_length = int(sum(durations))
         if latent_length <= 0:
             raise ValueError("Predicted zero latent frames; cannot synthesize")
@@ -467,9 +469,10 @@ class LiteRTRunner:
         phone_ids = [int(self.phone_to_id[phone]) for phone in phones]
         boundary_before_id, boundary_after_id = self._boundary_ids(request, phone_result)
         duration_scale = 1.0 / float(request.speed)
-        durations = self._predict_durations(
+        durations, punctuation_floor_audit = self._predict_durations(
             phone_ids,
             phones=phones,
+            punctuation_events=list(phone_result.get("g2p_punctuation_events") or []),
             language=language,
             voice_index=voice_index,
             language_index=language_index,
@@ -484,6 +487,7 @@ class LiteRTRunner:
             duration_scale=duration_scale,
             request=request,
         )
+        phone_result["punctuation_duration_floors"] = punctuation_floor_audit
         latent_length = int(sum(durations))
         fixed_latent_frames = self._latent_bucket_frames(latent_length) if latent_length > 0 else self.target_bucket_frames[0]
         metadata = {
@@ -575,6 +579,8 @@ class LiteRTRunner:
         phones: list[str] = []
         predictions: list[dict[str, Any]] = []
         boundary_tokens: list[str] = []
+        source_boundary_tokens: list[str] = []
+        punctuation_events: list[dict[str, Any]] = []
         pronunciation_overrides: list[dict[str, Any]] = []
         terminal_tail_repairs: list[dict[str, Any]] = []
         leading_context_phone = _context_phone_for_boundary(before, self.phone_to_id, self.g2p_config)
@@ -593,22 +599,36 @@ class LiteRTRunner:
                 dict(item) for item in prediction.get("terminal_tail_repairs", [])
             )
             phones.extend(phone for phone in prediction["phones"] if phone not in _SILENCE_PHONES)
-            boundary_phone = _boundary_phone_for_segment(segment, self.phone_to_id)
+            source_boundary_phone = _boundary_phone_for_segment(segment, self.phone_to_id)
+            boundary_phone = source_boundary_phone
             has_following_segment = index < len(segments) - 1
             remap_at_position = (
                 self.g2p_punctuation_token_remap_scope == "all_boundaries"
                 or has_following_segment
             )
             if (
-                boundary_phone is not None
+                source_boundary_phone is not None
                 and remap_at_position
-                and boundary_phone in self.g2p_punctuation_token_remap
+                and source_boundary_phone in self.g2p_punctuation_token_remap
             ):
-                remapped = self.g2p_punctuation_token_remap[boundary_phone]
+                remapped = self.g2p_punctuation_token_remap[source_boundary_phone]
                 boundary_phone = remapped if remapped in self.phone_to_id else None
             if boundary_phone is not None:
+                phone_index = len(phones)
                 phones.append(boundary_phone)
                 boundary_tokens.append(boundary_phone)
+                if source_boundary_phone is not None:
+                    source_boundary_tokens.append(source_boundary_phone)
+                    punctuation_events.append(
+                        {
+                            "segment_index": index,
+                            "phone_index": phone_index,
+                            "source_phone": source_boundary_phone,
+                            "emitted_phone": boundary_phone,
+                            "remapped": source_boundary_phone != boundary_phone,
+                            "has_following_segment": has_following_segment,
+                        }
+                    )
                 if (
                     self.punctuation_silence_target == "explicit_silence"
                     and pause_phone is not None
@@ -643,6 +663,8 @@ class LiteRTRunner:
             "g2p_segments": segments,
             "g2p_inserted_pause_tokens": pause_phone is not None,
             "g2p_boundary_tokens": boundary_tokens,
+            "g2p_source_boundary_tokens": source_boundary_tokens,
+            "g2p_punctuation_events": punctuation_events,
             "punctuation_silence_target": self.punctuation_silence_target,
             "boundary_before": before,
             "boundary_after": after,
@@ -848,6 +870,7 @@ class LiteRTRunner:
         phone_ids: list[int],
         *,
         phones: list[str],
+        punctuation_events: list[Mapping[str, Any]],
         language: str,
         voice_index: int,
         language_index: int,
@@ -861,7 +884,7 @@ class LiteRTRunner:
         boundary_after_id: int,
         duration_scale: float,
         request: Any,
-    ) -> list[int]:
+    ) -> tuple[list[int], list[dict[str, Any]]]:
         if affect_features.enabled and affect_guidance_scale != 1.0:
             null_values = self._predict_duration_values(
                 phone_ids,
@@ -947,9 +970,20 @@ class LiteRTRunner:
                 self.punctuation_silence_target == "explicit_silence"
             ),
         )
-        return _apply_punctuation_duration_floors(
+        semantic_phones: dict[int, str] = {}
+        for event in punctuation_events:
+            try:
+                phone_index = int(event.get("phone_index"))
+            except (TypeError, ValueError):
+                continue
+            source_phone = str(event.get("source_phone") or "")
+            if 0 <= phone_index < len(phones) and source_phone:
+                semantic_phones[phone_index] = source_phone
+        floor_audit: list[dict[str, Any]] = []
+        floored = _apply_punctuation_duration_floors(
             durations,
             phones=phones,
+            semantic_phones=semantic_phones,
             sentence_frames=_pause_ms_to_latent_frames(
                 getattr(request, "min_sentence_pause_ms", 0.0),
                 sample_rate=int(self.manifest.audio.sample_rate),
@@ -971,7 +1005,10 @@ class LiteRTRunner:
                 )
                 for phone in _ZERO_DURATION_PUNCTUATION_PHONES
             },
+            floor_terminal=_request_has_following_chunk(request),
+            audit=floor_audit,
         )
+        return floored, floor_audit
 
     def _predict_duration_values(
         self,
@@ -2634,6 +2671,15 @@ _SENTENCE_PUNCTUATION_PHONES = frozenset({"<end_stmt>", "<end_question>", "<end_
 _CLAUSE_PUNCTUATION_PHONES = frozenset({"<pause_comma>", "<pause_semicolon>", "<pause_colon>", "<pause_dash>", "<ctx_continuation>"})
 
 
+def _request_has_following_chunk(request: Any) -> bool:
+    try:
+        chunk_index = int(getattr(request, "chunk_index", None))
+        chunk_count = int(getattr(request, "chunk_count", None))
+    except (TypeError, ValueError):
+        return False
+    return chunk_count > 0 and 0 <= chunk_index < chunk_count - 1
+
+
 def _pause_ms_to_latent_frames(value: object, *, sample_rate: int, latent_hop_length: int) -> int:
     try:
         pause_ms = max(0.0, float(value or 0.0))
@@ -2651,36 +2697,74 @@ def _apply_punctuation_duration_floors(
     sentence_frames: int,
     clause_frames: int,
     calibrated_frames: Mapping[str, int] | None = None,
+    semantic_phones: Mapping[int, str] | None = None,
+    floor_terminal: bool = False,
+    audit: list[dict[str, Any]] | None = None,
 ) -> list[int]:
     calibrated = {
         str(phone): max(0, int(frames))
         for phone, frames in dict(calibrated_frames or {}).items()
     }
+    semantic = {
+        int(index): str(phone)
+        for index, phone in dict(semantic_phones or {}).items()
+        if str(phone)
+    }
     if sentence_frames <= 0 and clause_frames <= 0 and not any(calibrated.values()):
         return durations
 
-    def floor_for(phone: str) -> int:
-        floor = int(calibrated.get(phone, 0))
-        if sentence_frames > 0 and phone in _SENTENCE_PUNCTUATION_PHONES:
-            floor = max(floor, int(sentence_frames))
-        if clause_frames > 0 and phone in _CLAUSE_PUNCTUATION_PHONES:
-            floor = max(floor, int(clause_frames))
-        return floor
+    def floor_for(phone: str) -> tuple[int, int, int]:
+        calibrated_floor = int(calibrated.get(phone, 0))
+        generic_floor = 0
+        if phone in _SENTENCE_PUNCTUATION_PHONES:
+            generic_floor = max(0, int(sentence_frames))
+        elif phone in _CLAUSE_PUNCTUATION_PHONES:
+            generic_floor = max(0, int(clause_frames))
+        return max(calibrated_floor, generic_floor), calibrated_floor, generic_floor
 
     out = list(durations)
-    for index, phone in enumerate(phones):
+    for index, emitted_phone in enumerate(phones):
         if index >= len(out):
             break
-        punctuation_floor = floor_for(phone)
+        source_phone = semantic.get(index, emitted_phone)
+        punctuation_floor, calibrated_floor, generic_floor = floor_for(source_phone)
         if punctuation_floor > 0 and (
-            phone in _SENTENCE_PUNCTUATION_PHONES
-            or phone in _CLAUSE_PUNCTUATION_PHONES
+            source_phone in _SENTENCE_PUNCTUATION_PHONES
+            or source_phone in _CLAUSE_PUNCTUATION_PHONES
         ):
-            target_index = index + 1 if index + 1 < len(phones) and phones[index + 1] in _SILENCE_PHONES else index
-            # The outer boundary pause belongs to the host assembler. Stretching
-            # the final learned silence can turn it into breath or re-articulation.
-            if target_index < len(out) and target_index + 1 < len(phones):
-                out[target_index] = max(out[target_index], punctuation_floor)
+            if emitted_phone in _SILENCE_PHONES:
+                target_index = index
+            else:
+                target_index = (
+                    index + 1
+                    if index + 1 < len(phones) and phones[index + 1] in _SILENCE_PHONES
+                    else index
+                )
+            if target_index >= len(out):
+                continue
+            terminal_target = target_index + 1 >= len(phones)
+            learned_frames = int(out[target_index])
+            floor_allowed = bool(floor_terminal or not terminal_target)
+            if floor_allowed:
+                out[target_index] = max(learned_frames, punctuation_floor)
+            if audit is not None:
+                audit.append(
+                    {
+                        "phone_index": index,
+                        "target_phone_index": target_index,
+                        "source_phone": source_phone,
+                        "emitted_phone": emitted_phone,
+                        "remapped": source_phone != emitted_phone,
+                        "learned_frames": learned_frames,
+                        "calibrated_floor_frames": calibrated_floor,
+                        "generic_floor_frames": generic_floor,
+                        "requested_floor_frames": punctuation_floor,
+                        "applied_frames": int(out[target_index]),
+                        "floor_applied": int(out[target_index]) > learned_frames,
+                        "terminal_target": terminal_target,
+                        "terminal_floor_allowed": floor_allowed,
+                    }
+                )
     return out
 
 

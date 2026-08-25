@@ -456,6 +456,7 @@ std::string prepared_inputs_json(const ScyllasBandDurationFlowPreparedInputs& in
              << "\"phone_source\":\"" << json_escape(inputs.phone_source) << "\","
              << "\"phone_count\":" << inputs.phone_count << ","
              << "\"phones\":" << string_array_json(inputs.phones) << ","
+             << "\"punctuation_floor_phones\":" << string_array_json(inputs.punctuation_floor_phones) << ","
              << "\"active_phone_ids\":" << int64_array_json(inputs.active_phone_ids) << ","
              << "\"fixed_phone_frames\":" << inputs.phone_ids.size() << ","
              << "\"voice_id\":" << inputs.voice_id << ","

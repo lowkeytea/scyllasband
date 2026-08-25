@@ -364,6 +364,7 @@ using ScyllasBandPronunciationOverrideMap = std::map<std::string, std::vector<Sc
 struct ScyllasBandG2PResult {
     std::vector<std::string> phones;
     std::vector<std::string> segments;
+    std::map<int, std::string> punctuation_floor_phones;
     std::vector<ScyllasBandPronunciationOverrideApplied> pronunciation_overrides;
     std::vector<ScyllasBandG2PTerminalTailRepair> terminal_tail_repairs;
     std::string prediction_text;
@@ -540,6 +541,14 @@ std::string punctuation_phone_token_backend(const std::string& segment) {
     while (end > 0 && std::isspace(static_cast<unsigned char>(value[end - 1]))) {
         --end;
     }
+    while (end > 0) {
+        const char ch = value[end - 1];
+        if (ch == '"' || ch == '\'' || ch == ')' || ch == ']' || ch == '}') {
+            --end;
+        } else {
+            break;
+        }
+    }
     if (end == 0) {
         return {};
     }
@@ -556,11 +565,13 @@ std::string punctuation_phone_token_backend(const std::string& segment) {
     if (run.empty()) {
         return {};
     }
-    if (run.find('?') != std::string::npos) {
-        return "<end_question>";
-    }
-    if (run.find('!') != std::string::npos) {
-        return "<end_exclaim>";
+    for (const char ch : run) {
+        if (ch == '?') {
+            return "<end_question>";
+        }
+        if (ch == '!') {
+            return "<end_exclaim>";
+        }
     }
     if (run.find("...") != std::string::npos) {
         return "<ellipsis>";
@@ -2174,6 +2185,32 @@ std::string terminal_tail_repairs_json(const std::vector<ScyllasBandG2PTerminalT
     return out.str();
 }
 
+std::string punctuation_events_json(
+    const std::map<int, std::string>& floor_phones,
+    const std::vector<std::string>& emitted_phones
+) {
+    std::ostringstream out;
+    out << "[";
+    bool first = true;
+    for (const auto& item : floor_phones) {
+        if (item.first < 0 || item.first >= static_cast<int>(emitted_phones.size())) {
+            continue;
+        }
+        if (!first) {
+            out << ",";
+        }
+        first = false;
+        const std::string& emitted = emitted_phones[static_cast<std::size_t>(item.first)];
+        out << "{\"phone_index\":" << item.first
+            << ",\"source_phone\":\"" << json_escape_backend(item.second) << "\""
+            << ",\"emitted_phone\":\"" << json_escape_backend(emitted) << "\""
+            << ",\"remapped\":" << (item.second != emitted ? "true" : "false")
+            << "}";
+    }
+    out << "]";
+    return out.str();
+}
+
 ScyllasBandG2PResult run_g2p_text(
     ScyllasBandLiteRtSession* session,
     const ScyllasBandBundleInfo& bundle,
@@ -2240,10 +2277,27 @@ ScyllasBandG2PResult run_g2p_text(
             result.phones.push_back(phone);
         }
         const bool has_following_segment = index + 1 < result.segments.size();
-        const std::string punctuation_phone = punctuation_phone_token_backend(result.segments[index]);
-        if (!punctuation_phone.empty() && bundle.phone_to_id.find(punctuation_phone) != bundle.phone_to_id.end()) {
-            result.phones.push_back(punctuation_phone);
-            if (explicit_punctuation_silence && has_silence) {
+        const std::string source_punctuation_phone = punctuation_phone_token_backend(result.segments[index]);
+        std::string emitted_punctuation_phone = source_punctuation_phone;
+        const bool remap_at_position = (
+            bundle.g2p_punctuation_token_remap_scope == "all_boundaries" ||
+            has_following_segment
+        );
+        if (!source_punctuation_phone.empty() && remap_at_position) {
+            const auto remap = bundle.g2p_punctuation_token_remap.find(source_punctuation_phone);
+            if (remap != bundle.g2p_punctuation_token_remap.end()) {
+                emitted_punctuation_phone = remap->second;
+            }
+        }
+        if (!emitted_punctuation_phone.empty() &&
+            bundle.phone_to_id.find(emitted_punctuation_phone) != bundle.phone_to_id.end()) {
+            const int phone_index = static_cast<int>(result.phones.size());
+            result.phones.push_back(emitted_punctuation_phone);
+            if (!source_punctuation_phone.empty()) {
+                result.punctuation_floor_phones[phone_index] = source_punctuation_phone;
+            }
+            if (explicit_punctuation_silence && has_silence &&
+                emitted_punctuation_phone != "<sil>") {
                 result.phones.push_back("<sil>");
             }
         } else if (has_following_segment && has_pause_comma) {
@@ -2273,7 +2327,9 @@ ScyllasBandG2PResult run_g2p_text(
              << "\"g2p_input_text\":\"" << json_escape_backend(request.text) << "\","
              << "\"g2p_segments\":" << string_vector_json_backend(result.segments) << ","
              << "\"g2p_prediction_text\":\"" << json_escape_backend(result.prediction_text) << "\","
-             << "\"phones\":" << string_vector_json_backend(result.phones, 64);
+             << "\"phones\":" << string_vector_json_backend(result.phones, 64) << ","
+             << "\"g2p_punctuation_events\":"
+             << punctuation_events_json(result.punctuation_floor_phones, result.phones);
     if (!result.pronunciation_overrides.empty()) {
         metadata << ",\"pronunciation_overrides\":" << pronunciation_overrides_json(result.pronunciation_overrides);
     }
@@ -2284,6 +2340,22 @@ ScyllasBandG2PResult run_g2p_text(
     metadata << "}";
     result.metadata_json = metadata.str();
     return result;
+}
+
+void apply_punctuation_floor_phones(
+    ScyllasBandDurationFlowPreparedInputs& prepared,
+    const std::map<int, std::string>& floor_phones
+) {
+    prepared.punctuation_floor_phones.assign(
+        static_cast<std::size_t>(std::max(0, prepared.phone_count)),
+        std::string()
+    );
+    for (const auto& item : floor_phones) {
+        if (item.first < 0 || item.first >= prepared.phone_count) {
+            throw std::runtime_error("G2P punctuation floor index is outside the active phone sequence");
+        }
+        prepared.punctuation_floor_phones[static_cast<std::size_t>(item.first)] = item.second;
+    }
 }
 
 std::string component_path(
@@ -3068,6 +3140,11 @@ ScyllasBandDurationExpansionMetadata expand_duration_values(
             bundle.latent_hop_length
         );
     };
+    const bool floor_terminal = (
+        request.chunk_count > 0 &&
+        request.chunk_index >= 0 &&
+        request.chunk_index + 1 < request.chunk_count
+    );
     for (int index = 0; index < prepared.phone_count; ++index) {
         const float value = std::max(0.0f, duration_values[static_cast<std::size_t>(index)]);
         int64_t frame_count = static_cast<int64_t>(std::llround(value * expanded.duration_scale));
@@ -3079,27 +3156,39 @@ ScyllasBandDurationExpansionMetadata expand_duration_values(
         } else if (!phone.empty()) {
             frame_count = std::max<int64_t>(1, frame_count);
         }
+        const std::string& semantic_phone = (
+            static_cast<std::size_t>(index) < prepared.punctuation_floor_phones.size() &&
+            !prepared.punctuation_floor_phones[static_cast<std::size_t>(index)].empty()
+        ) ? prepared.punctuation_floor_phones[static_cast<std::size_t>(index)] : phone;
         const int64_t punctuation_floor = punctuation_duration_floor_frames(
-            phone,
+            semantic_phone,
             sentence_pause_floor,
             clause_pause_floor,
-            calibrated_floor(phone)
+            calibrated_floor(semantic_phone)
         );
         if (punctuation_floor > 0) {
             const bool floor_following_silence = (
                 index + 1 < prepared.phone_count &&
                 is_silence_phone(prepared.phones[static_cast<std::size_t>(index + 1)])
             );
-            if (!floor_following_silence && !is_terminal_pause_target(index, prepared.phone_count)) {
+            if (!floor_following_silence &&
+                (floor_terminal || !is_terminal_pause_target(index, prepared.phone_count))) {
                 frame_count = std::max<int64_t>(frame_count, punctuation_floor);
             }
-        } else if (is_silence_phone(phone) && index > 0 &&
-                   !is_terminal_pause_target(index, prepared.phone_count)) {
+        } else if (is_silence_phone(phone) && index > 0 && (
+                       floor_terminal || !is_terminal_pause_target(index, prepared.phone_count)
+                   )) {
+            const int preceding_index = index - 1;
+            const std::string& preceding_phone = prepared.phones[static_cast<std::size_t>(preceding_index)];
+            const std::string& preceding_semantic_phone = (
+                static_cast<std::size_t>(preceding_index) < prepared.punctuation_floor_phones.size() &&
+                !prepared.punctuation_floor_phones[static_cast<std::size_t>(preceding_index)].empty()
+            ) ? prepared.punctuation_floor_phones[static_cast<std::size_t>(preceding_index)] : preceding_phone;
             const int64_t preceding_floor = punctuation_duration_floor_frames(
-                prepared.phones[static_cast<std::size_t>(index - 1)],
+                preceding_semantic_phone,
                 sentence_pause_floor,
                 clause_pause_floor,
-                calibrated_floor(prepared.phones[static_cast<std::size_t>(index - 1)])
+                calibrated_floor(preceding_semantic_phone)
             );
             if (preceding_floor > 0) {
                 frame_count = std::max<int64_t>(frame_count, preceding_floor);
@@ -4071,6 +4160,7 @@ public:
         ScyllasBandSynthesisRequest effective_request = request;
         std::string generated_phone_text;
         std::string g2p_metadata = "null";
+        std::map<int, std::string> g2p_punctuation_floor_phones;
         try {
             auto stage_started_at = ScyllasBandSteadyClock::now();
             resolved_request = resolve_scyllasband_request_context(bundle_info_, request);
@@ -4092,9 +4182,11 @@ public:
                 generated_phone_text = join_phone_tokens(g2p.phones);
                 effective_request.explicit_phones = generated_phone_text.c_str();
                 g2p_metadata = g2p.metadata_json;
+                g2p_punctuation_floor_phones = g2p.punctuation_floor_phones;
             }
             stage_started_at = ScyllasBandSteadyClock::now();
             prepared_inputs = prepare_scyllasband_duration_flow_inputs(bundle_info_, resolved_request, effective_request);
+            apply_punctuation_floor_phones(prepared_inputs, g2p_punctuation_floor_phones);
             if (!generated_phone_text.empty()) {
                 prepared_inputs.phone_source = "g2p";
             }
@@ -4355,6 +4447,7 @@ public:
         ScyllasBandSynthesisRequest effective_request = request;
         std::string generated_phone_text;
         std::string g2p_metadata = "null";
+        std::map<int, std::string> g2p_punctuation_floor_phones;
         try {
             auto stage_started_at = ScyllasBandSteadyClock::now();
             resolved_request = resolve_scyllasband_request_context(bundle_info_, request);
@@ -4376,9 +4469,11 @@ public:
                 generated_phone_text = join_phone_tokens(g2p.phones);
                 effective_request.explicit_phones = generated_phone_text.c_str();
                 g2p_metadata = g2p.metadata_json;
+                g2p_punctuation_floor_phones = g2p.punctuation_floor_phones;
             }
             stage_started_at = ScyllasBandSteadyClock::now();
             prepared_inputs = prepare_scyllasband_duration_flow_inputs(bundle_info_, resolved_request, effective_request);
+            apply_punctuation_floor_phones(prepared_inputs, g2p_punctuation_floor_phones);
             if (!generated_phone_text.empty()) {
                 prepared_inputs.phone_source = "g2p";
             }

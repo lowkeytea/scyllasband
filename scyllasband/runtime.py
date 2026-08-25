@@ -25,6 +25,8 @@ from .text_normalizer import normalize_spoken_text
 SUPPORTED_BACKENDS = ("auto", "onnx", "litert", "coreml", "coreai")
 IMPLEMENTED_BACKENDS = ("onnx", "litert", "coreai")
 SUPPORTED_SAMPLERS = ("euler", "heun")
+DEFAULT_MIN_SENTENCE_PUNCTUATION_PAUSE_MS = 320.0
+DEFAULT_MIN_CLAUSE_PUNCTUATION_PAUSE_MS = 160.0
 
 
 @dataclass(frozen=True)
@@ -54,8 +56,8 @@ class SynthesisRequest:
     chunk_count: int | None = None
     boundary_before: str | None = None
     boundary_after: str | None = None
-    min_sentence_pause_ms: float = 0.0
-    min_clause_pause_ms: float = 0.0
+    min_sentence_pause_ms: float = DEFAULT_MIN_SENTENCE_PUNCTUATION_PAUSE_MS
+    min_clause_pause_ms: float = DEFAULT_MIN_CLAUSE_PUNCTUATION_PAUSE_MS
     prefix_latents: Any | None = None
 
 
