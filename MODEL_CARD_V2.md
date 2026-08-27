@@ -66,6 +66,10 @@ corresponding `.pt` checkpoints. Training data is not distributed.
   files. The v2 acoustic model is trained from the aligned/eSpeak phone
   representation; the shipped phrase-level G2P is the runtime frontend, not a
   source of acoustic-training labels.
+- Duration prediction preserves candidate ordinary word boundaries derived
+  from frozen MFA word intervals and jointly predicts whether a pause is
+  present and how long it lasts. Spaces are not converted into a uniform
+  silence.
 - Training includes long and chunked views, explicit punctuation silences,
   three-segment span context, stronger condition dropout, and a vocoder adapter
   trained on both oracle and generated acoustic latents.
@@ -196,9 +200,11 @@ text
 | Conditioning | Voice, language, boundary/span context, five-axis affect, and schema-v4 identity/prosody reference features |
 | Vocoder | Six-layer, 384-channel acoustic adapter into frozen `charactr/vocos-mel-24khz` |
 
-V2 uses explicit punctuation silence targets. Host-side long-form assembly adds
-clean inter-chunk silence and short boundary fades, while the duration model
-controls timing inside each generated chunk.
+V2 uses explicit punctuation silence targets plus learned, MFA-derived pause
+candidates at ordinary word boundaries. The runtime protects sentence-ending
+punctuation with a 107 ms minimum while leaving ordinary word-boundary timing
+under model control. Long-form planning prefers real clause punctuation when a
+chunk must be divided so learned timing survives the join.
 
 ## Affect and Whisper Controls
 
