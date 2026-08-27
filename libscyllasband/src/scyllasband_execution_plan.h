@@ -22,6 +22,7 @@ struct ScyllasBandDurationFlowPreparedInputs {
     std::vector<std::string> phones;
     std::vector<int64_t> active_phone_ids;
     std::vector<std::string> punctuation_floor_phones;
+    std::vector<uint8_t> word_boundary_candidate_mask;
     std::vector<int64_t> phone_ids;
     std::vector<uint8_t> phone_mask;
     int phone_count = 0;

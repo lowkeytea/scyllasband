@@ -33,6 +33,10 @@ class ScyllasBandPunctuationRuntimeTest(unittest.TestCase):
         }
         runner.g2p_punctuation_token_remap_scope = "continuation_only"
         runner.punctuation_silence_target = "explicit_silence"
+        runner.word_boundary_enabled = False
+        runner.word_boundary_output_symbol = " "
+        runner.word_boundary_duration_phone = "<sil>"
+        runner.word_boundary_presence_threshold_frames = 0.5
         runner._g2p_language = lambda language: language
         runner._predict_g2p_segment = lambda segment, language: {
             "phones": ["HH"],

@@ -40,6 +40,10 @@ struct ScyllasBandBundleInfo {
     std::map<std::string, std::string> g2p_language_map;
     std::map<std::string, std::string> g2p_punctuation_token_remap;
     std::string g2p_punctuation_token_remap_scope = "all_boundaries";
+    bool word_boundaries_enabled = false;
+    std::string word_boundary_g2p_output_symbol = " ";
+    std::string word_boundary_duration_phone = "<sil>";
+    float word_boundary_presence_threshold_frames = 0.5f;
     std::map<std::string, std::string> voice_default_language;
     std::map<std::string, std::vector<std::string>> voice_languages;
     int sample_rate = 0;

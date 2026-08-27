@@ -74,7 +74,7 @@ void usage(std::ostream& out) {
            "  --chunk-min-chars N           Long-form min chunk chars, default 48\n"
            "  --pause-ms N                  Long-form sentence pause, default 0\n"
            "  --continuation-pause-ms N     Long-form continuation pause, default 0\n"
-           "  --min-sentence-pause-ms N     In-chunk sentence punctuation floor, default 320\n"
+           "  --min-sentence-pause-ms N     In-chunk sentence punctuation floor, default 107\n"
            "  --min-clause-pause-ms N       In-chunk clause punctuation floor, default 160\n"
            "  --no-prefix-latents           Disable long-form prefix carryover\n"
            "  --preflight-chunks            Run full duration preflight before synthesis\n"

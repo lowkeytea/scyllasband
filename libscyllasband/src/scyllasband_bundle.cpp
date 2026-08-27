@@ -669,6 +669,25 @@ ScyllasBandBundleInfo load_scyllasband_bundle_info(
             throw std::runtime_error("Affect default_preset must name a declared preset");
         }
     }
+    const std::string word_boundaries = object_for_key(controls, "word_boundaries");
+    info.word_boundaries_enabled = bool_for_key(
+        word_boundaries, "enabled", false
+    );
+    info.word_boundary_g2p_output_symbol = string_for_key(
+        word_boundaries, "g2p_output_symbol", " "
+    );
+    info.word_boundary_duration_phone = string_for_key(
+        word_boundaries, "duration_phone", "<sil>"
+    );
+    info.word_boundary_presence_threshold_frames = float_for_key(
+        word_boundaries, "presence_threshold_frames", 0.5f
+    );
+    if (info.word_boundaries_enabled &&
+        info.word_boundary_presence_threshold_frames <= 0.0f) {
+        throw std::runtime_error(
+            "Word-boundary presence threshold must be positive"
+        );
+    }
     const std::string punctuation_silence = object_for_key(controls, "punctuation_silence");
     info.punctuation_silence_target = string_for_key(
         punctuation_silence,
@@ -1020,6 +1039,9 @@ std::string bundle_summary_json(const ScyllasBandBundleInfo& bundle) {
              << json_escape(bundle.g2p_punctuation_token_remap_scope) << "\","
              << "\"g2p_punctuation_token_remap_entries\":"
              << bundle.g2p_punctuation_token_remap.size() << ","
+             << "\"word_boundaries_enabled\":" << (bundle.word_boundaries_enabled ? "true" : "false") << ","
+             << "\"word_boundary_duration_phone\":\"" << json_escape(bundle.word_boundary_duration_phone) << "\","
+             << "\"word_boundary_presence_threshold_frames\":" << bundle.word_boundary_presence_threshold_frames << ","
              << "\"punctuation_silence_target\":\"" << json_escape(bundle.punctuation_silence_target) << "\","
              << "\"punctuation_pause_floors_calibrated\":"
              << (bundle.punctuation_pause_floors_calibrated ? "true" : "false") << ","

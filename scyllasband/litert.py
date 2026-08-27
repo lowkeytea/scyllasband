@@ -76,6 +76,7 @@ class _ReferenceFeatures:
 PROSODY_DROP_INDICES = (0, 14)
 PROSODY_LOG1P_INDICES = (1, 2, 5, 6, 7, 8, 9, 10, 11, 13)
 _FRONTEND_CACHE_SIZE = 256
+_WORD_BOUNDARY_MARKER = "<word_boundary>"
 
 
 class LiteRTRunner:
@@ -175,6 +176,32 @@ class LiteRTRunner:
                 self.affect_config.get("axis_maximums", {}) or {}
             ).items()
         }
+        word_boundaries = controls.get("word_boundaries", {})
+        if not isinstance(word_boundaries, Mapping):
+            word_boundaries = {}
+        self.word_boundary_config = dict(word_boundaries)
+        self.word_boundary_enabled = bool(
+            self.word_boundary_config.get("enabled", False)
+        )
+        self.word_boundary_output_symbol = str(
+            self.word_boundary_config.get("g2p_output_symbol", " ")
+        )
+        self.word_boundary_duration_phone = str(
+            self.word_boundary_config.get("duration_phone", "<sil>")
+        )
+        self.word_boundary_presence_threshold_frames = float(
+            self.word_boundary_config.get("presence_threshold_frames", 0.5)
+        )
+        if self.word_boundary_enabled:
+            if self.word_boundary_duration_phone not in self.phone_to_id:
+                raise ValueError(
+                    "Bundle word-boundary duration phone is absent from the phone "
+                    f"vocabulary: {self.word_boundary_duration_phone!r}"
+                )
+            if self.word_boundary_presence_threshold_frames <= 0.0:
+                raise ValueError(
+                    "Bundle word-boundary presence threshold must be positive"
+                )
         punctuation_silence = controls.get("punctuation_silence", {})
         if not isinstance(punctuation_silence, Mapping):
             punctuation_silence = {}
@@ -285,6 +312,12 @@ class LiteRTRunner:
             phone_ids,
             phones=phones,
             punctuation_events=list(phone_result.get("g2p_punctuation_events") or []),
+            word_boundary_candidate_indices=set(
+                int(item)
+                for item in phone_result.get(
+                    "g2p_word_boundary_candidate_indices", ()
+                )
+            ),
             language=language,
             voice_index=voice_index,
             language_index=language_index,
@@ -300,6 +333,17 @@ class LiteRTRunner:
             request=request,
         )
         phone_result["punctuation_duration_floors"] = punctuation_floor_audit
+        word_boundary_candidates = set(
+            int(item)
+            for item in phone_result.get(
+                "g2p_word_boundary_candidate_indices", ()
+            )
+        )
+        phone_result["g2p_word_boundary_durations"] = [
+            {"phone_index": index, "frames": int(durations[index])}
+            for index in sorted(word_boundary_candidates)
+            if 0 <= index < len(durations)
+        ]
         latent_length = int(sum(durations))
         if latent_length <= 0:
             raise ValueError("Predicted zero latent frames; cannot synthesize")
@@ -313,9 +357,16 @@ class LiteRTRunner:
         vocoder_component = self._bucket_component_name("vocoder", fixed_latent_frames)
 
         expanded_phone_ids = _expand_phone_lists_to_length(phone_ids, durations, latent_length)
+        vector_context_phone_ids = [
+            int(phone_id)
+            for index, (phone_id, duration) in enumerate(
+                zip(phone_ids, durations)
+            )
+            if index not in word_boundary_candidates or int(duration) > 0
+        ]
         span_context_hidden = self._span_context_hidden(
             request,
-            target_phone_ids=phone_ids,
+            target_phone_ids=vector_context_phone_ids,
             language=language,
             component_name=vector_component,
         )
@@ -473,6 +524,12 @@ class LiteRTRunner:
             phone_ids,
             phones=phones,
             punctuation_events=list(phone_result.get("g2p_punctuation_events") or []),
+            word_boundary_candidate_indices=set(
+                int(item)
+                for item in phone_result.get(
+                    "g2p_word_boundary_candidate_indices", ()
+                )
+            ),
             language=language,
             voice_index=voice_index,
             language_index=language_index,
@@ -488,6 +545,17 @@ class LiteRTRunner:
             request=request,
         )
         phone_result["punctuation_duration_floors"] = punctuation_floor_audit
+        word_boundary_candidates = set(
+            int(item)
+            for item in phone_result.get(
+                "g2p_word_boundary_candidate_indices", ()
+            )
+        )
+        phone_result["g2p_word_boundary_durations"] = [
+            {"phone_index": index, "frames": int(durations[index])}
+            for index in sorted(word_boundary_candidates)
+            if 0 <= index < len(durations)
+        ]
         latent_length = int(sum(durations))
         fixed_latent_frames = self._latent_bucket_frames(latent_length) if latent_length > 0 else self.target_bucket_frames[0]
         metadata = {
@@ -581,6 +649,7 @@ class LiteRTRunner:
         boundary_tokens: list[str] = []
         source_boundary_tokens: list[str] = []
         punctuation_events: list[dict[str, Any]] = []
+        word_boundary_candidate_indices: list[int] = []
         pronunciation_overrides: list[dict[str, Any]] = []
         terminal_tail_repairs: list[dict[str, Any]] = []
         leading_context_phone = _context_phone_for_boundary(before, self.phone_to_id, self.g2p_config)
@@ -598,7 +667,23 @@ class LiteRTRunner:
             terminal_tail_repairs.extend(
                 dict(item) for item in prediction.get("terminal_tail_repairs", [])
             )
-            phones.extend(phone for phone in prediction["phones"] if phone not in _SILENCE_PHONES)
+            predicted_phones = [
+                str(phone) for phone in prediction.get("phones", ())
+            ]
+            for predicted_index, phone in enumerate(predicted_phones):
+                if phone == _WORD_BOUNDARY_MARKER:
+                    if (
+                        self.word_boundary_enabled
+                        and _is_internal_word_boundary_marker(
+                            predicted_phones, predicted_index
+                        )
+                    ):
+                        candidate_index = len(phones)
+                        phones.append(self.word_boundary_duration_phone)
+                        word_boundary_candidate_indices.append(candidate_index)
+                    continue
+                if phone not in _SILENCE_PHONES:
+                    phones.append(phone)
             source_boundary_phone = _boundary_phone_for_segment(segment, self.phone_to_id)
             boundary_phone = source_boundary_phone
             has_following_segment = index < len(segments) - 1
@@ -665,6 +750,10 @@ class LiteRTRunner:
             "g2p_boundary_tokens": boundary_tokens,
             "g2p_source_boundary_tokens": source_boundary_tokens,
             "g2p_punctuation_events": punctuation_events,
+            "g2p_word_boundary_candidates_enabled": self.word_boundary_enabled,
+            "g2p_word_boundary_candidate_indices": (
+                word_boundary_candidate_indices
+            ),
             "punctuation_silence_target": self.punctuation_silence_target,
             "boundary_before": before,
             "boundary_after": after,
@@ -808,6 +897,13 @@ class LiteRTRunner:
             if token_id == end_index:
                 break
             symbol = phoneme_symbols.get(token_id)
+            if (
+                self.word_boundary_enabled
+                and symbol == self.word_boundary_output_symbol
+            ):
+                phones.append(_WORD_BOUNDARY_MARKER)
+                emitted_probs.append(float(probs[frame, token_id]))
+                continue
             if _skip_g2p_output_symbol(symbol):
                 continue
             phones.append(str(symbol))
@@ -871,6 +967,7 @@ class LiteRTRunner:
         *,
         phones: list[str],
         punctuation_events: list[Mapping[str, Any]],
+        word_boundary_candidate_indices: set[int],
         language: str,
         voice_index: int,
         language_index: int,
@@ -968,6 +1065,12 @@ class LiteRTRunner:
             min_phone_frames=1,
             zero_duration_punctuation=(
                 self.punctuation_silence_target == "explicit_silence"
+            ),
+            word_boundary_candidate_indices=(
+                word_boundary_candidate_indices
+            ),
+            word_boundary_presence_threshold_frames=(
+                self.word_boundary_presence_threshold_frames
             ),
         )
         semantic_phones: dict[int, str] = {}
@@ -1989,10 +2092,19 @@ class LiteRTRunner:
             )
         except ValueError:
             return []
+        word_boundary_candidates = {
+            int(item)
+            for item in result.get(
+                "g2p_word_boundary_candidate_indices", ()
+            )
+        }
         return [
             int(self.phone_to_id[phone])
-            for phone in result.get("phones", [])
-            if str(phone) in self.phone_to_id
+            for index, phone in enumerate(result.get("phones", []))
+            if (
+                index not in word_boundary_candidates
+                and str(phone) in self.phone_to_id
+            )
         ]
 
     def _span_context_config(self) -> dict[str, Any]:
@@ -2643,14 +2755,28 @@ def _frames_to_durations(
     scale: float,
     min_phone_frames: int,
     zero_duration_punctuation: bool = False,
+    word_boundary_candidate_indices: set[int] | None = None,
+    word_boundary_presence_threshold_frames: float = 0.5,
 ) -> list[int]:
+    candidates = {int(item) for item in (word_boundary_candidate_indices or set())}
     durations: list[int] = []
-    for value, phone in zip(values, phones):
-        frame_count = int(round(max(0.0, float(value)) * float(scale)))
+    for index, (value, phone) in enumerate(zip(values, phones)):
+        scaled_frames = max(0.0, float(value)) * float(scale)
+        frame_count = int(round(scaled_frames))
         if is_non_acoustic_phone_modifier(phone):
             frame_count = 0
         elif zero_duration_punctuation and phone in _ZERO_DURATION_PUNCTUATION_PHONES:
             frame_count = 0
+        elif index in candidates:
+            # Presence is a model decision in unscaled frame space. Pacing may
+            # resize an observed pause, but must not create or erase one.
+            frame_count = (
+                0
+                if max(0.0, float(value)) < float(
+                    word_boundary_presence_threshold_frames
+                )
+                else max(1, frame_count)
+            )
         elif phone and min_phone_frames > 0:
             frame_count = max(int(min_phone_frames), frame_count)
         durations.append(frame_count)
@@ -2931,6 +3057,26 @@ def _skip_g2p_output_symbol(symbol: str | None) -> bool:
     if not symbol.strip():
         return True
     return all(unicodedata.category(char)[0] in {"P", "Z"} for char in symbol)
+
+
+def _is_internal_word_boundary_marker(
+    phones: list[str], index: int
+) -> bool:
+    if not (0 <= int(index) < len(phones)):
+        return False
+    if phones[index] != _WORD_BOUNDARY_MARKER:
+        return False
+    if index > 0 and phones[index - 1] == _WORD_BOUNDARY_MARKER:
+        return False
+    has_left = any(
+        phone not in {_WORD_BOUNDARY_MARKER, *_SILENCE_PHONES}
+        for phone in phones[:index]
+    )
+    has_right = any(
+        phone not in {_WORD_BOUNDARY_MARKER, *_SILENCE_PHONES}
+        for phone in phones[index + 1 :]
+    )
+    return has_left and has_right
 
 
 def _prob_product(values: list[float]) -> float:

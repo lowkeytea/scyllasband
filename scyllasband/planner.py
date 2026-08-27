@@ -872,24 +872,45 @@ def _split_oversized_unit(text: str, *, max_chars: int, min_chars: int = 0) -> l
     value = str(text or "").strip()
     if len(value) <= max_chars:
         return [value] if value else []
-    words = value.split()
+    words = [
+        piece
+        for word in value.split()
+        for piece in (
+            [word[index : index + max_chars] for index in range(0, len(word), max_chars)]
+            or [word]
+        )
+    ]
     chunks: list[str] = []
-    current = ""
-    for word in words:
-        pieces = [word[index : index + max_chars] for index in range(0, len(word), max_chars)] or [word]
-        for piece in pieces:
-            if not current:
-                current = piece
+    start = 0
+    while start < len(words):
+        hard_end = start
+        while hard_end < len(words):
+            candidate = " ".join(words[start : hard_end + 1])
+            if len(candidate) > max_chars:
+                break
+            hard_end += 1
+        if hard_end >= len(words):
+            chunks.append(" ".join(words[start:]))
+            break
+        if hard_end <= start:
+            hard_end = start + 1
+        split_at = hard_end
+        preferred_min = max(1, int(min_chars))
+        for candidate_end in range(start + 1, hard_end + 1):
+            if not _is_natural_chunk_break_token(words[candidate_end - 1]):
                 continue
-            candidate = f"{current} {piece}"
-            if len(candidate) <= max_chars:
-                current = candidate
-            else:
-                chunks.append(current)
-                current = piece
-    if current:
-        chunks.append(current)
+            left = " ".join(words[start:candidate_end])
+            right = " ".join(words[candidate_end:])
+            if len(left) >= preferred_min and len(right) >= preferred_min:
+                split_at = candidate_end
+        chunks.append(" ".join(words[start:split_at]))
+        start = split_at
     return _rebalance_short_text_pieces(chunks, max_chars=max_chars, min_chars=min_chars)
+
+
+def _is_natural_chunk_break_token(token: str) -> bool:
+    value = _strip_closing_boundary(str(token or ""))
+    return value.endswith((",", "--", "—", "–"))
 
 
 def _rebalance_short_text_pieces(
@@ -937,6 +958,8 @@ def _boundary_before(previous_after: str | None, *, paragraph_start: bool) -> st
 def _boundary_after(text: str, *, final_piece: bool, paragraph_end: bool) -> str:
     value = _strip_closing_boundary(str(text or ""))
     if not final_piece:
+        if _is_natural_chunk_break_token(value):
+            return "clause_continue"
         return "chunk_continue"
     if value and value[-1] in _TERMINAL_BOUNDARY_CHARS:
         return "paragraph_end" if paragraph_end else "sentence_end"
@@ -1053,7 +1076,7 @@ def _retry_piece_boundary_after(text: str) -> str:
     value = _strip_closing_boundary(text)
     if value and value[-1] in _TERMINAL_BOUNDARY_CHARS:
         return "sentence_end"
-    if value and value[-1] in _STRONG_CONTINUATION_CHARS:
+    if (value and value[-1] in _STRONG_CONTINUATION_CHARS) or _is_natural_chunk_break_token(value):
         return "clause_continue"
     return "chunk_continue"
 

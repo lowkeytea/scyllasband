@@ -457,6 +457,12 @@ std::string prepared_inputs_json(const ScyllasBandDurationFlowPreparedInputs& in
              << "\"phone_count\":" << inputs.phone_count << ","
              << "\"phones\":" << string_array_json(inputs.phones) << ","
              << "\"punctuation_floor_phones\":" << string_array_json(inputs.punctuation_floor_phones) << ","
+             << "\"word_boundary_candidate_mask\":[";
+    for (std::size_t index = 0; index < inputs.word_boundary_candidate_mask.size(); ++index) {
+        if (index > 0) metadata << ",";
+        metadata << (inputs.word_boundary_candidate_mask[index] != 0 ? "true" : "false");
+    }
+    metadata << "],"
              << "\"active_phone_ids\":" << int64_array_json(inputs.active_phone_ids) << ","
              << "\"fixed_phone_frames\":" << inputs.phone_ids.size() << ","
              << "\"voice_id\":" << inputs.voice_id << ","

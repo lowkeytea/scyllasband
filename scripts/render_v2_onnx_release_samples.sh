@@ -11,6 +11,8 @@ sampler="${SAMPLER:-heun}"
 seed="${SEED:-20260819}"
 data_dir="${runtime_root}/data/scyllasbandv2"
 test_document="${runtime_root}/data/test_document.txt"
+fp32_bundle="${FP32_BUNDLE:-${runtime_root}/models/v2/onnx}"
+int8_bundle="${INT8_BUNDLE:-${runtime_root}/models/v2/onnx-int8}"
 export PYTHONPATH="${runtime_root}${PYTHONPATH:+:${PYTHONPATH}}"
 
 render_variant() {
@@ -52,8 +54,8 @@ render_variant() {
 }
 
 mkdir -p "${output_dir}"
-render_variant fp32 "${runtime_root}/models/v2/onnx"
-render_variant int8 "${runtime_root}/models/v2/onnx-int8"
+render_variant fp32 "${fp32_bundle}"
+render_variant int8 "${int8_bundle}"
 find "${output_dir}" -type f \( -name '*.wav' -o -name '*.json' \) -print0 \
     | sort -z | xargs -0 sha256sum > "${output_dir}/SHA256SUMS.txt"
 echo "release samples complete: ${output_dir}"

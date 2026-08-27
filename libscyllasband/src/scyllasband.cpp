@@ -401,6 +401,30 @@ std::vector<std::string> rebalance_short_text_pieces(
     return output;
 }
 
+bool natural_chunk_break_token(std::string value) {
+    value = trim_copy(value);
+    while (!value.empty()) {
+        const char ch = value.back();
+        if (ch == '"' || ch == '\'' || ch == ')' || ch == ']' || ch == '}') {
+            value.pop_back();
+            value = trim_copy(value);
+        } else {
+            break;
+        }
+    }
+    if (!value.empty() && value.back() == ',') {
+        return true;
+    }
+    static const std::vector<std::string> suffixes = {"--", u8"—", u8"–"};
+    for (const std::string& suffix : suffixes) {
+        if (value.size() >= suffix.size() &&
+            value.compare(value.size() - suffix.size(), suffix.size(), suffix) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::vector<std::string> split_oversized_unit(const std::string& text, int max_chars, int min_chars) {
     std::string value = collapse_ws(text);
     if (value.empty()) {
@@ -409,38 +433,61 @@ std::vector<std::string> split_oversized_unit(const std::string& text, int max_c
     if (max_chars <= 0 || static_cast<int>(value.size()) <= max_chars) {
         return {value};
     }
-    std::vector<std::string> chunks;
+    std::vector<std::string> words;
     std::istringstream stream(value);
     std::string word;
-    std::string current;
     while (stream >> word) {
         while (max_chars > 0 && static_cast<int>(word.size()) > max_chars) {
-            std::string piece = word.substr(0, static_cast<std::size_t>(max_chars));
+            words.push_back(word.substr(0, static_cast<std::size_t>(max_chars)));
             word.erase(0, static_cast<std::size_t>(max_chars));
-            if (current.empty()) {
-                chunks.push_back(piece);
-            } else {
-                chunks.push_back(current);
-                current = piece;
-            }
         }
-        if (word.empty()) {
-            continue;
-        }
-        if (current.empty()) {
-            current = word;
-            continue;
-        }
-        std::string candidate = current + " " + word;
-        if (static_cast<int>(candidate.size()) <= max_chars) {
-            current = candidate;
-        } else {
-            chunks.push_back(current);
-            current = word;
+        if (!word.empty()) {
+            words.push_back(word);
         }
     }
-    if (!current.empty()) {
-        chunks.push_back(current);
+    auto joined_range = [&words](std::size_t start, std::size_t end) -> std::string {
+        std::string out;
+        for (std::size_t index = start; index < end; ++index) {
+            if (!out.empty()) {
+                out.push_back(' ');
+            }
+            out += words[index];
+        }
+        return out;
+    };
+    std::vector<std::string> chunks;
+    std::size_t start = 0;
+    while (start < words.size()) {
+        std::size_t hard_end = start;
+        while (hard_end < words.size()) {
+            const std::string candidate = joined_range(start, hard_end + 1);
+            if (static_cast<int>(candidate.size()) > max_chars) {
+                break;
+            }
+            ++hard_end;
+        }
+        if (hard_end >= words.size()) {
+            chunks.push_back(joined_range(start, words.size()));
+            break;
+        }
+        if (hard_end <= start) {
+            hard_end = start + 1;
+        }
+        std::size_t split_at = hard_end;
+        const int preferred_min = std::max(1, min_chars);
+        for (std::size_t candidate_end = start + 1; candidate_end <= hard_end; ++candidate_end) {
+            if (!natural_chunk_break_token(words[candidate_end - 1])) {
+                continue;
+            }
+            const std::string left = joined_range(start, candidate_end);
+            const std::string right = joined_range(candidate_end, words.size());
+            if (static_cast<int>(left.size()) >= preferred_min &&
+                static_cast<int>(right.size()) >= preferred_min) {
+                split_at = candidate_end;
+            }
+        }
+        chunks.push_back(joined_range(start, split_at));
+        start = split_at;
     }
     return rebalance_short_text_pieces(chunks, max_chars, min_chars);
 }
@@ -631,7 +678,8 @@ std::string retry_piece_boundary_after(const std::string& text) {
     if (!value.empty() && terminal_boundary_char(value.back())) {
         return "sentence_end";
     }
-    if (!value.empty() && strong_continuation_char(value.back())) {
+    if ((!value.empty() && strong_continuation_char(value.back())) ||
+        natural_chunk_break_token(value)) {
         return "clause_continue";
     }
     return "chunk_continue";
@@ -989,6 +1037,9 @@ std::string strip_closing_boundary(std::string value) {
 
 std::string boundary_after_for(const std::string& text, bool final_piece, bool paragraph_end) {
     if (!final_piece) {
+        if (natural_chunk_break_token(text)) {
+            return "clause_continue";
+        }
         return "chunk_continue";
     }
     std::string value = strip_closing_boundary(text);
