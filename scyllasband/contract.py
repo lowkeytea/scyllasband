@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ctypes.util
 from dataclasses import dataclass
+import hashlib
 import json
 import math
 import os
@@ -28,6 +29,26 @@ SPLIT_VECTOR_COMPONENTS = ("vector_estimator_prefix", "vector_estimator_tail")
 SHIPPING_BACKENDS = ("onnx", "litert", "coreml", "coreai")
 DEFAULT_PREFERRED_BACKENDS = ("onnx",)
 COREAI_MINIMUM_MACOS_MAJOR = 27
+DURATION_PAUSE_PRESENCE_SCHEMA = "scyllasband_duration_pause_presence_v1"
+DURATION_HIERARCHY_SAMPLING_SCHEMA = "scyllasband_duration_hierarchy_sampling_v1"
+VECTOR_TIMING_CONDITIONING_SCHEMA = "scyllasband_vector_timing_conditioning_v1"
+VECTOR_TIMING_INPUTS = (
+    "expanded_boundary_event_ids",
+    "expanded_modifier_event_ids",
+    "expanded_phone_phase",
+    "expanded_phone_log_duration",
+)
+_VECTOR_PUNCTUATION_PHONES = frozenset({
+    "<pause_comma>",
+    "<pause_semicolon>",
+    "<pause_colon>",
+    "<pause_dash>",
+    "<ellipsis>",
+    "<end_stmt>",
+    "<end_question>",
+    "<end_exclaim>",
+})
+_VECTOR_MODIFIER_PHONES = frozenset({"ˈ", "ˌ", "ː", "ˑ", "̃", "̩", "̪"})
 
 
 def coreai_host_supported() -> bool:
@@ -589,7 +610,10 @@ def _native_gpu_accelerator_plugin_status(
 def validate_bundle_layout(bundle_dir: str | Path) -> ScyllasBandBundleManifest:
     bundle_path = Path(bundle_dir)
     manifest = load_bundle_manifest(bundle_path)
+    validate_vector_timing_conditioning_contract(manifest, bundle_path)
     _validate_affect_contract(manifest)
+    validate_duration_pause_presence_contract(manifest)
+    validate_duration_hierarchy_sampling_contract(manifest)
 
     for component in manifest.components.values():
         if not component.required:
@@ -623,6 +647,349 @@ def validate_bundle_layout(bundle_dir: str | Path) -> ScyllasBandBundleManifest:
             )
 
     return manifest
+
+
+def validate_duration_pause_presence_contract(
+    manifest: ScyllasBandBundleManifest,
+) -> dict[str, Any]:
+    """Validate the optional two-output duration presence contract."""
+
+    controls = manifest.controls if isinstance(manifest.controls, dict) else {}
+    raw = controls.get("duration_pause_presence")
+    duration = manifest.components.get("duration_predictor")
+    if duration is None:
+        raise BundleValidationError("Bundle lacks duration_predictor")
+    if not isinstance(raw, dict) or not bool(raw.get("enabled", False)):
+        if "pause_presence_logits" in duration.outputs:
+            raise BundleValidationError(
+                "duration_predictor declares pause_presence_logits without "
+                "duration_pause_presence controls"
+            )
+        return {"enabled": False}
+    if raw.get("schema") != DURATION_PAUSE_PRESENCE_SCHEMA:
+        raise BundleValidationError(
+            "Unsupported duration pause-presence schema"
+        )
+    if raw.get("activation") != "sigmoid":
+        raise BundleValidationError(
+            "Duration pause-presence activation must be sigmoid"
+        )
+    try:
+        threshold = float(raw.get("threshold_probability"))
+    except (TypeError, ValueError) as exc:
+        raise BundleValidationError(
+            "Duration pause-presence threshold must be numeric"
+        ) from exc
+    if not math.isfinite(threshold) or not 0.0 < threshold <= 1.0:
+        raise BundleValidationError(
+            "Duration pause-presence threshold must be in (0, 1]"
+        )
+    hierarchy = controls.get("duration_hierarchy_sampling")
+    hierarchy_enabled = isinstance(hierarchy, dict) and bool(
+        hierarchy.get("enabled", False)
+    )
+    expected_outputs = (
+        "durations",
+        "pause_presence_logits",
+        *(("duration_quantiles",) if hierarchy_enabled else ()),
+    )
+    if duration.outputs != expected_outputs:
+        raise BundleValidationError(
+            "duration_predictor outputs must be durations,pause_presence_logits "
+            "when duration_pause_presence is enabled"
+        )
+    declared_outputs = tuple(str(item) for item in raw.get("outputs", ()))
+    if declared_outputs != ("durations", "pause_presence_logits"):
+        raise BundleValidationError(
+            "duration_pause_presence controls must declare both duration outputs"
+        )
+    owners = raw.get("eligible_pause_owners")
+    if not isinstance(owners, dict) or owners != {
+        "punctuation": "following_silence_only",
+        "word_boundary": "explicit_candidate_mask_only",
+    }:
+        raise BundleValidationError(
+            "Duration pause-presence ownership contract is invalid"
+        )
+    return dict(raw)
+
+
+def validate_duration_hierarchy_sampling_contract(
+    manifest: ScyllasBandBundleManifest,
+) -> dict[str, Any]:
+    """Validate optional portable p10/p50/p90 hierarchy sampling."""
+
+    controls = manifest.controls if isinstance(manifest.controls, dict) else {}
+    raw = controls.get("duration_hierarchy_sampling")
+    duration = manifest.components.get("duration_predictor")
+    if duration is None:
+        raise BundleValidationError("Bundle lacks duration_predictor")
+    if not isinstance(raw, dict) or not bool(raw.get("enabled", False)):
+        if "duration_quantiles" in duration.outputs:
+            raise BundleValidationError(
+                "duration_predictor declares duration_quantiles without "
+                "duration_hierarchy_sampling controls"
+            )
+        return {"enabled": False}
+    if raw.get("schema") != DURATION_HIERARCHY_SAMPLING_SCHEMA:
+        raise BundleValidationError("Unsupported duration hierarchy sampling schema")
+    if raw.get("policy") != (
+        "coherent_utterance_phrase_quantile_with_presence_hurdle_v1"
+    ):
+        raise BundleValidationError("Unsupported duration hierarchy sampling policy")
+    presence = controls.get("duration_pause_presence")
+    presence_enabled = isinstance(presence, dict) and bool(
+        presence.get("enabled", False)
+    )
+    expected_outputs = (
+        "durations",
+        *(("pause_presence_logits",) if presence_enabled else ()),
+        "duration_quantiles",
+    )
+    if duration.outputs != expected_outputs:
+        raise BundleValidationError(
+            "duration_predictor outputs do not match the duration hierarchy contract"
+        )
+    if tuple(str(item) for item in raw.get("outputs", ())) != expected_outputs:
+        raise BundleValidationError(
+            "duration hierarchy controls must declare the exact duration outputs"
+        )
+    quantiles = raw.get("quantiles")
+    if not isinstance(quantiles, dict) or quantiles != {
+        "output": "duration_quantiles",
+        "levels": [0.10, 0.50, 0.90],
+        "domain": "positive_duration_frames",
+        "ordering": "monotonic_p10_p50_p90",
+    }:
+        raise BundleValidationError("Duration quantile output contract is invalid")
+    if tuple(str(item) for item in raw.get("modes", ())) != ("sampled", "p50"):
+        raise BundleValidationError("Duration hierarchy modes must be sampled,p50")
+    if raw.get("default_mode") not in {"sampled", "p50"}:
+        raise BundleValidationError("Duration hierarchy default_mode is invalid")
+    if raw.get("seed") != {
+        "source": "request_seed",
+        "missing_request_seed": 0,
+        "algorithm": "sha256_box_muller_v1",
+    }:
+        raise BundleValidationError("Duration hierarchy seed contract is invalid")
+    if raw.get("sampling_key") != (
+        "utf8_byte_length_prefixed_language_voice_phones_v1"
+    ):
+        raise BundleValidationError("Duration hierarchy sampling key is invalid")
+    defaults = raw.get("defaults")
+    if not isinstance(defaults, dict) or set(defaults) != {
+        "pause_strength",
+        "speech_strength",
+        "sample_presence",
+        "max_abs_z",
+    }:
+        raise BundleValidationError("Duration hierarchy defaults are incomplete")
+    try:
+        pause_strength = float(defaults["pause_strength"])
+        speech_strength = float(defaults["speech_strength"])
+        max_abs_z = float(defaults["max_abs_z"])
+    except (TypeError, ValueError) as exc:
+        raise BundleValidationError("Duration hierarchy defaults must be numeric") from exc
+    if (
+        pause_strength != 1.0
+        or speech_strength != 0.0
+        or max_abs_z != 2.0
+        or type(defaults["sample_presence"]) is not bool
+        or bool(defaults["sample_presence"]) != presence_enabled
+    ):
+        raise BundleValidationError(
+            "Duration hierarchy defaults do not match the supported portable policy"
+        )
+    if raw.get("phrase_boundary") != (
+        "punctuation_owned_silence_after_boundary_v1"
+    ):
+        raise BundleValidationError("Duration hierarchy phrase boundary is invalid")
+    if raw.get("pause_owners") != {
+        "punctuation": "following_or_remapped_silence_only",
+        "word_boundary": "explicit_candidate_mask_only",
+    }:
+        raise BundleValidationError("Duration hierarchy pause ownership is invalid")
+    return dict(raw)
+
+
+def validate_vector_timing_conditioning_contract(
+    manifest: ScyllasBandBundleManifest,
+    bundle_dir: str | Path | None = None,
+) -> dict[str, Any]:
+    """Validate optional event/local timing inputs and their vocabulary binding."""
+
+    controls = manifest.controls if isinstance(manifest.controls, dict) else {}
+    raw = controls.get("vector_timing_conditioning")
+    vector_components = _vector_timing_components(manifest)
+    enabled = isinstance(raw, dict) and bool(raw.get("enabled", False))
+    if not enabled:
+        for component in vector_components:
+            leaked = set(VECTOR_TIMING_INPUTS).intersection(component.inputs)
+            if leaked:
+                raise BundleValidationError(
+                    f"Component {component.name!r} exposes vector timing inputs "
+                    "without vector_timing_conditioning controls"
+                )
+        return {"enabled": False}
+    assert isinstance(raw, dict)
+    if raw.get("schema") != VECTOR_TIMING_CONDITIONING_SCHEMA:
+        raise BundleValidationError("Unsupported vector timing conditioning schema")
+    if tuple(str(item) for item in raw.get("inputs", ())) != VECTOR_TIMING_INPUTS:
+        raise BundleValidationError("Vector timing controls must declare the exact input quartet")
+    features = raw.get("features")
+    if not isinstance(features, dict):
+        raise BundleValidationError("Vector timing controls lack feature flags")
+    expected_feature_keys = {"boundary_events", "modifier_events", "local_timing"}
+    if set(features) != expected_feature_keys or any(
+        not isinstance(features[key], bool) for key in expected_feature_keys
+    ):
+        raise BundleValidationError("Vector timing feature flags are invalid")
+    if not any(bool(features[key]) for key in expected_feature_keys):
+        raise BundleValidationError("Enabled vector timing controls must enable a feature")
+    for component in vector_components:
+        if component.inputs[-len(VECTOR_TIMING_INPUTS) :] != VECTOR_TIMING_INPUTS:
+            raise BundleValidationError(
+                f"Component {component.name!r} must end with the vector timing input quartet"
+            )
+        if any(component.inputs.count(name) != 1 for name in VECTOR_TIMING_INPUTS):
+            raise BundleValidationError(
+                f"Component {component.name!r} has duplicate vector timing inputs"
+            )
+
+    phone = raw.get("phone_vocab")
+    if not isinstance(phone, dict):
+        raise BundleValidationError("Vector timing controls lack phone vocabulary binding")
+    asset = str(phone.get("asset") or "")
+    if asset != str(manifest.assets.get("phone_vocab") or ""):
+        raise BundleValidationError("Vector timing phone vocabulary asset does not match bundle")
+    digest = str(phone.get("sha256") or "")
+    if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+        raise BundleValidationError("Vector timing phone vocabulary SHA-256 is invalid")
+    try:
+        vocab_size = int(phone.get("size"))
+    except (TypeError, ValueError) as exc:
+        raise BundleValidationError("Vector timing phone vocabulary size is invalid") from exc
+    if vocab_size <= 0:
+        raise BundleValidationError("Vector timing phone vocabulary must be non-empty")
+
+    token_to_id: dict[str, int] | None = None
+    if bundle_dir is not None:
+        vocab_path = Path(bundle_dir) / asset
+        if not vocab_path.is_file():
+            raise BundleValidationError(
+                f"Vector timing phone vocabulary is missing: {vocab_path}"
+            )
+        actual = hashlib.sha256(vocab_path.read_bytes()).hexdigest()
+        if actual != digest:
+            raise BundleValidationError("Vector timing phone vocabulary SHA-256 mismatch")
+        try:
+            payload = json.loads(vocab_path.read_text(encoding="utf-8"))
+            token_to_id = {
+                str(token): int(index)
+                for token, index in dict(payload["token_to_id"]).items()
+            }
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise BundleValidationError("Vector timing phone vocabulary is invalid") from exc
+        if len(token_to_id) != vocab_size or sorted(token_to_id.values()) != list(
+            range(vocab_size)
+        ):
+            raise BundleValidationError(
+                "Vector timing phone vocabulary IDs must be contiguous and match size"
+            )
+
+    boundary = raw.get("boundary_events")
+    if not isinstance(boundary, dict):
+        raise BundleValidationError("Vector timing boundary-event controls are missing")
+    if bool(boundary.get("enabled")) != bool(features["boundary_events"]):
+        raise BundleValidationError("Vector timing boundary-event flags disagree")
+    if boundary.get("encoding") != "phone_vocab_id_plus_synthetic_word_boundary_v1":
+        raise BundleValidationError("Vector timing boundary-event encoding is invalid")
+    if int(boundary.get("synthetic_word_boundary_id", -1)) != vocab_size:
+        raise BundleValidationError("Vector timing synthetic word-boundary ID is invalid")
+    owners = boundary.get("owners")
+    if owners != {
+        "punctuation": "following_silence_then_first_surviving_frame",
+        "word_boundary": "candidate_silence_then_first_surviving_frame",
+    }:
+        raise BundleValidationError("Vector timing boundary ownership is invalid")
+    punctuation_symbols = [str(item) for item in boundary.get("punctuation_symbols", ())]
+    punctuation_ids = [int(item) for item in boundary.get("punctuation_phone_ids", ())]
+    if len(punctuation_symbols) != len(punctuation_ids) or len(set(punctuation_symbols)) != len(
+        punctuation_symbols
+    ):
+        raise BundleValidationError("Vector timing punctuation mapping is invalid")
+    if token_to_id is not None:
+        expected = [
+            token
+            for token, _index in sorted(token_to_id.items(), key=lambda item: item[1])
+            if token in _VECTOR_PUNCTUATION_PHONES
+        ]
+        if expected != punctuation_symbols or any(
+            token_to_id.get(symbol) != phone_id
+            for symbol, phone_id in zip(punctuation_symbols, punctuation_ids, strict=True)
+        ):
+            raise BundleValidationError("Vector timing punctuation mapping mismatches phone vocabulary")
+
+    modifiers = raw.get("modifier_events")
+    if not isinstance(modifiers, dict):
+        raise BundleValidationError("Vector timing modifier-event controls are missing")
+    if bool(modifiers.get("enabled")) != bool(features["modifier_events"]):
+        raise BundleValidationError("Vector timing modifier-event flags disagree")
+    if modifiers.get("encoding") != "bitmask_v1":
+        raise BundleValidationError("Vector timing modifier-event encoding is invalid")
+    bits = int(modifiers.get("bits") or 0)
+    symbols = [str(item) for item in modifiers.get("symbols", ())]
+    phone_ids = [int(item) for item in modifiers.get("phone_ids", ())]
+    bit_masks = [int(item) for item in modifiers.get("bit_masks", ())]
+    expected_count = bits if bool(features["modifier_events"]) else 0
+    if bits < 0 or bits > 30 or not (len(symbols) == len(phone_ids) == len(bit_masks) == expected_count):
+        raise BundleValidationError("Vector timing modifier vocabulary is invalid")
+    if bit_masks != [1 << bit for bit in range(bits)]:
+        raise BundleValidationError("Vector timing modifier bit masks are invalid")
+    if modifiers.get("ownership") != (
+        "stress_bidirectional_postfix_exact_base_segment_bounded_v2"
+    ):
+        raise BundleValidationError("Vector timing modifier ownership is invalid")
+    if modifiers.get("zero_quantized_fallback") != (
+        "audit_unrepresented_zero_frame_modifier_v1"
+    ):
+        raise BundleValidationError("Vector timing modifier fallback is invalid")
+    if token_to_id is not None and bool(features["modifier_events"]):
+        expected = [
+            token
+            for token, _index in sorted(token_to_id.items(), key=lambda item: item[1])
+            if token in _VECTOR_MODIFIER_PHONES
+        ]
+        if expected != symbols or any(
+            token_to_id.get(symbol) != phone_id
+            for symbol, phone_id in zip(symbols, phone_ids, strict=True)
+        ):
+            raise BundleValidationError("Vector timing modifier mapping mismatches phone vocabulary")
+
+    local = raw.get("local_timing")
+    if not isinstance(local, dict) or bool(local.get("enabled")) != bool(features["local_timing"]):
+        raise BundleValidationError("Vector local-timing flags disagree")
+    if local.get("phase") != "(frame_index_plus_0_5)/phone_duration_frames":
+        raise BundleValidationError("Vector phone-phase formula is invalid")
+    if local.get("log_duration") != "log1p(phone_duration_frames)":
+        raise BundleValidationError("Vector phone-duration formula is invalid")
+    if local.get("duration_source") != "final_post_pause_presence_and_floor_frames":
+        raise BundleValidationError("Vector local-timing duration source is invalid")
+    return dict(raw)
+
+
+def _vector_timing_components(
+    manifest: ScyllasBandBundleManifest,
+) -> list[ComponentSpec]:
+    return [
+        component
+        for name, component in manifest.components.items()
+        if name == "vector_estimator"
+        or name in SPLIT_VECTOR_COMPONENTS
+        or name.removeprefix("vector_estimator_").isdigit()
+        or name.removeprefix("vector_estimator_prefix_").isdigit()
+        or name.removeprefix("vector_estimator_tail_").isdigit()
+    ]
 
 
 def _validate_affect_contract(manifest: ScyllasBandBundleManifest) -> None:
@@ -746,6 +1113,8 @@ def _validate_affect_contract(manifest: ScyllasBandBundleManifest) -> None:
         if reference_schema == 4
         else _AFFECT_VECTOR_INPUTS
     )
+    timing = controls.get("vector_timing_conditioning")
+    timing_enabled = isinstance(timing, dict) and bool(timing.get("enabled", False))
     duration = manifest.components.get("duration_predictor")
     if duration is None or duration.inputs != duration_inputs:
         raise BundleValidationError(
@@ -760,8 +1129,10 @@ def _validate_affect_contract(manifest: ScyllasBandBundleManifest) -> None:
         )
     ]
     for component in vector_components:
-        expected = vector_inputs + (
-            ("span_context_hidden",) if "span_context_hidden" in component.inputs else ()
+        expected = (
+            vector_inputs
+            + (("span_context_hidden",) if "span_context_hidden" in component.inputs else ())
+            + (VECTOR_TIMING_INPUTS if timing_enabled else ())
         )
         if component.inputs != expected:
             raise BundleValidationError(

@@ -1,10 +1,14 @@
 #include "scyllasband_bundle.h"
+#include "scyllasband_boundary_policy.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
+#include <cstdint>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <regex>
 #include <sstream>
 #include <stdexcept>
@@ -24,6 +28,104 @@ std::string read_text_file(const std::filesystem::path& path) {
     std::ostringstream buffer;
     buffer << input.rdbuf();
     return buffer.str();
+}
+
+uint32_t rotate_right(uint32_t value, uint32_t count) {
+    return (value >> count) | (value << (32U - count));
+}
+
+std::string sha256_bytes(const std::string& input) {
+    static constexpr std::array<uint32_t, 64> k = {
+        0x428a2f98U, 0x71374491U, 0xb5c0fbcfU, 0xe9b5dba5U,
+        0x3956c25bU, 0x59f111f1U, 0x923f82a4U, 0xab1c5ed5U,
+        0xd807aa98U, 0x12835b01U, 0x243185beU, 0x550c7dc3U,
+        0x72be5d74U, 0x80deb1feU, 0x9bdc06a7U, 0xc19bf174U,
+        0xe49b69c1U, 0xefbe4786U, 0x0fc19dc6U, 0x240ca1ccU,
+        0x2de92c6fU, 0x4a7484aaU, 0x5cb0a9dcU, 0x76f988daU,
+        0x983e5152U, 0xa831c66dU, 0xb00327c8U, 0xbf597fc7U,
+        0xc6e00bf3U, 0xd5a79147U, 0x06ca6351U, 0x14292967U,
+        0x27b70a85U, 0x2e1b2138U, 0x4d2c6dfcU, 0x53380d13U,
+        0x650a7354U, 0x766a0abbU, 0x81c2c92eU, 0x92722c85U,
+        0xa2bfe8a1U, 0xa81a664bU, 0xc24b8b70U, 0xc76c51a3U,
+        0xd192e819U, 0xd6990624U, 0xf40e3585U, 0x106aa070U,
+        0x19a4c116U, 0x1e376c08U, 0x2748774cU, 0x34b0bcb5U,
+        0x391c0cb3U, 0x4ed8aa4aU, 0x5b9cca4fU, 0x682e6ff3U,
+        0x748f82eeU, 0x78a5636fU, 0x84c87814U, 0x8cc70208U,
+        0x90befffaU, 0xa4506cebU, 0xbef9a3f7U, 0xc67178f2U,
+    };
+    std::vector<uint8_t> message(input.begin(), input.end());
+    const uint64_t bit_length = static_cast<uint64_t>(message.size()) * 8U;
+    message.push_back(0x80U);
+    while (message.size() % 64U != 56U) {
+        message.push_back(0U);
+    }
+    for (int shift = 56; shift >= 0; shift -= 8) {
+        message.push_back(static_cast<uint8_t>((bit_length >> shift) & 0xffU));
+    }
+    std::array<uint32_t, 8> hash = {
+        0x6a09e667U, 0xbb67ae85U, 0x3c6ef372U, 0xa54ff53aU,
+        0x510e527fU, 0x9b05688cU, 0x1f83d9abU, 0x5be0cd19U,
+    };
+    for (std::size_t chunk = 0; chunk < message.size(); chunk += 64U) {
+        std::array<uint32_t, 64> words{};
+        for (std::size_t index = 0; index < 16U; ++index) {
+            const std::size_t offset = chunk + index * 4U;
+            words[index] = (static_cast<uint32_t>(message[offset]) << 24U) |
+                (static_cast<uint32_t>(message[offset + 1U]) << 16U) |
+                (static_cast<uint32_t>(message[offset + 2U]) << 8U) |
+                static_cast<uint32_t>(message[offset + 3U]);
+        }
+        for (std::size_t index = 16U; index < 64U; ++index) {
+            const uint32_t s0 = rotate_right(words[index - 15U], 7U) ^
+                rotate_right(words[index - 15U], 18U) ^
+                (words[index - 15U] >> 3U);
+            const uint32_t s1 = rotate_right(words[index - 2U], 17U) ^
+                rotate_right(words[index - 2U], 19U) ^
+                (words[index - 2U] >> 10U);
+            words[index] = words[index - 16U] + s0 +
+                words[index - 7U] + s1;
+        }
+        uint32_t a = hash[0];
+        uint32_t b = hash[1];
+        uint32_t c = hash[2];
+        uint32_t d = hash[3];
+        uint32_t e = hash[4];
+        uint32_t f = hash[5];
+        uint32_t g = hash[6];
+        uint32_t h = hash[7];
+        for (std::size_t index = 0; index < 64U; ++index) {
+            const uint32_t s1 = rotate_right(e, 6U) ^ rotate_right(e, 11U) ^
+                rotate_right(e, 25U);
+            const uint32_t choice = (e & f) ^ ((~e) & g);
+            const uint32_t temp1 = h + s1 + choice + k[index] + words[index];
+            const uint32_t s0 = rotate_right(a, 2U) ^ rotate_right(a, 13U) ^
+                rotate_right(a, 22U);
+            const uint32_t majority = (a & b) ^ (a & c) ^ (b & c);
+            const uint32_t temp2 = s0 + majority;
+            h = g;
+            g = f;
+            f = e;
+            e = d + temp1;
+            d = c;
+            c = b;
+            b = a;
+            a = temp1 + temp2;
+        }
+        hash[0] += a;
+        hash[1] += b;
+        hash[2] += c;
+        hash[3] += d;
+        hash[4] += e;
+        hash[5] += f;
+        hash[6] += g;
+        hash[7] += h;
+    }
+    std::ostringstream output;
+    output << std::hex << std::setfill('0');
+    for (uint32_t value : hash) {
+        output << std::setw(8) << value;
+    }
+    return output.str();
 }
 
 std::string json_escape(const std::string& value) {
@@ -104,15 +206,82 @@ std::size_t matching_delimiter(const std::string& json, std::size_t start, char 
 }
 
 std::string object_for_key(const std::string& json, const std::string& key) {
-    const std::size_t start = find_value_start(json, key);
-    if (start == std::string::npos || start >= json.size() || json[start] != '{') {
-        return {};
+    const std::string token = find_key_token(key);
+    std::size_t search_from = 0;
+    while (search_from < json.size()) {
+        const std::size_t key_pos = json.find(token, search_from);
+        if (key_pos == std::string::npos) {
+            break;
+        }
+        const std::size_t colon = json.find(':', key_pos + token.size());
+        if (colon == std::string::npos) {
+            break;
+        }
+        std::size_t start = colon + 1;
+        while (start < json.size() &&
+               std::isspace(static_cast<unsigned char>(json[start]))) {
+            ++start;
+        }
+        if (start < json.size() && json[start] == '{') {
+            const std::size_t end = matching_delimiter(json, start, '{', '}');
+            if (end == std::string::npos) {
+                return {};
+            }
+            return json.substr(start, end - start + 1);
+        }
+        search_from = key_pos + token.size();
     }
-    const std::size_t end = matching_delimiter(json, start, '{', '}');
-    if (end == std::string::npos) {
-        return {};
+    return {};
+}
+
+std::string direct_object_for_key(const std::string& json, const std::string& key) {
+    const std::regex pattern("\\\"" + key + "\\\"\\s*:\\s*\\{");
+    for (std::sregex_iterator it(json.begin(), json.end(), pattern), end;
+         it != end;
+         ++it) {
+        const std::size_t key_pos = static_cast<std::size_t>((*it).position());
+        bool in_string = false;
+        bool escaped = false;
+        int depth = 0;
+        for (std::size_t pos = 0; pos < key_pos; ++pos) {
+            const char ch = json[pos];
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (ch == '\\' && in_string) {
+                escaped = true;
+                continue;
+            }
+            if (ch == '"') {
+                in_string = !in_string;
+                continue;
+            }
+            if (!in_string) {
+                if (ch == '{') {
+                    ++depth;
+                } else if (ch == '}') {
+                    --depth;
+                }
+            }
+        }
+        if (depth != 1) {
+            continue;
+        }
+        const std::size_t start = json.find(
+            '{',
+            key_pos + static_cast<std::size_t>((*it).length()) - 1
+        );
+        if (start == std::string::npos) {
+            return {};
+        }
+        const std::size_t object_end = matching_delimiter(json, start, '{', '}');
+        if (object_end == std::string::npos) {
+            return {};
+        }
+        return json.substr(start, object_end - start + 1);
     }
-    return json.substr(start, end - start + 1);
+    return {};
 }
 
 std::string array_for_key(const std::string& json, const std::string& key) {
@@ -163,6 +332,100 @@ bool bool_for_key(const std::string& json, const std::string& key, bool fallback
     return fallback;
 }
 
+bool exact_boolean_object_keys(
+    const std::string& json,
+    const std::vector<std::string>& expected_keys
+) {
+    if (json.empty()) {
+        return false;
+    }
+    std::vector<std::string> keys;
+    const std::regex key_pattern("\\\"([^\\\"]+)\\\"\\s*:");
+    for (std::sregex_iterator it(json.begin(), json.end(), key_pattern), end;
+         it != end;
+         ++it) {
+        keys.push_back((*it)[1].str());
+    }
+    std::sort(keys.begin(), keys.end());
+    std::vector<std::string> expected = expected_keys;
+    std::sort(expected.begin(), expected.end());
+    if (keys != expected) {
+        return false;
+    }
+    for (const std::string& key : expected_keys) {
+        const std::regex boolean_pattern(
+            "\\\"" + key + "\\\"\\s*:\\s*(true|false)\\s*[,}]"
+        );
+        if (!std::regex_search(json, boolean_pattern)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::size_t find_json_string_end(const std::string& json, std::size_t start);
+std::string decode_json_string_token(const std::string& token);
+
+std::vector<std::string> direct_object_keys(const std::string& json) {
+    std::vector<std::string> keys;
+    if (json.size() < 2 || json.front() != '{' || json.back() != '}') {
+        return keys;
+    }
+    bool in_string = false;
+    bool escaped = false;
+    int object_depth = 0;
+    int array_depth = 0;
+    for (std::size_t pos = 1; pos + 1 < json.size(); ++pos) {
+        const char ch = json[pos];
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (ch == '\\' && in_string) {
+            escaped = true;
+            continue;
+        }
+        if (ch == '"') {
+            if (!in_string && object_depth == 0 && array_depth == 0) {
+                const std::size_t end = find_json_string_end(json, pos);
+                if (end == std::string::npos) {
+                    return {};
+                }
+                std::size_t colon = end + 1;
+                while (colon < json.size() &&
+                       std::isspace(static_cast<unsigned char>(json[colon]))) {
+                    ++colon;
+                }
+                if (colon < json.size() && json[colon] == ':') {
+                    keys.push_back(decode_json_string_token(
+                        json.substr(pos, end - pos + 1)
+                    ));
+                }
+            }
+            in_string = !in_string;
+            continue;
+        }
+        if (in_string) {
+            continue;
+        }
+        if (ch == '{') ++object_depth;
+        else if (ch == '}') --object_depth;
+        else if (ch == '[') ++array_depth;
+        else if (ch == ']') --array_depth;
+    }
+    return keys;
+}
+
+bool exact_direct_object_keys(
+    const std::string& json,
+    std::vector<std::string> expected
+) {
+    std::vector<std::string> actual = direct_object_keys(json);
+    std::sort(actual.begin(), actual.end());
+    std::sort(expected.begin(), expected.end());
+    return actual == expected;
+}
+
 std::vector<std::string> string_array_for_key(const std::string& json, const std::string& key) {
     std::vector<std::string> values;
     const std::string array = array_for_key(json, key);
@@ -185,6 +448,24 @@ std::vector<float> float_array_for_key(const std::string& json, const std::strin
     const std::regex item_pattern("-?[0-9]+(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?");
     for (std::sregex_iterator it(array.begin(), array.end(), item_pattern), end; it != end; ++it) {
         values.push_back(std::stof((*it)[0].str()));
+    }
+    return values;
+}
+
+std::vector<int64_t> int64_array_for_key(
+    const std::string& json,
+    const std::string& key
+) {
+    std::vector<int64_t> values;
+    const std::string array = array_for_key(json, key);
+    if (array.empty()) {
+        return values;
+    }
+    const std::regex item_pattern("-?[0-9]+");
+    for (std::sregex_iterator it(array.begin(), array.end(), item_pattern), end;
+         it != end;
+         ++it) {
+        values.push_back(std::stoll((*it)[0].str()));
     }
     return values;
 }
@@ -419,6 +700,10 @@ void validate_architecture(const std::string& architecture) {
 }
 
 }  // namespace
+
+std::string sha256_hex(const std::string& input) {
+    return sha256_bytes(input);
+}
 
 std::string scyllasband_backend_name(ScyllasBandBackend backend) {
     switch (backend) {
@@ -688,6 +973,272 @@ ScyllasBandBundleInfo load_scyllasband_bundle_info(
             "Word-boundary presence threshold must be positive"
         );
     }
+    const std::string duration_pause_presence = object_for_key(
+        controls, "duration_pause_presence"
+    );
+    info.duration_pause_presence_enabled = bool_for_key(
+        duration_pause_presence, "enabled", false
+    );
+    info.duration_pause_presence_threshold_probability = float_for_key(
+        duration_pause_presence, "threshold_probability", 0.5f
+    );
+    if (info.duration_pause_presence_enabled) {
+        if (string_for_key(duration_pause_presence, "schema") !=
+                "scyllasband_duration_pause_presence_v1" ||
+            string_for_key(duration_pause_presence, "activation") != "sigmoid") {
+            throw std::runtime_error(
+                "Unsupported duration pause-presence contract"
+            );
+        }
+        if (!std::isfinite(info.duration_pause_presence_threshold_probability) ||
+            info.duration_pause_presence_threshold_probability <= 0.0f ||
+            info.duration_pause_presence_threshold_probability > 1.0f) {
+            throw std::runtime_error(
+                "Duration pause-presence threshold must be finite and in (0, 1]"
+            );
+        }
+        if (string_array_for_key(duration_pause_presence, "outputs") !=
+            std::vector<std::string>{"durations", "pause_presence_logits"}) {
+            throw std::runtime_error(
+                "Duration pause-presence controls must declare both duration outputs"
+            );
+        }
+        const std::string owners = object_for_key(
+            duration_pause_presence, "eligible_pause_owners"
+        );
+        if (string_for_key(owners, "punctuation") != "following_silence_only" ||
+            string_for_key(owners, "word_boundary") !=
+                "explicit_candidate_mask_only") {
+            throw std::runtime_error(
+                "Duration pause-presence ownership contract is invalid"
+            );
+        }
+    }
+    const std::string duration_hierarchy = direct_object_for_key(
+        controls, "duration_hierarchy_sampling"
+    );
+    info.duration_hierarchy_sampling_enabled = bool_for_key(
+        duration_hierarchy, "enabled", false
+    );
+    if (info.duration_hierarchy_sampling_enabled) {
+        const std::vector<std::string> hierarchy_outputs =
+            info.duration_pause_presence_enabled
+                ? std::vector<std::string>{
+                      "durations", "pause_presence_logits", "duration_quantiles"
+                  }
+                : std::vector<std::string>{"durations", "duration_quantiles"};
+        if (!exact_direct_object_keys(
+                duration_hierarchy,
+                {"enabled", "schema", "policy", "outputs", "quantiles", "modes",
+                 "default_mode", "seed", "sampling_key", "defaults",
+                 "phrase_boundary", "pause_owners"}
+            ) ||
+            string_for_key(duration_hierarchy, "schema") !=
+                "scyllasband_duration_hierarchy_sampling_v1" ||
+            string_for_key(duration_hierarchy, "policy") !=
+                "coherent_utterance_phrase_quantile_with_presence_hurdle_v1" ||
+            string_array_for_key(duration_hierarchy, "outputs") != hierarchy_outputs ||
+            string_array_for_key(duration_hierarchy, "modes") !=
+                std::vector<std::string>{"sampled", "p50"}) {
+            throw std::runtime_error("Unsupported duration hierarchy sampling contract");
+        }
+        const std::string default_mode = string_for_key(
+            duration_hierarchy, "default_mode"
+        );
+        if (default_mode != "sampled" && default_mode != "p50") {
+            throw std::runtime_error("Duration hierarchy default mode is invalid");
+        }
+        info.duration_hierarchy_default_sampled = default_mode == "sampled";
+        const std::string quantiles = direct_object_for_key(
+            duration_hierarchy, "quantiles"
+        );
+        if (!exact_direct_object_keys(
+                quantiles, {"output", "levels", "domain", "ordering"}
+            ) ||
+            string_for_key(quantiles, "output") != "duration_quantiles" ||
+            float_array_for_key(quantiles, "levels") !=
+                std::vector<float>{0.1f, 0.5f, 0.9f} ||
+            string_for_key(quantiles, "domain") != "positive_duration_frames" ||
+            string_for_key(quantiles, "ordering") !=
+                "monotonic_p10_p50_p90") {
+            throw std::runtime_error("Duration hierarchy quantile contract is invalid");
+        }
+        const std::string seed = direct_object_for_key(duration_hierarchy, "seed");
+        if (!exact_direct_object_keys(
+                seed, {"source", "missing_request_seed", "algorithm"}
+            ) ||
+            string_for_key(seed, "source") != "request_seed" ||
+            int_for_key(seed, "missing_request_seed", -1) != 0 ||
+            string_for_key(seed, "algorithm") != "sha256_box_muller_v1") {
+            throw std::runtime_error("Duration hierarchy seed contract is invalid");
+        }
+        if (string_for_key(duration_hierarchy, "sampling_key") !=
+            "utf8_byte_length_prefixed_language_voice_phones_v1") {
+            throw std::runtime_error("Duration hierarchy sampling key is invalid");
+        }
+        const std::string defaults = direct_object_for_key(
+            duration_hierarchy, "defaults"
+        );
+        info.duration_hierarchy_pause_strength = float_for_key(
+            defaults, "pause_strength", -1.0f
+        );
+        info.duration_hierarchy_speech_strength = float_for_key(
+            defaults, "speech_strength", -1.0f
+        );
+        info.duration_hierarchy_sample_presence = bool_for_key(
+            defaults, "sample_presence", false
+        );
+        info.duration_hierarchy_max_abs_z = float_for_key(
+            defaults, "max_abs_z", -1.0f
+        );
+        if (!exact_direct_object_keys(
+                defaults,
+                {"pause_strength", "speech_strength", "sample_presence", "max_abs_z"}
+            ) ||
+            info.duration_hierarchy_pause_strength != 1.0f ||
+            info.duration_hierarchy_speech_strength != 0.0f ||
+            info.duration_hierarchy_sample_presence !=
+                info.duration_pause_presence_enabled ||
+            info.duration_hierarchy_max_abs_z != 2.0f) {
+            throw std::runtime_error("Duration hierarchy defaults are invalid");
+        }
+        const std::string pause_owners = direct_object_for_key(
+            duration_hierarchy, "pause_owners"
+        );
+        if (string_for_key(duration_hierarchy, "phrase_boundary") !=
+                "punctuation_owned_silence_after_boundary_v1" ||
+            !exact_direct_object_keys(
+                pause_owners, {"punctuation", "word_boundary"}
+            ) ||
+            string_for_key(pause_owners, "punctuation") !=
+                "following_or_remapped_silence_only" ||
+            string_for_key(pause_owners, "word_boundary") !=
+                "explicit_candidate_mask_only") {
+            throw std::runtime_error("Duration hierarchy ownership contract is invalid");
+        }
+    } else if (!duration_hierarchy.empty()) {
+        throw std::runtime_error(
+            "Disabled duration hierarchy controls must be omitted"
+        );
+    }
+    const std::string vector_timing = object_for_key(
+        controls, "vector_timing_conditioning"
+    );
+    info.vector_timing_enabled = bool_for_key(vector_timing, "enabled", false);
+    if (info.vector_timing_enabled) {
+        const std::vector<std::string> timing_inputs = {
+            "expanded_boundary_event_ids",
+            "expanded_modifier_event_ids",
+            "expanded_phone_phase",
+            "expanded_phone_log_duration",
+        };
+        if (string_for_key(vector_timing, "schema") !=
+                "scyllasband_vector_timing_conditioning_v1" ||
+            string_array_for_key(vector_timing, "inputs") != timing_inputs) {
+            throw std::runtime_error("Unsupported vector timing conditioning contract");
+        }
+        const std::string features = object_for_key(vector_timing, "features");
+        if (!exact_boolean_object_keys(
+                features,
+                {"boundary_events", "modifier_events", "local_timing"}
+            )) {
+            throw std::runtime_error("Vector timing feature flags are invalid");
+        }
+        info.vector_boundary_events_enabled = bool_for_key(
+            features, "boundary_events", false
+        );
+        info.vector_modifier_events_enabled = bool_for_key(
+            features, "modifier_events", false
+        );
+        info.vector_local_timing_enabled = bool_for_key(
+            features, "local_timing", false
+        );
+        if (!info.vector_boundary_events_enabled &&
+            !info.vector_modifier_events_enabled &&
+            !info.vector_local_timing_enabled) {
+            throw std::runtime_error("Enabled vector timing contract has no feature");
+        }
+        const std::string phone_vocab = object_for_key(vector_timing, "phone_vocab");
+        info.vector_timing_phone_vocab_asset = string_for_key(phone_vocab, "asset");
+        info.vector_timing_phone_vocab_sha256 = string_for_key(phone_vocab, "sha256");
+        info.vector_timing_phone_vocab_size = int_for_key(phone_vocab, "size", 0);
+        if (info.vector_timing_phone_vocab_asset.empty() ||
+            info.vector_timing_phone_vocab_sha256.size() != 64 ||
+            info.vector_timing_phone_vocab_size <= 0) {
+            throw std::runtime_error("Vector timing phone vocabulary binding is invalid");
+        }
+        const std::string boundary = direct_object_for_key(
+            vector_timing, "boundary_events"
+        );
+        if (bool_for_key(boundary, "enabled", false) !=
+                info.vector_boundary_events_enabled ||
+            string_for_key(boundary, "encoding") !=
+                "phone_vocab_id_plus_synthetic_word_boundary_v1") {
+            throw std::runtime_error("Vector timing boundary-event contract is invalid");
+        }
+        info.vector_synthetic_word_boundary_id = int_for_key(
+            boundary, "synthetic_word_boundary_id", -1
+        );
+        info.vector_punctuation_symbols = string_array_for_key(
+            boundary, "punctuation_symbols"
+        );
+        info.vector_punctuation_phone_ids = int64_array_for_key(
+            boundary, "punctuation_phone_ids"
+        );
+        const std::string owners = object_for_key(boundary, "owners");
+        if (info.vector_synthetic_word_boundary_id !=
+                info.vector_timing_phone_vocab_size ||
+            string_for_key(owners, "punctuation") !=
+                "following_silence_then_first_surviving_frame" ||
+            string_for_key(owners, "word_boundary") !=
+                "candidate_silence_then_first_surviving_frame") {
+            throw std::runtime_error("Vector timing boundary ownership is invalid");
+        }
+        const std::string modifiers = direct_object_for_key(
+            vector_timing, "modifier_events"
+        );
+        if (bool_for_key(modifiers, "enabled", false) !=
+                info.vector_modifier_events_enabled ||
+            string_for_key(modifiers, "encoding") != "bitmask_v1") {
+            throw std::runtime_error("Vector timing modifier-event contract is invalid");
+        }
+        info.vector_modifier_event_bits = int_for_key(modifiers, "bits", 0);
+        info.vector_modifier_symbols = string_array_for_key(modifiers, "symbols");
+        info.vector_modifier_phone_ids = int64_array_for_key(modifiers, "phone_ids");
+        info.vector_modifier_bit_masks = int64_array_for_key(modifiers, "bit_masks");
+        const std::size_t modifier_count = info.vector_modifier_events_enabled
+            ? static_cast<std::size_t>(info.vector_modifier_event_bits)
+            : 0;
+        if (info.vector_modifier_event_bits < 0 ||
+            info.vector_modifier_event_bits > 30 ||
+            info.vector_modifier_symbols.size() != modifier_count ||
+            info.vector_modifier_phone_ids.size() != modifier_count ||
+            info.vector_modifier_bit_masks.size() != modifier_count ||
+            string_for_key(modifiers, "ownership") !=
+                "stress_bidirectional_postfix_exact_base_segment_bounded_v2" ||
+            string_for_key(modifiers, "zero_quantized_fallback") !=
+                "audit_unrepresented_zero_frame_modifier_v1") {
+            throw std::runtime_error("Vector timing modifier vocabulary is invalid");
+        }
+        for (std::size_t bit = 0; bit < modifier_count; ++bit) {
+            if (info.vector_modifier_bit_masks[bit] !=
+                (static_cast<int64_t>(1) << bit)) {
+                throw std::runtime_error("Vector timing modifier bit masks are invalid");
+            }
+        }
+        const std::string local = direct_object_for_key(
+            vector_timing, "local_timing"
+        );
+        if (bool_for_key(local, "enabled", false) != info.vector_local_timing_enabled ||
+            string_for_key(local, "phase") !=
+                "(frame_index_plus_0_5)/phone_duration_frames" ||
+            string_for_key(local, "log_duration") !=
+                "log1p(phone_duration_frames)" ||
+            string_for_key(local, "duration_source") !=
+                "final_post_pause_presence_and_floor_frames") {
+            throw std::runtime_error("Vector local-timing contract is invalid");
+        }
+    }
     const std::string punctuation_silence = object_for_key(controls, "punctuation_silence");
     info.punctuation_silence_target = string_for_key(
         punctuation_silence,
@@ -808,6 +1359,45 @@ ScyllasBandBundleInfo load_scyllasband_bundle_info(
         info.component_inputs[component_name] = string_array_for_key(component, "inputs");
         info.component_outputs[component_name] = string_array_for_key(component, "outputs");
     }
+    const std::vector<std::string>& duration_outputs =
+        info.component_outputs.at("duration_predictor");
+    std::vector<std::string> expected_duration_outputs = {"durations"};
+    if (info.duration_pause_presence_enabled) {
+        expected_duration_outputs.push_back("pause_presence_logits");
+    }
+    if (info.duration_hierarchy_sampling_enabled) {
+        expected_duration_outputs.push_back("duration_quantiles");
+    }
+    if (duration_outputs != expected_duration_outputs) {
+        throw std::runtime_error(
+            "duration_predictor outputs do not match enabled duration controls"
+        );
+    }
+    if (info.duration_pause_presence_enabled) {
+        if (std::find(duration_outputs.begin(), duration_outputs.end(),
+                      "pause_presence_logits") == duration_outputs.end()) {
+            throw std::runtime_error(
+                "duration_predictor outputs must be durations,pause_presence_logits "
+                "when duration_pause_presence is enabled"
+            );
+        }
+    } else if (std::find(
+                   duration_outputs.begin(),
+                   duration_outputs.end(),
+                   "pause_presence_logits"
+               ) != duration_outputs.end()) {
+        throw std::runtime_error(
+            "duration_predictor declares pause_presence_logits without "
+            "duration_pause_presence controls"
+        );
+    }
+    if (!info.duration_hierarchy_sampling_enabled &&
+        std::find(duration_outputs.begin(), duration_outputs.end(),
+                  "duration_quantiles") != duration_outputs.end()) {
+        throw std::runtime_error(
+            "duration_predictor declares duration_quantiles without hierarchy controls"
+        );
+    }
     auto load_bucket_component = [&](const std::string& component_name, bool required) {
         if (component_name.empty() || info.component_artifacts.count(component_name) > 0) {
             return;
@@ -867,6 +1457,103 @@ ScyllasBandBundleInfo load_scyllasband_bundle_info(
     const auto phone_asset = info.assets.find("phone_vocab");
     if (phone_asset != info.assets.end()) {
         info.phone_to_id = load_phone_vocab_asset(bundle_path / phone_asset->second);
+    }
+    const std::vector<std::string> vector_timing_inputs = {
+        "expanded_boundary_event_ids",
+        "expanded_modifier_event_ids",
+        "expanded_phone_phase",
+        "expanded_phone_log_duration",
+    };
+    for (const auto& item : info.component_inputs) {
+        if (item.first.rfind("vector_estimator", 0) != 0) {
+            continue;
+        }
+        const std::vector<std::string>& inputs = item.second;
+        bool has_timing = false;
+        for (const std::string& name : vector_timing_inputs) {
+            has_timing = has_timing ||
+                std::find(inputs.begin(), inputs.end(), name) != inputs.end();
+        }
+        if (!info.vector_timing_enabled) {
+            if (has_timing) {
+                throw std::runtime_error(
+                    item.first + " exposes vector timing inputs without controls"
+                );
+            }
+            continue;
+        }
+        if (inputs.size() < vector_timing_inputs.size() ||
+            !std::equal(
+                vector_timing_inputs.begin(),
+                vector_timing_inputs.end(),
+                inputs.end() - static_cast<std::ptrdiff_t>(vector_timing_inputs.size())
+            )) {
+            throw std::runtime_error(
+                item.first + " must end with the vector timing input quartet"
+            );
+        }
+        for (const std::string& name : vector_timing_inputs) {
+            if (std::count(inputs.begin(), inputs.end(), name) != 1) {
+                throw std::runtime_error(item.first + " has duplicate vector timing inputs");
+            }
+        }
+    }
+    if (info.vector_timing_enabled) {
+        if (phone_asset == info.assets.end() ||
+            info.vector_timing_phone_vocab_asset != phone_asset->second) {
+            throw std::runtime_error(
+                "Vector timing phone vocabulary asset does not match bundle"
+            );
+        }
+        const std::string actual_vocab_sha = sha256_bytes(
+            read_text_file(bundle_path / phone_asset->second)
+        );
+        if (actual_vocab_sha != info.vector_timing_phone_vocab_sha256) {
+            throw std::runtime_error("Vector timing phone vocabulary SHA-256 mismatch");
+        }
+        std::vector<int> ids;
+        ids.reserve(info.phone_to_id.size());
+        for (const auto& item : info.phone_to_id) {
+            ids.push_back(item.second);
+        }
+        std::sort(ids.begin(), ids.end());
+        for (std::size_t index = 0; index < ids.size(); ++index) {
+            if (ids[index] != static_cast<int>(index)) {
+                throw std::runtime_error("Vector timing phone vocabulary IDs are not contiguous");
+            }
+        }
+        if (static_cast<int>(ids.size()) != info.vector_timing_phone_vocab_size) {
+            throw std::runtime_error("Vector timing phone vocabulary size mismatch");
+        }
+        std::vector<std::pair<int, std::string>> ordered;
+        ordered.reserve(info.phone_to_id.size());
+        for (const auto& item : info.phone_to_id) {
+            ordered.emplace_back(item.second, item.first);
+        }
+        std::sort(ordered.begin(), ordered.end());
+        std::vector<std::string> expected_punctuation;
+        std::vector<int64_t> expected_punctuation_ids;
+        std::vector<std::string> expected_modifiers;
+        std::vector<int64_t> expected_modifier_ids;
+        for (const auto& item : ordered) {
+            if (scyllasband_detail::is_zero_duration_punctuation_phone(item.second)) {
+                expected_punctuation.push_back(item.second);
+                expected_punctuation_ids.push_back(item.first);
+            }
+            if (scyllasband_detail::is_non_acoustic_modifier_phone(item.second)) {
+                expected_modifiers.push_back(item.second);
+                expected_modifier_ids.push_back(item.first);
+            }
+        }
+        if (info.vector_punctuation_symbols != expected_punctuation ||
+            info.vector_punctuation_phone_ids != expected_punctuation_ids) {
+            throw std::runtime_error("Vector timing punctuation mapping mismatch");
+        }
+        if (info.vector_modifier_events_enabled &&
+            (info.vector_modifier_symbols != expected_modifiers ||
+             info.vector_modifier_phone_ids != expected_modifier_ids)) {
+            throw std::runtime_error("Vector timing modifier mapping mismatch");
+        }
     }
     const auto g2p_tokenizer_asset = info.assets.find("g2p_tokenizer");
     if (g2p_tokenizer_asset != info.assets.end()) {
@@ -1042,6 +1729,10 @@ std::string bundle_summary_json(const ScyllasBandBundleInfo& bundle) {
              << "\"word_boundaries_enabled\":" << (bundle.word_boundaries_enabled ? "true" : "false") << ","
              << "\"word_boundary_duration_phone\":\"" << json_escape(bundle.word_boundary_duration_phone) << "\","
              << "\"word_boundary_presence_threshold_frames\":" << bundle.word_boundary_presence_threshold_frames << ","
+             << "\"duration_pause_presence_enabled\":"
+             << (bundle.duration_pause_presence_enabled ? "true" : "false") << ","
+             << "\"duration_pause_presence_threshold_probability\":"
+             << bundle.duration_pause_presence_threshold_probability << ","
              << "\"punctuation_silence_target\":\"" << json_escape(bundle.punctuation_silence_target) << "\","
              << "\"punctuation_pause_floors_calibrated\":"
              << (bundle.punctuation_pause_floors_calibrated ? "true" : "false") << ","

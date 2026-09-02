@@ -505,6 +505,7 @@ def _speak(args: argparse.Namespace) -> int:
             steps=args.steps,
             sampler=args.sampler,
             speed=args.speed,
+            duration_hierarchy_mode=args.duration_hierarchy_mode,
             min_sentence_pause_ms=float(getattr(args, "min_sentence_pause_ms", 0.0)),
             min_clause_pause_ms=float(getattr(args, "min_clause_pause_ms", 0.0)),
         )
@@ -820,6 +821,12 @@ def _add_synthesis_args(
         help="Shortcut for faster speed mode: --adaptive-chunking --steps 2 --max-chunk-chars 180",
     )
     parser.add_argument("--speed", type=float, default=1.0, help="Speaking speed multiplier")
+    parser.add_argument(
+        "--duration-hierarchy-mode",
+        choices=("default", "sampled", "p50"),
+        default="default",
+        help="Duration hierarchy policy: bundle default, coherent sampled pauses, or deterministic p50",
+    )
     parser.add_argument("--seed", type=int, default=None, help="Deterministic seed")
     parser.add_argument(
         "--chunk-text",

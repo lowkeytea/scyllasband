@@ -254,6 +254,10 @@ struct ScyllasBandLiteRtInputStorage {
     std::vector<float> hidden;
     std::vector<float> time;
     std::vector<int64_t> expanded_phone_ids;
+    std::vector<int64_t> expanded_boundary_event_ids;
+    std::vector<int64_t> expanded_modifier_event_ids;
+    std::vector<float> expanded_phone_phase;
+    std::vector<float> expanded_phone_log_duration;
     std::vector<uint8_t> latent_mask;
     std::vector<int64_t> voice_id;
     std::vector<int64_t> language_id;
@@ -286,12 +290,23 @@ struct ScyllasBandDurationExpansionMetadata {
     std::vector<float> duration_values;
     std::vector<int64_t> predicted_durations;
     std::vector<int64_t> expanded_phone_ids;
+    std::vector<int64_t> expanded_boundary_event_ids;
+    std::vector<int64_t> expanded_modifier_event_ids;
+    std::vector<float> expanded_phone_phase;
+    std::vector<float> expanded_phone_log_duration;
+    int64_t unrepresented_zero_frame_modifier_events = 0;
+    bool vector_timing_enabled = false;
     int64_t predicted_latent_frames = 0;
     float duration_scale = 1.0f;
+    std::string duration_hierarchy_mode = "p50";
+    std::string duration_hierarchy_sampling_key_sha256;
+    int64_t duration_hierarchy_changed_pause_count = 0;
 };
 
 struct ScyllasBandDurationPrediction {
     std::vector<float> values;
+    std::vector<float> pause_presence_logits;
+    std::vector<float> quantiles;
     std::string outputs_json;
 };
 
@@ -2670,6 +2685,42 @@ std::vector<float> copy_first_float_tensor_values(
     return std::vector<float>(values, values + count);
 }
 
+std::vector<float> copy_float_tensor_values_at(
+    const ScyllasBandOwnedTensor* tensors,
+    int32_t tensor_count,
+    int32_t tensor_index,
+    const std::string& component_name,
+    std::size_t expected_values
+) {
+    if (tensors == nullptr || tensor_index < 0 || tensor_index >= tensor_count) {
+        throw std::runtime_error(
+            component_name + " returned too few tensors"
+        );
+    }
+    const ScyllasBandOwnedTensor& tensor = tensors[tensor_index];
+    const std::string output_name = "output_" + std::to_string(tensor_index);
+    if (tensor.data_type != SCYLLASBAND_TENSOR_FLOAT32 || tensor.data == nullptr) {
+        throw std::runtime_error(
+            component_name + " " + output_name + " must be float32"
+        );
+    }
+    const std::size_t available_values = tensor.byte_length / sizeof(float);
+    if (available_values < expected_values) {
+        throw std::runtime_error(
+            component_name + " " + output_name + " is shorter than expected"
+        );
+    }
+    const auto* values = static_cast<const float*>(tensor.data);
+    for (std::size_t index = 0; index < expected_values; ++index) {
+        if (!std::isfinite(values[index])) {
+            throw std::runtime_error(
+                component_name + " " + output_name + " contains non-finite values"
+            );
+        }
+    }
+    return std::vector<float>(values, values + expected_values);
+}
+
 std::string int64_vector_json(const std::vector<int64_t>& values, std::size_t limit = 0) {
     std::ostringstream out;
     out << "[";
@@ -3051,6 +3102,14 @@ ScyllasBandDurationPrediction run_duration_predictor(
     ScyllasBandDurationPrediction prediction;
     try {
         prediction.outputs_json = tensor_outputs_json(outputs, output_count);
+        const int32_t expected_output_count = 1 +
+            (bundle.duration_pause_presence_enabled ? 1 : 0) +
+            (bundle.duration_hierarchy_sampling_enabled ? 1 : 0);
+        if (output_count != expected_output_count) {
+            throw std::runtime_error(
+                "duration_predictor output count does not match enabled controls"
+            );
+        }
         prediction.values = copy_first_float_tensor_values(
             outputs,
             output_count,
@@ -3058,6 +3117,37 @@ ScyllasBandDurationPrediction run_duration_predictor(
             static_cast<std::size_t>(prepared.phone_count),
             static_cast<std::size_t>(prepared.phone_count)
         );
+        if (bundle.duration_pause_presence_enabled) {
+            prediction.pause_presence_logits = copy_float_tensor_values_at(
+                outputs,
+                output_count,
+                1,
+                "duration_predictor",
+                static_cast<std::size_t>(prepared.phone_count)
+            );
+        }
+        if (bundle.duration_hierarchy_sampling_enabled) {
+            const int32_t quantile_index =
+                1 + (bundle.duration_pause_presence_enabled ? 1 : 0);
+            prediction.quantiles = copy_float_tensor_values_at(
+                outputs,
+                output_count,
+                quantile_index,
+                "duration_predictor",
+                static_cast<std::size_t>(prepared.phone_count) * 3U
+            );
+            for (int index = 0; index < prepared.phone_count; ++index) {
+                const std::size_t offset = static_cast<std::size_t>(index) * 3U;
+                const float lower = prediction.quantiles[offset];
+                const float median = prediction.quantiles[offset + 1U];
+                const float upper = prediction.quantiles[offset + 2U];
+                if (lower < 0.0f || median < lower || upper < median) {
+                    throw std::runtime_error(
+                        "duration_predictor quantiles must be nonnegative and monotonic"
+                    );
+                }
+            }
+        }
     } catch (...) {
         scyllasband_tensors_destroy(outputs, output_count);
         throw;
@@ -3092,6 +3182,17 @@ ScyllasBandDurationPrediction predict_duration_values(
         if (null_prediction.values.size() != conditioned_prediction.values.size()) {
             throw std::runtime_error("Affect duration guidance branches returned mismatched shapes");
         }
+        if (null_prediction.pause_presence_logits.size() !=
+            conditioned_prediction.pause_presence_logits.size()) {
+            throw std::runtime_error(
+                "Affect duration presence branches returned mismatched shapes"
+            );
+        }
+        if (null_prediction.quantiles.size() != conditioned_prediction.quantiles.size()) {
+            throw std::runtime_error(
+                "Affect duration quantile branches returned mismatched shapes"
+            );
+        }
         std::vector<float> blended(null_prediction.values.size(), 0.0f);
         for (std::size_t index = 0; index < blended.size(); ++index) {
             blended[index] = std::max(
@@ -3102,6 +3203,34 @@ ScyllasBandDurationPrediction predict_duration_values(
         }
         ScyllasBandDurationPrediction prediction;
         prediction.values = std::move(blended);
+        prediction.pause_presence_logits.resize(
+            null_prediction.pause_presence_logits.size(), 0.0f
+        );
+        for (std::size_t index = 0;
+             index < prediction.pause_presence_logits.size(); ++index) {
+            prediction.pause_presence_logits[index] =
+                null_prediction.pause_presence_logits[index] +
+                resolved_request.affect_guidance_scale *
+                    (conditioned_prediction.pause_presence_logits[index] -
+                     null_prediction.pause_presence_logits[index]);
+        }
+        prediction.quantiles.resize(null_prediction.quantiles.size(), 0.0f);
+        for (std::size_t index = 0; index < prediction.quantiles.size(); ++index) {
+            prediction.quantiles[index] = std::max(
+                0.0f,
+                null_prediction.quantiles[index] +
+                    resolved_request.affect_guidance_scale *
+                    (conditioned_prediction.quantiles[index] -
+                     null_prediction.quantiles[index])
+            );
+        }
+        for (std::size_t offset = 0; offset + 2U < prediction.quantiles.size();
+             offset += 3U) {
+            std::sort(
+                prediction.quantiles.begin() + static_cast<std::ptrdiff_t>(offset),
+                prediction.quantiles.begin() + static_cast<std::ptrdiff_t>(offset + 3U)
+            );
+        }
         std::ostringstream metadata;
         metadata << "{\"mode\":\"affect_cfg\",\"branches\":2,"
                  << "\"scale\":" << resolved_request.affect_guidance_scale << ","
@@ -3131,8 +3260,22 @@ ScyllasBandDurationPrediction predict_duration_values(
         null_reference_scale
     );
     std::vector<float> blended(null_prediction.values.size(), 0.0f);
+    std::vector<float> blended_presence(
+        null_prediction.pause_presence_logits.size(), 0.0f
+    );
+    std::vector<float> blended_quantiles(
+        null_prediction.quantiles.size(), 0.0f
+    );
     for (std::size_t index = 0; index < blended.size(); ++index) {
         blended[index] = resolved_request.emotion_guidance_null_weight * null_prediction.values[index];
+    }
+    for (std::size_t index = 0; index < blended_presence.size(); ++index) {
+        blended_presence[index] = resolved_request.emotion_guidance_null_weight *
+            null_prediction.pause_presence_logits[index];
+    }
+    for (std::size_t index = 0; index < blended_quantiles.size(); ++index) {
+        blended_quantiles[index] = resolved_request.emotion_guidance_null_weight *
+            null_prediction.quantiles[index];
     }
     std::string last_outputs = null_prediction.outputs_json;
     int branch_count = 1;
@@ -3147,16 +3290,46 @@ ScyllasBandDurationPrediction predict_duration_values(
         );
         last_outputs = term_prediction.outputs_json;
         ++branch_count;
+        if (term_prediction.pause_presence_logits.size() !=
+            blended_presence.size()) {
+            throw std::runtime_error(
+                "Categorical duration presence branches returned mismatched shapes"
+            );
+        }
+        if (term_prediction.quantiles.size() != blended_quantiles.size()) {
+            throw std::runtime_error(
+                "Categorical duration quantile branches returned mismatched shapes"
+            );
+        }
         for (std::size_t index = 0; index < blended.size(); ++index) {
             blended[index] += term.scale * term_prediction.values[index];
+        }
+        for (std::size_t index = 0; index < blended_presence.size(); ++index) {
+            blended_presence[index] +=
+                term.scale * term_prediction.pause_presence_logits[index];
+        }
+        for (std::size_t index = 0; index < blended_quantiles.size(); ++index) {
+            blended_quantiles[index] += term.scale * term_prediction.quantiles[index];
         }
     }
     for (float& value : blended) {
         value = std::max(0.0f, value);
     }
+    for (float& value : blended_quantiles) {
+        value = std::max(0.0f, value);
+    }
+    for (std::size_t offset = 0; offset + 2U < blended_quantiles.size();
+         offset += 3U) {
+        std::sort(
+            blended_quantiles.begin() + static_cast<std::ptrdiff_t>(offset),
+            blended_quantiles.begin() + static_cast<std::ptrdiff_t>(offset + 3U)
+        );
+    }
 
     ScyllasBandDurationPrediction prediction;
     prediction.values = std::move(blended);
+    prediction.pause_presence_logits = std::move(blended_presence);
+    prediction.quantiles = std::move(blended_quantiles);
     std::ostringstream metadata;
     metadata << "{"
              << "\"branches\":" << branch_count << ","
@@ -3172,6 +3345,13 @@ bool is_silence_phone(const std::string& phone) {
     return phone == "<sil>" || phone == "sil" || phone == "sp" || phone == "<sp>";
 }
 
+float stable_sigmoid(float value) {
+    if (value >= 0.0f) {
+        return 1.0f / (1.0f + std::exp(-value));
+    }
+    const float exponential = std::exp(value);
+    return exponential / (1.0f + exponential);
+}
 
 ScyllasBandDurationExpansionMetadata expand_duration_values(
     const ScyllasBandBundleInfo& bundle,
@@ -3179,14 +3359,40 @@ ScyllasBandDurationExpansionMetadata expand_duration_values(
     const ScyllasBandSynthesisRequest& request,
     const std::string& language,
     const std::vector<float>& duration_values,
+    const std::vector<float>& pause_presence_logits,
+    const std::vector<float>& duration_quantiles,
     bool allow_over_budget = false
 ) {
     if (duration_values.size() < static_cast<std::size_t>(prepared.phone_count)) {
         throw std::runtime_error("duration_predictor output is shorter than the active phone sequence");
     }
+    if (bundle.duration_pause_presence_enabled &&
+        pause_presence_logits.size() < static_cast<std::size_t>(prepared.phone_count)) {
+        throw std::runtime_error(
+            "duration pause-presence output is shorter than the active phone sequence"
+        );
+    }
+    if (bundle.duration_hierarchy_sampling_enabled &&
+        duration_quantiles.size() < static_cast<std::size_t>(prepared.phone_count) * 3U) {
+        throw std::runtime_error(
+            "duration quantile output is shorter than the active phone sequence"
+        );
+    }
+    const bool hierarchy_sampled = bundle.duration_hierarchy_sampling_enabled && (
+        request.duration_hierarchy_mode == SCYLLASBAND_DURATION_HIERARCHY_SAMPLED ||
+        (request.duration_hierarchy_mode == SCYLLASBAND_DURATION_HIERARCHY_DEFAULT &&
+         bundle.duration_hierarchy_default_sampled)
+    );
+    if (request.duration_hierarchy_mode == SCYLLASBAND_DURATION_HIERARCHY_SAMPLED &&
+        !bundle.duration_hierarchy_sampling_enabled) {
+        throw std::runtime_error(
+            "Sampled duration hierarchy mode requires a hierarchy-enabled bundle"
+        );
+    }
     const float speed = request.speed <= 0.0f ? 1.0f : request.speed;
     ScyllasBandDurationExpansionMetadata expanded;
     expanded.duration_scale = 1.0f / speed;
+    expanded.duration_hierarchy_mode = hierarchy_sampled ? "sampled" : "p50";
     expanded.duration_values.reserve(static_cast<std::size_t>(prepared.phone_count));
     expanded.predicted_durations.reserve(static_cast<std::size_t>(prepared.phone_count));
     const int64_t sentence_pause_floor = pause_ms_to_latent_frames(
@@ -3215,6 +3421,46 @@ ScyllasBandDurationExpansionMetadata expand_duration_values(
         request.chunk_index >= 0 &&
         request.chunk_index + 1 < request.chunk_count
     );
+    std::vector<uint8_t> punctuation_owned(
+        static_cast<std::size_t>(prepared.phone_count), 0
+    );
+    std::vector<uint8_t> pause_owned(
+        static_cast<std::size_t>(prepared.phone_count), 0
+    );
+    std::vector<int> phrase_indices(
+        static_cast<std::size_t>(prepared.phone_count), 0
+    );
+    int phrase_count = 1;
+    for (int index = 0; index < prepared.phone_count; ++index) {
+        const std::string& phone = prepared.phones[static_cast<std::size_t>(index)];
+        const bool remapped = is_silence_phone(phone) &&
+            static_cast<std::size_t>(index) < prepared.punctuation_floor_phones.size() &&
+            scyllasband_detail::is_zero_duration_punctuation_phone(
+                prepared.punctuation_floor_phones[static_cast<std::size_t>(index)]
+            );
+        const bool following = is_silence_phone(phone) && index > 0 &&
+            static_cast<std::size_t>(index - 1) < prepared.punctuation_floor_phones.size() &&
+            scyllasband_detail::is_zero_duration_punctuation_phone(
+                prepared.punctuation_floor_phones[static_cast<std::size_t>(index - 1)]
+            );
+        const bool word = is_silence_phone(phone) &&
+            static_cast<std::size_t>(index) < prepared.word_boundary_candidate_mask.size() &&
+            prepared.word_boundary_candidate_mask[static_cast<std::size_t>(index)] != 0;
+        phrase_indices[static_cast<std::size_t>(index)] = phrase_count - 1;
+        punctuation_owned[static_cast<std::size_t>(index)] = remapped || following;
+        pause_owned[static_cast<std::size_t>(index)] = word || remapped || following;
+        if (remapped || following) ++phrase_count;
+    }
+    uint64_t hierarchy_seed = 0U;
+    if (hierarchy_sampled) {
+        const std::string key = duration_hierarchy_sampling_key(
+            language,
+            request.voice_id == nullptr ? std::string() : std::string(request.voice_id),
+            prepared.phones
+        );
+        expanded.duration_hierarchy_sampling_key_sha256 = sha256_hex(key);
+        hierarchy_seed = request.has_seed ? request.seed : 0U;
+    }
     for (int index = 0; index < prepared.phone_count; ++index) {
         const float value = std::max(0.0f, duration_values[static_cast<std::size_t>(index)]);
         int64_t frame_count = static_cast<int64_t>(std::llround(value * expanded.duration_scale));
@@ -3226,11 +3472,68 @@ ScyllasBandDurationExpansionMetadata expand_duration_values(
                 static_cast<std::size_t>(index)
             ] != 0
         );
+        const bool remapped_punctuation_silence = (
+            is_silence_phone(phone) &&
+            static_cast<std::size_t>(index) <
+                prepared.punctuation_floor_phones.size() &&
+            scyllasband_detail::is_zero_duration_punctuation_phone(
+                prepared.punctuation_floor_phones[static_cast<std::size_t>(index)]
+            )
+        );
+        const bool following_punctuation_silence = (
+            is_silence_phone(phone) && index > 0 &&
+            static_cast<std::size_t>(index - 1) <
+                prepared.punctuation_floor_phones.size() &&
+            scyllasband_detail::is_zero_duration_punctuation_phone(
+                prepared.punctuation_floor_phones[
+                    static_cast<std::size_t>(index - 1)
+                ]
+            )
+        );
+        const bool punctuation_owned_silence =
+            punctuation_owned[static_cast<std::size_t>(index)] != 0;
+        const bool pause_presence_eligible =
+            pause_owned[static_cast<std::size_t>(index)] != 0;
+        if (hierarchy_sampled && pause_presence_eligible) {
+            const int phrase = phrase_indices[static_cast<std::size_t>(index)];
+            const std::size_t quantile_offset = static_cast<std::size_t>(index) * 3U;
+            const auto sample = duration_hierarchy_sample_pause(
+                hierarchy_seed,
+                expanded.duration_hierarchy_sampling_key_sha256,
+                phrase,
+                static_cast<double>(duration_quantiles[quantile_offset]),
+                static_cast<double>(duration_quantiles[quantile_offset + 1U]),
+                static_cast<double>(duration_quantiles[quantile_offset + 2U]),
+                bundle.duration_pause_presence_enabled
+                    ? static_cast<double>(pause_presence_logits[static_cast<std::size_t>(index)])
+                    : std::numeric_limits<double>::infinity(),
+                static_cast<double>(expanded.duration_scale),
+                bundle.duration_hierarchy_sample_presence,
+                static_cast<double>(bundle.duration_hierarchy_pause_strength),
+                static_cast<double>(bundle.duration_hierarchy_max_abs_z)
+            );
+            const int64_t sampled_frames = sample.frames;
+            if (sampled_frames != frame_count) {
+                ++expanded.duration_hierarchy_changed_pause_count;
+            }
+            frame_count = sampled_frames;
+        }
         if (scyllasband_detail::is_non_acoustic_modifier_phone(phone) ||
             (bundle.punctuation_silence_target == "explicit_silence" &&
              scyllasband_detail::is_zero_duration_punctuation_phone(phone))) {
             frame_count = 0;
-        } else if (word_boundary_candidate) {
+        } else if (!hierarchy_sampled && bundle.duration_pause_presence_enabled &&
+                   pause_presence_eligible) {
+            const float probability = stable_sigmoid(
+                pause_presence_logits[static_cast<std::size_t>(index)]
+            );
+            frame_count = (
+                probability < bundle.duration_pause_presence_threshold_probability
+                ? 0
+                : std::max<int64_t>(1, frame_count)
+            );
+        } else if (!bundle.duration_pause_presence_enabled &&
+                   word_boundary_candidate) {
             // Presence is predicted in the model's native frame space. User
             // pacing may resize a present pause, but must not flip presence.
             frame_count = (
@@ -3299,6 +3602,207 @@ ScyllasBandDurationExpansionMetadata expand_duration_values(
             expanded.expanded_phone_ids.push_back(phone_id);
         }
     }
+    if (bundle.vector_timing_enabled) {
+        expanded.vector_timing_enabled = true;
+        const std::size_t phone_count = expanded.predicted_durations.size();
+        const std::size_t frame_count = static_cast<std::size_t>(
+            expanded.predicted_latent_frames
+        );
+        expanded.expanded_boundary_event_ids.assign(frame_count, 0);
+        expanded.expanded_modifier_event_ids.assign(frame_count, 0);
+        expanded.expanded_phone_phase.assign(frame_count, 0.0f);
+        expanded.expanded_phone_log_duration.assign(frame_count, 0.0f);
+        std::vector<std::pair<int64_t, int64_t>> spans(
+            phone_count, std::make_pair<int64_t, int64_t>(-1, -1)
+        );
+        int64_t cursor = 0;
+        for (std::size_t index = 0; index < phone_count; ++index) {
+            const int64_t duration = expanded.predicted_durations[index];
+            if (duration <= 0) {
+                continue;
+            }
+            spans[index] = {cursor, cursor + duration};
+            if (bundle.vector_local_timing_enabled) {
+                for (int64_t frame = 0; frame < duration; ++frame) {
+                    const std::size_t offset = static_cast<std::size_t>(cursor + frame);
+                    expanded.expanded_phone_phase[offset] =
+                        (static_cast<float>(frame) + 0.5f) /
+                        static_cast<float>(duration);
+                    expanded.expanded_phone_log_duration[offset] = std::log1p(
+                        static_cast<float>(duration)
+                    );
+                }
+            }
+            cursor += duration;
+        }
+        auto semantic_phone = [&](std::size_t index) -> const std::string& {
+            if (index < prepared.punctuation_floor_phones.size() &&
+                !prepared.punctuation_floor_phones[index].empty()) {
+                return prepared.punctuation_floor_phones[index];
+            }
+            return prepared.phones[index];
+        };
+        auto is_boundary = [&](std::size_t index) -> bool {
+            return is_silence_phone(prepared.phones[index]) ||
+                scyllasband_detail::is_zero_duration_punctuation_phone(
+                    semantic_phone(index)
+                );
+        };
+        auto next_segment_span = [&](int start, int step) -> std::pair<int64_t, int64_t> {
+            int index = start;
+            while (index >= 0 && index < static_cast<int>(phone_count)) {
+                if (is_boundary(static_cast<std::size_t>(index))) {
+                    return {-1, -1};
+                }
+                if (spans[static_cast<std::size_t>(index)].first >= 0) {
+                    return spans[static_cast<std::size_t>(index)];
+                }
+                index += step;
+            }
+            return {-1, -1};
+        };
+        std::map<std::string, int64_t> punctuation_ids;
+        for (std::size_t index = 0; index < bundle.vector_punctuation_symbols.size(); ++index) {
+            punctuation_ids[bundle.vector_punctuation_symbols[index]] =
+                bundle.vector_punctuation_phone_ids[index];
+        }
+        if (bundle.vector_boundary_events_enabled) {
+            for (std::size_t index = 0; index < phone_count; ++index) {
+                const std::string& source_phone = semantic_phone(index);
+                const auto punctuation = punctuation_ids.find(source_phone);
+                if (punctuation == punctuation_ids.end()) {
+                    continue;
+                }
+                std::size_t owner_index = index;
+                if (!is_silence_phone(prepared.phones[index])) {
+                    if (expanded.predicted_durations[index] != 0 ||
+                        index + 1 >= phone_count ||
+                        !is_silence_phone(prepared.phones[index + 1])) {
+                        throw std::runtime_error(
+                            "Vector timing punctuation lacks following silence owner"
+                        );
+                    }
+                    owner_index = index + 1;
+                }
+                std::pair<int64_t, int64_t> owner = spans[owner_index];
+                if (owner.first >= 0) {
+                    std::fill(
+                        expanded.expanded_boundary_event_ids.begin() + owner.first,
+                        expanded.expanded_boundary_event_ids.begin() + owner.second,
+                        punctuation->second
+                    );
+                } else {
+                    owner = next_segment_span(static_cast<int>(owner_index) + 1, 1);
+                    if (owner.first >= 0) {
+                        expanded.expanded_boundary_event_ids[
+                            static_cast<std::size_t>(owner.first)
+                        ] = punctuation->second;
+                    }
+                }
+            }
+            for (std::size_t index = 0; index < phone_count; ++index) {
+                if (index >= prepared.word_boundary_candidate_mask.size() ||
+                    prepared.word_boundary_candidate_mask[index] == 0) {
+                    continue;
+                }
+                std::pair<int64_t, int64_t> owner = spans[index];
+                if (owner.first >= 0) {
+                    bool occupied = false;
+                    for (int64_t frame = owner.first; frame < owner.second; ++frame) {
+                        occupied = occupied || expanded.expanded_boundary_event_ids[
+                            static_cast<std::size_t>(frame)
+                        ] != 0;
+                    }
+                    if (!occupied) {
+                        std::fill(
+                            expanded.expanded_boundary_event_ids.begin() + owner.first,
+                            expanded.expanded_boundary_event_ids.begin() + owner.second,
+                            bundle.vector_synthetic_word_boundary_id
+                        );
+                    }
+                } else {
+                    owner = next_segment_span(static_cast<int>(index) + 1, 1);
+                    if (owner.first >= 0 &&
+                        expanded.expanded_boundary_event_ids[
+                            static_cast<std::size_t>(owner.first)
+                        ] == 0) {
+                        expanded.expanded_boundary_event_ids[
+                            static_cast<std::size_t>(owner.first)
+                        ] = bundle.vector_synthetic_word_boundary_id;
+                    }
+                }
+            }
+        }
+        if (bundle.vector_modifier_events_enabled) {
+            std::map<std::string, int64_t> modifier_masks;
+            for (std::size_t index = 0; index < bundle.vector_modifier_symbols.size(); ++index) {
+                modifier_masks[bundle.vector_modifier_symbols[index]] =
+                    bundle.vector_modifier_bit_masks[index];
+            }
+            auto acoustic_span = [&](int start, int step) -> std::pair<int64_t, int64_t> {
+                int index = start;
+                while (index >= 0 && index < static_cast<int>(phone_count)) {
+                    const std::size_t offset = static_cast<std::size_t>(index);
+                    if (is_boundary(offset)) {
+                        return {-1, -1};
+                    }
+                    if (spans[offset].first >= 0 &&
+                        !scyllasband_detail::is_non_acoustic_modifier_phone(
+                            prepared.phones[offset]
+                        )) {
+                        return spans[offset];
+                    }
+                    index += step;
+                }
+                return {-1, -1};
+            };
+            auto postfix_owner_span = [&](std::size_t modifier_index) -> std::pair<int64_t, int64_t> {
+                int index = static_cast<int>(modifier_index) - 1;
+                while (index >= 0 && scyllasband_detail::is_non_acoustic_modifier_phone(
+                    prepared.phones[static_cast<std::size_t>(index)]
+                )) {
+                    --index;
+                }
+                if (index < 0 || is_boundary(static_cast<std::size_t>(index))) {
+                    return {-1, -1};
+                }
+                // Never skip a zero-duration exact base: mapping a postfix
+                // articulation/quantity mark to another base is false data.
+                return spans[static_cast<std::size_t>(index)];
+            };
+            for (std::size_t index = 0; index < phone_count; ++index) {
+                const std::string& phone = prepared.phones[index];
+                if (!scyllasband_detail::is_non_acoustic_modifier_phone(phone)) {
+                    continue;
+                }
+                if (expanded.predicted_durations[index] != 0) {
+                    throw std::runtime_error("Vector timing modifier has positive duration");
+                }
+                const auto event = modifier_masks.find(phone);
+                if (event == modifier_masks.end()) {
+                    throw std::runtime_error("Vector timing modifier lacks bit assignment");
+                }
+                const bool is_stress = phone == u8"ˈ" || phone == u8"ˌ";
+                std::pair<int64_t, int64_t> owner = is_stress
+                    ? acoustic_span(static_cast<int>(index) + 1, 1)
+                    : postfix_owner_span(index);
+                if (is_stress && owner.first < 0) {
+                    owner = acoustic_span(
+                        static_cast<int>(index) - 1, -1
+                    );
+                }
+                if (owner.first >= 0) {
+                    for (int64_t frame = owner.first; frame < owner.second; ++frame) {
+                        expanded.expanded_modifier_event_ids[
+                            static_cast<std::size_t>(frame)
+                        ] |= event->second;
+                    }
+                    continue;
+                }
+                ++expanded.unrepresented_zero_frame_modifier_events;
+            }
+        }
+    }
     return expanded;
 }
 
@@ -3306,10 +3810,20 @@ std::string duration_expansion_json(const ScyllasBandDurationExpansionMetadata& 
     std::ostringstream metadata;
     metadata << "{"
              << "\"duration_scale\":" << expansion.duration_scale << ","
+             << "\"duration_hierarchy_mode\":\""
+             << expansion.duration_hierarchy_mode << "\","
+             << "\"duration_hierarchy_sampling_key_sha256\":\""
+             << expansion.duration_hierarchy_sampling_key_sha256 << "\","
+             << "\"duration_hierarchy_changed_pause_count\":"
+             << expansion.duration_hierarchy_changed_pause_count << ","
              << "\"duration_values\":" << float_vector_json(expansion.duration_values) << ","
              << "\"predicted_durations\":" << int64_vector_json(expansion.predicted_durations) << ","
-             << "\"predicted_latent_frames\":" << expansion.predicted_latent_frames << ","
-             << "\"expanded_phone_count\":" << expansion.expanded_phone_ids.size() << ","
+             << "\"predicted_latent_frames\":" << expansion.predicted_latent_frames;
+    if (expansion.vector_timing_enabled) {
+        metadata << ",\"vector_timing_unrepresented_zero_frame_modifier_events\":"
+                 << expansion.unrepresented_zero_frame_modifier_events;
+    }
+    metadata << ",\"expanded_phone_count\":" << expansion.expanded_phone_ids.size() << ","
              << "\"expanded_phone_ids_preview\":" << int64_vector_json(expansion.expanded_phone_ids, 32)
              << "}";
     return metadata.str();
@@ -3409,6 +3923,42 @@ ScyllasBandLiteRtInputStorage build_vector_estimator_inputs(
         static_cast<std::size_t>(bundle.latent_frames)
     );
     std::copy_n(expansion.expanded_phone_ids.begin(), expanded_count, storage.expanded_phone_ids.begin());
+    if (bundle.vector_timing_enabled) {
+        if (expansion.expanded_boundary_event_ids.size() != expanded_count ||
+            expansion.expanded_modifier_event_ids.size() != expanded_count ||
+            expansion.expanded_phone_phase.size() != expanded_count ||
+            expansion.expanded_phone_log_duration.size() != expanded_count) {
+            throw std::runtime_error("Vector timing expansion does not match active frames");
+        }
+        storage.expanded_boundary_event_ids.assign(
+            static_cast<std::size_t>(bundle.latent_frames), 0
+        );
+        storage.expanded_modifier_event_ids.assign(
+            static_cast<std::size_t>(bundle.latent_frames), 0
+        );
+        storage.expanded_phone_phase.assign(
+            static_cast<std::size_t>(bundle.latent_frames), 0.0f
+        );
+        storage.expanded_phone_log_duration.assign(
+            static_cast<std::size_t>(bundle.latent_frames), 0.0f
+        );
+        std::copy_n(
+            expansion.expanded_boundary_event_ids.begin(), expanded_count,
+            storage.expanded_boundary_event_ids.begin()
+        );
+        std::copy_n(
+            expansion.expanded_modifier_event_ids.begin(), expanded_count,
+            storage.expanded_modifier_event_ids.begin()
+        );
+        std::copy_n(
+            expansion.expanded_phone_phase.begin(), expanded_count,
+            storage.expanded_phone_phase.begin()
+        );
+        std::copy_n(
+            expansion.expanded_phone_log_duration.begin(), expanded_count,
+            storage.expanded_phone_log_duration.begin()
+        );
+    }
     storage.latent_mask.assign(static_cast<std::size_t>(bundle.latent_frames), 0);
     for (int64_t frame = 0; frame < expansion.predicted_latent_frames; ++frame) {
         storage.latent_mask[static_cast<std::size_t>(frame)] = 1;
@@ -3467,6 +4017,18 @@ ScyllasBandLiteRtInputStorage build_vector_estimator_inputs(
         } else if (semantic == "expanded_phone_ids") {
             append_tensor_view(storage, raw_name, SCYLLASBAND_TENSOR_INT64, storage.latent_frame_shape,
                                storage.expanded_phone_ids.data(), storage.expanded_phone_ids.size() * sizeof(int64_t));
+        } else if (semantic == "expanded_boundary_event_ids") {
+            append_tensor_view(storage, raw_name, SCYLLASBAND_TENSOR_INT64, storage.latent_frame_shape,
+                               storage.expanded_boundary_event_ids.data(), storage.expanded_boundary_event_ids.size() * sizeof(int64_t));
+        } else if (semantic == "expanded_modifier_event_ids") {
+            append_tensor_view(storage, raw_name, SCYLLASBAND_TENSOR_INT64, storage.latent_frame_shape,
+                               storage.expanded_modifier_event_ids.data(), storage.expanded_modifier_event_ids.size() * sizeof(int64_t));
+        } else if (semantic == "expanded_phone_phase") {
+            append_tensor_view(storage, raw_name, SCYLLASBAND_TENSOR_FLOAT32, storage.latent_frame_shape,
+                               storage.expanded_phone_phase.data(), storage.expanded_phone_phase.size() * sizeof(float));
+        } else if (semantic == "expanded_phone_log_duration") {
+            append_tensor_view(storage, raw_name, SCYLLASBAND_TENSOR_FLOAT32, storage.latent_frame_shape,
+                               storage.expanded_phone_log_duration.data(), storage.expanded_phone_log_duration.size() * sizeof(float));
         } else if (semantic == "voice_id") {
             append_tensor_view(storage, raw_name, SCYLLASBAND_TENSOR_INT64, storage.scalar_shape,
                                storage.voice_id.data(), sizeof(int64_t));
@@ -4320,7 +4882,9 @@ public:
                 prepared_inputs,
                 request,
                 resolved_request.language,
-                duration_prediction.values
+                duration_prediction.values,
+                duration_prediction.pause_presence_logits,
+                duration_prediction.quantiles
             );
             duration_expand_ms = elapsed_ms_backend(stage_started_at, ScyllasBandSteadyClock::now());
             duration_expansion_metadata = duration_expansion_json(duration_expansion);
@@ -4611,6 +5175,8 @@ public:
                 request,
                 resolved_request.language,
                 duration_prediction.values,
+                duration_prediction.pause_presence_logits,
+                duration_prediction.quantiles,
                 true
             );
             duration_expand_ms = elapsed_ms_backend(stage_started_at, ScyllasBandSteadyClock::now());
@@ -5389,6 +5955,128 @@ private:
 #endif  // graph runtime enabled
 
 }  // namespace
+
+std::string duration_hierarchy_sampling_key(
+    const std::string& language,
+    const std::string& voice,
+    const std::vector<std::string>& phones
+) {
+    std::vector<std::string> values = {
+        language, voice, std::to_string(phones.size())
+    };
+    values.insert(values.end(), phones.begin(), phones.end());
+    std::ostringstream output;
+    for (std::size_t index = 0; index < values.size(); ++index) {
+        if (index > 0) output << '|';
+        output << values[index].size() << ':' << values[index];
+    }
+    return output.str();
+}
+
+double duration_hierarchy_hash_normal(
+    uint64_t seed,
+    const std::string& scope,
+    double max_abs_z
+) {
+    const std::string digest = sha256_hex(
+        std::to_string(seed) + ":" + scope
+    );
+    if (digest.size() != 64) {
+        throw std::runtime_error("SHA-256 hierarchy digest is invalid");
+    }
+    const uint64_t first_bits = std::stoull(digest.substr(0, 16), nullptr, 16);
+    const uint64_t second_bits = std::stoull(digest.substr(16, 16), nullptr, 16);
+    // Match Python's binary64 evaluation order exactly: int-to-float
+    // conversion, then +0.5, division, and Box-Muller all stay in double.
+    const double denominator = std::ldexp(1.0, 64);
+    const double first = (static_cast<double>(first_bits) + 0.5) / denominator;
+    const double second = (static_cast<double>(second_bits) + 0.5) / denominator;
+    const double value = std::sqrt(-2.0 * std::log(first)) *
+        std::cos(2.0 * std::acos(-1.0) * second);
+    return std::max(-max_abs_z, std::min(max_abs_z, value));
+}
+
+int64_t duration_hierarchy_round_nonnegative(double value) {
+    if (!std::isfinite(value) || value < 0.0) {
+        throw std::runtime_error("Duration hierarchy value must be finite and nonnegative");
+    }
+    const double lower = std::floor(value);
+    const double fraction = value - lower;
+    if (fraction < 0.5) return static_cast<int64_t>(lower);
+    if (fraction > 0.5) return static_cast<int64_t>(lower + 1.0);
+    const int64_t lower_integer = static_cast<int64_t>(lower);
+    return lower_integer % 2 == 0 ? lower_integer : lower_integer + 1;
+}
+
+ScyllasBandDurationHierarchyPauseSample duration_hierarchy_sample_pause(
+    uint64_t seed,
+    const std::string& sampling_key_sha256,
+    int phrase_index,
+    double lower,
+    double median,
+    double upper,
+    double presence_logit,
+    double duration_scale,
+    bool sample_presence,
+    double pause_strength,
+    double max_abs_z
+) {
+    if (sampling_key_sha256.size() != 64 || phrase_index < 0 ||
+        !std::isfinite(lower) || !std::isfinite(median) || !std::isfinite(upper) ||
+        lower < 0.0 || median < lower || upper < median ||
+        std::isnan(presence_logit) ||
+        !std::isfinite(duration_scale) || duration_scale <= 0.0 ||
+        !std::isfinite(pause_strength) || pause_strength < 0.0 || pause_strength > 1.0 ||
+        !std::isfinite(max_abs_z) || max_abs_z <= 0.0) {
+        throw std::runtime_error("Duration hierarchy pause sample inputs are invalid");
+    }
+    const std::string scope = "duration-hierarchy:" + sampling_key_sha256;
+    const double utterance_z = duration_hierarchy_hash_normal(
+        seed, scope + ":utterance", max_abs_z
+    );
+    const double phrase_z = duration_hierarchy_hash_normal(
+        seed, scope + ":phrase:" + std::to_string(phrase_index), max_abs_z
+    );
+    const double combined_z = std::max(
+        -max_abs_z,
+        std::min(max_abs_z, (utterance_z + phrase_z) / std::sqrt(2.0))
+    );
+    const double unit = 0.5 * (1.0 + std::erf(combined_z / std::sqrt(2.0)));
+    const double quantile = std::max(
+        0.1,
+        std::min(0.9, 0.5 + (unit - 0.5) * pause_strength)
+    );
+    double continuous = median;
+    if (quantile <= 0.5) {
+        const double alpha = (quantile - 0.1) / 0.4;
+        continuous = lower + alpha * (median - lower);
+    } else {
+        const double alpha = (quantile - 0.5) / 0.4;
+        continuous = median + alpha * (upper - median);
+    }
+    double presence_probability = presence_logit > 0.0 ? 1.0 : 0.0;
+    if (std::isfinite(presence_logit)) {
+        if (presence_logit >= 0.0) {
+            presence_probability = 1.0 / (1.0 + std::exp(-presence_logit));
+        } else {
+            const double exponential = std::exp(presence_logit);
+            presence_probability = exponential / (1.0 + exponential);
+        }
+    }
+    const bool present = sample_presence
+        ? unit >= 1.0 - presence_probability
+        : presence_probability >= 0.5;
+    ScyllasBandDurationHierarchyPauseSample sample;
+    sample.present = present;
+    sample.unit_probability = unit;
+    sample.duration_quantile = quantile;
+    sample.frames = present
+        ? std::max<int64_t>(1, duration_hierarchy_round_nonnegative(
+              continuous * duration_scale
+          ))
+        : 0;
+    return sample;
+}
 
 std::unique_ptr<ScyllasBandBackendEngine> create_backend_engine(
     ScyllasBandBackend backend,

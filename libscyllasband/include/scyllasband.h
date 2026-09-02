@@ -69,6 +69,12 @@ typedef enum {
     SCYLLASBAND_SAMPLER_HEUN = 1
 } ScyllasBandSampler;
 
+typedef enum {
+    SCYLLASBAND_DURATION_HIERARCHY_DEFAULT = 0,
+    SCYLLASBAND_DURATION_HIERARCHY_P50 = 1,
+    SCYLLASBAND_DURATION_HIERARCHY_SAMPLED = 2
+} ScyllasBandDurationHierarchyMode;
+
 typedef struct {
     const char* bundle_dir;
     ScyllasBandBackend backend;
@@ -106,6 +112,7 @@ typedef struct {
     const char* affect;
     float affect_guidance_scale;
     int32_t has_affect_guidance_scale;
+    ScyllasBandDurationHierarchyMode duration_hierarchy_mode;
 } ScyllasBandSynthesisRequest;
 
 typedef struct {

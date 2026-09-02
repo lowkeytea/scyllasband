@@ -41,6 +41,12 @@ bool valid_sampler(ScyllasBandSampler sampler) {
     return sampler == SCYLLASBAND_SAMPLER_EULER || sampler == SCYLLASBAND_SAMPLER_HEUN;
 }
 
+bool valid_duration_hierarchy_mode(ScyllasBandDurationHierarchyMode mode) {
+    return mode == SCYLLASBAND_DURATION_HIERARCHY_DEFAULT ||
+           mode == SCYLLASBAND_DURATION_HIERARCHY_P50 ||
+           mode == SCYLLASBAND_DURATION_HIERARCHY_SAMPLED;
+}
+
 void reset_result(ScyllasBandSynthesisResult* result) {
     if (result == nullptr) {
         return;
@@ -109,6 +115,12 @@ ScyllasBandStatus validate_request(const ScyllasBandSynthesisRequest* request) {
     }
     if (request->steps <= 0 || !valid_sampler(request->sampler)) {
         scyllasband_detail::set_error("scyllasband_runtime_synthesize: invalid sampler or step count");
+        return SCYLLASBAND_STATUS_INVALID_ARGUMENT;
+    }
+    if (!valid_duration_hierarchy_mode(request->duration_hierarchy_mode)) {
+        scyllasband_detail::set_error(
+            "scyllasband_runtime_synthesize: invalid duration hierarchy mode"
+        );
         return SCYLLASBAND_STATUS_INVALID_ARGUMENT;
     }
     if (request->speed <= 0.0f) {

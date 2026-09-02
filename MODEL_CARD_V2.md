@@ -70,6 +70,11 @@ corresponding `.pt` checkpoints. Training data is not distributed.
   from frozen MFA word intervals and jointly predicts whether a pause is
   present and how long it lasts. Spaces are not converted into a uniform
   silence.
+- Positive pause durations expose monotonic p10, p50, and p90 estimates. The
+  default runtime samples them coherently with one utterance-level value plus
+  phrase-level variation, instead of adding independent noise to each phone.
+  PyTorch, ONNX, LiteRT, and the native runtime share the same seeded sampling
+  contract; deterministic p50 inference remains available explicitly.
 - Training includes long and chunked views, explicit punctuation silences,
   three-segment span context, stronger condition dropout, and a vocoder adapter
   trained on both oracle and generated acoustic latents.
@@ -118,6 +123,7 @@ python -m scyllasband speak scyllasband/models/v2/onnx \
     --voice scylla \
     --language en_us \
     --emotion calm=0.5 \
+    --seed 2027 \
     -o hello.wav \
     "Hello from Scylla's Band v2."
 ```
@@ -155,6 +161,7 @@ variants, voices, languages, affect axes, shapes, and backend defaults.
 | Public language IDs | `en_us`, `en_gb`, `es`, `it`, `fr`, `de`, `vi` |
 | Managed voices | 10 |
 | Affect controls | 5 independently scored axes, axis-order version 3 |
+| Duration inference | Seeded coherent p10/p50/p90 pause sampling; explicit p50 mode |
 | Default quality profile | 8-step Heun sampling |
 | Fixed graph budgets | 512 G2P text tokens, 512 phone frames, 640 latent frames |
 | Latent target buckets | 256, 384, 512, 640, selected by smallest fit |
@@ -205,6 +212,13 @@ candidates at ordinary word boundaries. The runtime protects sentence-ending
 punctuation with a 107 ms minimum while leaving ordinary word-boundary timing
 under model control. Long-form planning prefers real clause punctuation when a
 chunk must be divided so learned timing survives the join.
+
+The default duration path samples only eligible pause owners. Its random values
+are shared at utterance and phrase scope so nearby pauses move together while
+lexical timing remains anchored. A request seed makes the duration lattice
+reproducible across PyTorch, ONNX, LiteRT, and native execution. Use
+`--duration-hierarchy-mode p50` for the deterministic median lattice; use
+`--duration-hierarchy-mode sampled` to request the release default explicitly.
 
 ## Affect and Whisper Controls
 
@@ -320,7 +334,10 @@ python -m scyllasband speak scyllasband/models/v2/litert \
 ```
 
 ONNX and LiteRT are the primary v2 release targets. The selected manifest
-declares the exact graphs, buckets, controls, and runtime requirements.
+declares the exact graphs, buckets, controls, and runtime requirements. Both
+bundles expose the same three duration outputs when hierarchical sampling is
+enabled: median durations, pause-presence logits, and p10/p50/p90 duration
+quantiles.
 
 ## PyTorch Checkpoints
 
@@ -365,8 +382,8 @@ ground truth.
 ## Validation
 
 Release validation should keep the same text, phones, voice, language, affect,
-guidance, sampler, steps, seed, and duration scale when comparing PyTorch,
-ONNX, and LiteRT. The public validation tooling produces per-voice,
+guidance, sampler, steps, seed, duration hierarchy mode, and duration scale when
+comparing PyTorch, ONNX, and LiteRT. The public validation tooling produces per-voice,
 per-language, and per-affect ASR/WER reports with review audio and transcript
 diffs.
 
@@ -391,6 +408,10 @@ artifacts and controls.
 - Strong CFG can exaggerate timing or destabilize identity.
 - Very long text is synthesized in planned chunks; unusual fragments and poor
   punctuation can still produce awkward pacing.
+- Sampled pauses add controlled performance variation, not unrestricted
+  prosody generation. The same seed reproduces the same duration lattice, but
+  changing text, phones, voice, language, or phrase boundaries changes the
+  sampling key.
 - Names, rare words, code, malformed input, and language-mismatched text can be
   mispronounced.
 - The FP32 and INT8 G2P graphs can select different phones on low-confidence

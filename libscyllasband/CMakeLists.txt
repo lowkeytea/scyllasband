@@ -228,6 +228,43 @@ if(SCYLLASBAND_BUILD_TESTS)
         target_link_libraries(scyllasband_overflow_plan_test PRIVATE scyllasband::native)
         add_test(NAME scyllasband_overflow_plan_test COMMAND scyllasband_overflow_plan_test)
 
+        add_executable(
+            scyllasband_vector_timing_contract_test
+            tests/scyllasband_vector_timing_contract_test.cpp
+        )
+        target_compile_features(scyllasband_vector_timing_contract_test PRIVATE cxx_std_17)
+        target_include_directories(
+            scyllasband_vector_timing_contract_test
+            PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
+        )
+        target_link_libraries(
+            scyllasband_vector_timing_contract_test
+            PRIVATE scyllasband::native
+        )
+        add_test(
+            NAME scyllasband_vector_timing_contract_test
+            COMMAND scyllasband_vector_timing_contract_test
+        )
+
+        add_executable(
+            scyllasband_duration_hierarchy_contract_test
+            tests/scyllasband_duration_hierarchy_contract_test.cpp
+        )
+        target_compile_features(
+            scyllasband_duration_hierarchy_contract_test PRIVATE cxx_std_17
+        )
+        target_include_directories(
+            scyllasband_duration_hierarchy_contract_test
+            PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
+        )
+        target_link_libraries(
+            scyllasband_duration_hierarchy_contract_test PRIVATE scyllasband::native
+        )
+        add_test(
+            NAME scyllasband_duration_hierarchy_contract_test
+            COMMAND scyllasband_duration_hierarchy_contract_test
+        )
+
         find_package(Python3 COMPONENTS Interpreter QUIET)
         if(Python3_Interpreter_FOUND)
             add_test(

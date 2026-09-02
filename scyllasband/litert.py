@@ -16,7 +16,12 @@ from typing import Any, Mapping
 
 import numpy as np
 
-from .contract import ScyllasBandBundleManifest
+from .contract import (
+    ScyllasBandBundleManifest,
+    validate_duration_hierarchy_sampling_contract,
+    validate_duration_pause_presence_contract,
+    validate_vector_timing_conditioning_contract,
+)
 from .g2p_phrases import (
     BOUNDARY_PHONE_TOKENS,
     DEFAULT_G2P_PHRASE_MAX_CHARS,
@@ -71,6 +76,15 @@ class _ReferenceFeatures:
     fallback_mask: float
     key: str | None
     path: str | None
+
+
+@dataclass(frozen=True)
+class _VectorTimingFeatures:
+    boundary_event_ids: np.ndarray
+    modifier_event_ids: np.ndarray
+    phone_phase: np.ndarray
+    phone_log_duration: np.ndarray
+    unrepresented_zero_frame_modifier_events: int
 
 
 PROSODY_DROP_INDICES = (0, 14)
@@ -148,6 +162,31 @@ class LiteRTRunner:
             )
         self.export_status = _load_optional_json(self.bundle_dir / "export_status.json")
         controls = dict(getattr(self.manifest, "controls", {}) or {})
+        self.duration_pause_presence_config = (
+            validate_duration_pause_presence_contract(self.manifest)
+        )
+        self.duration_pause_presence_enabled = bool(
+            self.duration_pause_presence_config.get("enabled", False)
+        )
+        self.duration_pause_presence_threshold_probability = float(
+            self.duration_pause_presence_config.get(
+                "threshold_probability",
+                0.5,
+            )
+        )
+        self.duration_hierarchy_config = (
+            validate_duration_hierarchy_sampling_contract(self.manifest)
+        )
+        self.duration_hierarchy_enabled = bool(
+            self.duration_hierarchy_config.get("enabled", False)
+        )
+        self.vector_timing_config = validate_vector_timing_conditioning_contract(
+            self.manifest,
+            self.bundle_dir,
+        )
+        self.vector_timing_enabled = bool(
+            self.vector_timing_config.get("enabled", False)
+        )
         affect_config = controls.get("affect", {})
         self.affect_config = (
             dict(affect_config) if isinstance(affect_config, Mapping) else {}
@@ -264,7 +303,14 @@ class LiteRTRunner:
         self._sessions: dict[str, Any] = dict(sessions or {})
         self._g2p_cache: OrderedDict[tuple[str, str, str, str], dict[str, Any]] = OrderedDict()
         self._g2p_word_cache: OrderedDict[tuple[str, str], tuple[str, ...]] = OrderedDict()
-        self._duration_cache: OrderedDict[tuple[Any, ...], tuple[float, ...]] = OrderedDict()
+        self._duration_cache: OrderedDict[
+            tuple[Any, ...],
+            tuple[
+                tuple[float, ...],
+                tuple[float, ...] | None,
+                tuple[tuple[float, float, float], ...] | None,
+            ],
+        ] = OrderedDict()
         self._g2p_lock = threading.RLock()
         self._duration_lock = threading.RLock()
 
@@ -308,7 +354,12 @@ class LiteRTRunner:
         phone_ids = [int(self.phone_to_id[phone]) for phone in phones]
         boundary_before_id, boundary_after_id = self._boundary_ids(request, phone_result)
         duration_scale = 1.0 / float(request.speed)
-        durations, punctuation_floor_audit = self._predict_durations(
+        (
+            durations,
+            punctuation_floor_audit,
+            pause_presence_audit,
+            duration_hierarchy_audit,
+        ) = self._predict_durations(
             phone_ids,
             phones=phones,
             punctuation_events=list(phone_result.get("g2p_punctuation_events") or []),
@@ -333,6 +384,8 @@ class LiteRTRunner:
             request=request,
         )
         phone_result["punctuation_duration_floors"] = punctuation_floor_audit
+        phone_result["duration_pause_presence"] = pause_presence_audit
+        phone_result["duration_hierarchy_sampling"] = duration_hierarchy_audit
         word_boundary_candidates = set(
             int(item)
             for item in phone_result.get(
@@ -357,6 +410,19 @@ class LiteRTRunner:
         vocoder_component = self._bucket_component_name("vocoder", fixed_latent_frames)
 
         expanded_phone_ids = _expand_phone_lists_to_length(phone_ids, durations, latent_length)
+        vector_timing = _expanded_vector_timing_features(
+            phones=phones,
+            durations=durations,
+            word_boundary_candidate_indices=word_boundary_candidates,
+            punctuation_events=list(
+                phone_result.get("g2p_punctuation_events") or []
+            ),
+            config=self.vector_timing_config,
+        )
+        if vector_timing is not None:
+            phone_result["vector_timing_unrepresented_zero_frame_modifier_events"] = (
+                vector_timing.unrepresented_zero_frame_modifier_events
+            )
         vector_context_phone_ids = [
             int(phone_id)
             for index, (phone_id, duration) in enumerate(
@@ -376,6 +442,7 @@ class LiteRTRunner:
             fixed_latent_frames=fixed_latent_frames,
             vector_component=vector_component,
             span_context_hidden=span_context_hidden,
+            vector_timing=vector_timing,
             voice_index=voice_index,
             language_index=language_index,
             emotion_index=emotion_index,
@@ -520,7 +587,12 @@ class LiteRTRunner:
         phone_ids = [int(self.phone_to_id[phone]) for phone in phones]
         boundary_before_id, boundary_after_id = self._boundary_ids(request, phone_result)
         duration_scale = 1.0 / float(request.speed)
-        durations, punctuation_floor_audit = self._predict_durations(
+        (
+            durations,
+            punctuation_floor_audit,
+            pause_presence_audit,
+            duration_hierarchy_audit,
+        ) = self._predict_durations(
             phone_ids,
             phones=phones,
             punctuation_events=list(phone_result.get("g2p_punctuation_events") or []),
@@ -545,6 +617,8 @@ class LiteRTRunner:
             request=request,
         )
         phone_result["punctuation_duration_floors"] = punctuation_floor_audit
+        phone_result["duration_pause_presence"] = pause_presence_audit
+        phone_result["duration_hierarchy_sampling"] = duration_hierarchy_audit
         word_boundary_candidates = set(
             int(item)
             for item in phone_result.get(
@@ -981,9 +1055,18 @@ class LiteRTRunner:
         boundary_after_id: int,
         duration_scale: float,
         request: Any,
-    ) -> tuple[list[int], list[dict[str, Any]]]:
+    ) -> tuple[
+        list[int],
+        list[dict[str, Any]],
+        list[dict[str, Any]],
+        dict[str, Any],
+    ]:
         if affect_features.enabled and affect_guidance_scale != 1.0:
-            null_values = self._predict_duration_values(
+            (
+                null_values,
+                null_presence_logits,
+                null_quantiles,
+            ) = self._predict_duration_values(
                 phone_ids,
                 voice_index=voice_index,
                 language_index=language_index,
@@ -996,7 +1079,11 @@ class LiteRTRunner:
                 boundary_after_id=boundary_after_id,
                 affect_condition_scale=0.0,
             )
-            conditioned_values = self._predict_duration_values(
+            (
+                conditioned_values,
+                conditioned_presence_logits,
+                conditioned_quantiles,
+            ) = self._predict_duration_values(
                 phone_ids,
                 voice_index=voice_index,
                 language_index=language_index,
@@ -1015,9 +1102,25 @@ class LiteRTRunner:
                 null_array + float(affect_guidance_scale) * (conditioned_array - null_array),
                 0.0,
             ).tolist()
+            pause_presence_logits = _blend_optional_numpy_logits(
+                null_presence_logits,
+                conditioned_presence_logits,
+                null_weight=1.0 - float(affect_guidance_scale),
+                term_weight=float(affect_guidance_scale),
+            )
+            duration_quantiles = _blend_optional_numpy_quantiles(
+                null_quantiles,
+                conditioned_quantiles,
+                null_weight=1.0 - float(affect_guidance_scale),
+                term_weight=float(affect_guidance_scale),
+            )
         elif guidance_terms:
             null_reference_scale = 0.0 if guidance_null_reference else 1.0
-            values = self._predict_duration_values(
+            (
+                values,
+                pause_presence_logits,
+                duration_quantiles,
+            ) = self._predict_duration_values(
                 phone_ids,
                 voice_index=voice_index,
                 language_index=language_index,
@@ -1030,8 +1133,24 @@ class LiteRTRunner:
                 boundary_after_id=boundary_after_id,
             )
             blended = _emotion_guidance_null_weight(guidance_terms) * np.asarray(values, dtype=np.float32)
+            blended_presence = (
+                _emotion_guidance_null_weight(guidance_terms)
+                * np.asarray(pause_presence_logits, dtype=np.float32)
+                if pause_presence_logits is not None
+                else None
+            )
+            blended_quantiles = (
+                _emotion_guidance_null_weight(guidance_terms)
+                * np.asarray(duration_quantiles, dtype=np.float32)
+                if duration_quantiles is not None
+                else None
+            )
             for term in guidance_terms:
-                term_values = self._predict_duration_values(
+                (
+                    term_values,
+                    term_presence_logits,
+                    term_quantiles,
+                ) = self._predict_duration_values(
                     phone_ids,
                     voice_index=voice_index,
                     language_index=language_index,
@@ -1044,9 +1163,53 @@ class LiteRTRunner:
                     boundary_after_id=boundary_after_id,
                 )
                 blended = blended + float(term.scale) * np.asarray(term_values, dtype=np.float32)
+                if blended_presence is not None:
+                    if term_presence_logits is None:
+                        raise RuntimeError(
+                            "Duration guidance branches disagree on "
+                            "pause-presence output"
+                        )
+                    blended_presence = (
+                        blended_presence
+                        + float(term.scale)
+                        * np.asarray(term_presence_logits, dtype=np.float32)
+                    )
+                elif term_presence_logits is not None:
+                    raise RuntimeError(
+                        "Duration guidance branches disagree on "
+                        "pause-presence output"
+                    )
+                if blended_quantiles is not None:
+                    if term_quantiles is None:
+                        raise RuntimeError(
+                            "Duration guidance branches disagree on quantile output"
+                        )
+                    blended_quantiles = (
+                        blended_quantiles
+                        + float(term.scale)
+                        * np.asarray(term_quantiles, dtype=np.float32)
+                    )
+                elif term_quantiles is not None:
+                    raise RuntimeError(
+                        "Duration guidance branches disagree on quantile output"
+                    )
             values = np.maximum(blended, 0.0).tolist()
+            pause_presence_logits = (
+                blended_presence.tolist()
+                if blended_presence is not None
+                else None
+            )
+            duration_quantiles = (
+                np.sort(np.maximum(blended_quantiles, 0.0), axis=-1).tolist()
+                if blended_quantiles is not None
+                else None
+            )
         else:
-            values = self._predict_duration_values(
+            (
+                values,
+                pause_presence_logits,
+                duration_quantiles,
+            ) = self._predict_duration_values(
                 phone_ids,
                 voice_index=voice_index,
                 language_index=language_index,
@@ -1067,13 +1230,91 @@ class LiteRTRunner:
                 self.punctuation_silence_target == "explicit_silence"
             ),
             word_boundary_candidate_indices=(
-                word_boundary_candidate_indices
+                set()
+                if self.duration_pause_presence_enabled
+                else word_boundary_candidate_indices
             ),
             word_boundary_presence_threshold_frames=(
                 self.word_boundary_presence_threshold_frames
             ),
         )
+        requested_hierarchy_mode = str(
+            getattr(request, "duration_hierarchy_mode", "default") or "default"
+        ).strip().lower()
+        if requested_hierarchy_mode in {"", "auto", "default"}:
+            hierarchy_mode = str(
+                self.duration_hierarchy_config.get("default_mode") or "p50"
+            )
+        else:
+            hierarchy_mode = requested_hierarchy_mode
+        if hierarchy_mode not in {"p50", "sampled"}:
+            raise ValueError(
+                "duration_hierarchy_mode must be default, sampled, or p50"
+            )
+        if hierarchy_mode == "sampled" and not self.duration_hierarchy_enabled:
+            raise ValueError(
+                "duration_hierarchy_mode=sampled requires a hierarchy-enabled bundle"
+            )
+        pause_presence_audit: list[dict[str, Any]] = []
+        if hierarchy_mode == "sampled":
+            if duration_quantiles is None:
+                raise RuntimeError(
+                    "Duration hierarchy contract is active but the graph returned no quantiles"
+                )
+            seed_contract = dict(self.duration_hierarchy_config.get("seed") or {})
+            request_seed = getattr(request, "seed", None)
+            hierarchy_seed = (
+                int(request_seed)
+                if request_seed is not None
+                else int(seed_contract.get("missing_request_seed", 0))
+            )
+            (
+                durations,
+                pause_presence_audit,
+                duration_hierarchy_audit,
+            ) = _apply_duration_hierarchy_sampling(
+                durations,
+                duration_quantiles=duration_quantiles,
+                pause_presence_logits=pause_presence_logits,
+                phones=phones,
+                punctuation_events=punctuation_events,
+                word_boundary_candidate_indices=word_boundary_candidate_indices,
+                language=language,
+                voice=str(getattr(request, "voice_id", "") or ""),
+                seed=hierarchy_seed,
+                duration_scale=duration_scale,
+                config=self.duration_hierarchy_config,
+            )
+        elif self.duration_pause_presence_enabled:
+            if pause_presence_logits is None:
+                raise RuntimeError(
+                    "Duration pause-presence contract is active but the graph "
+                    "returned no logits"
+                )
+            durations, pause_presence_audit = _apply_duration_pause_presence(
+                durations,
+                pause_presence_logits=pause_presence_logits,
+                phones=phones,
+                punctuation_events=punctuation_events,
+                word_boundary_candidate_indices=word_boundary_candidate_indices,
+                threshold_probability=(
+                    self.duration_pause_presence_threshold_probability
+                ),
+            )
+            duration_hierarchy_audit = {
+                "schema_version": "scyllasband_duration_hierarchy_sampling_v1",
+                "enabled": bool(self.duration_hierarchy_enabled),
+                "mode": "p50",
+            }
+        else:
+            duration_hierarchy_audit = {
+                "schema_version": "scyllasband_duration_hierarchy_sampling_v1",
+                "enabled": bool(self.duration_hierarchy_enabled),
+                "mode": "p50",
+            }
         semantic_phones: dict[int, str] = {}
+        ellipsis_counts = iter(_ellipsis_dot_counts_from_request(request))
+        punctuation_repeat_counts: dict[int, int] = {}
         for event in punctuation_events:
             try:
                 phone_index = int(event.get("phone_index"))
@@ -1082,11 +1323,16 @@ class LiteRTRunner:
             source_phone = str(event.get("source_phone") or "")
             if 0 <= phone_index < len(phones) and source_phone:
                 semantic_phones[phone_index] = source_phone
+                if source_phone == "<ellipsis>":
+                    punctuation_repeat_counts[phone_index] = next(
+                        ellipsis_counts, 3
+                    )
         floor_audit: list[dict[str, Any]] = []
         floored = _apply_punctuation_duration_floors(
             durations,
             phones=phones,
             semantic_phones=semantic_phones,
+            punctuation_repeat_counts=punctuation_repeat_counts,
             sentence_frames=_pause_ms_to_latent_frames(
                 getattr(request, "min_sentence_pause_ms", 0.0),
                 sample_rate=int(self.manifest.audio.sample_rate),
@@ -1111,7 +1357,27 @@ class LiteRTRunner:
             floor_terminal=_request_has_following_chunk(request),
             audit=floor_audit,
         )
-        return floored, floor_audit
+        gated_by_index = {
+            int(item["phone_index"]): int(item["duration_after_gate"])
+            for item in pause_presence_audit
+        }
+        for item in floor_audit:
+            try:
+                index = int(
+                    item.get("target_phone_index", item.get("phone_index"))
+                )
+            except (TypeError, ValueError):
+                continue
+            if gated_by_index.get(index) == 0 and int(
+                floored[index] if 0 <= index < len(floored) else 0
+            ) > 0:
+                item["overrides_pause_presence_absence"] = True
+        return (
+            floored,
+            floor_audit,
+            pause_presence_audit,
+            duration_hierarchy_audit,
+        )
 
     def _predict_duration_values(
         self,
@@ -1127,7 +1393,11 @@ class LiteRTRunner:
         boundary_before_id: int,
         boundary_after_id: int,
         affect_condition_scale: float = 1.0,
-    ) -> list[float]:
+    ) -> tuple[
+        list[float],
+        list[float] | None,
+        list[list[float]] | None,
+    ]:
         cache_key = (
             tuple(int(item) for item in phone_ids),
             int(voice_index),
@@ -1150,7 +1420,16 @@ class LiteRTRunner:
             cached = self._duration_cache.get(cache_key)
             if cached is not None:
                 self._duration_cache.move_to_end(cache_key)
-                return list(cached)
+                cached_values, cached_presence, cached_quantiles = cached
+                return (
+                    list(cached_values),
+                    list(cached_presence)
+                    if cached_presence is not None
+                    else None,
+                    [list(row) for row in cached_quantiles]
+                    if cached_quantiles is not None
+                    else None,
+                )
             padded = np.zeros((1, self.phone_frames), dtype=np.int64)
             mask = np.zeros((1, self.phone_frames), dtype=np.bool_)
             padded[0, : len(phone_ids)] = np.asarray(phone_ids, dtype=np.int64)
@@ -1208,16 +1487,97 @@ class LiteRTRunner:
                 affect_features.condition_mask * float(affect_condition_scale),
             )
             self._add_reference_args(args, "duration_predictor", reference_features, reference_condition_scale)
-            output = self._session("duration_predictor").invoke(args)
+            session = self._session("duration_predictor")
+            if self.duration_pause_presence_enabled or self.duration_hierarchy_enabled:
+                if not hasattr(session, "invoke_all"):
+                    raise RuntimeError(
+                        "Duration multi-output contract requires a "
+                        "multi-output runtime session"
+                    )
+                outputs = list(session.invoke_all(args))
+                expected_output_count = (
+                    1
+                    + int(self.duration_pause_presence_enabled)
+                    + int(self.duration_hierarchy_enabled)
+                )
+                if len(outputs) != expected_output_count:
+                    raise RuntimeError(
+                        "Duration graph output count does not match its bundle contract"
+                    )
+            else:
+                outputs = [session.invoke(args)]
+            output = outputs[0]
             values = tuple(
                 float(item)
                 for item in np.asarray(output, dtype=np.float32).reshape(-1)[: len(phone_ids)]
             )
-            self._duration_cache[cache_key] = values
+            presence_values = (
+                tuple(
+                    float(item)
+                    for item in np.asarray(
+                        outputs[1],
+                        dtype=np.float32,
+                    ).reshape(-1)[: len(phone_ids)]
+                )
+                if self.duration_pause_presence_enabled
+                else None
+            )
+            quantile_index = 1 + int(self.duration_pause_presence_enabled)
+            quantile_values: tuple[tuple[float, float, float], ...] | None = None
+            if self.duration_hierarchy_enabled:
+                quantile_array = np.asarray(
+                    outputs[quantile_index],
+                    dtype=np.float32,
+                )
+                if (
+                    quantile_array.ndim != 3
+                    or quantile_array.shape[0] != 1
+                    or quantile_array.shape[2] != 3
+                    or quantile_array.shape[1] < len(phone_ids)
+                ):
+                    raise RuntimeError(
+                        "Duration quantiles must have shape [1, phone_frames, 3]"
+                    )
+                quantile_values = tuple(
+                    tuple(float(item) for item in quantile_array[0, index, :])
+                    for index in range(len(phone_ids))
+                )
+                for row in quantile_values:
+                    if (
+                        not all(math.isfinite(item) and item >= 0.0 for item in row)
+                        or not row[0] <= row[1] <= row[2]
+                    ):
+                        raise RuntimeError(
+                            "Duration quantiles must be finite, nonnegative, and monotonic"
+                        )
+            if (
+                self.duration_pause_presence_enabled
+                and (
+                    presence_values is None
+                    or len(presence_values) != len(values)
+                    or len(values) != len(phone_ids)
+                )
+            ):
+                raise RuntimeError(
+                    "Duration and pause-presence outputs must align with active phones"
+                )
+            self._duration_cache[cache_key] = (
+                values,
+                presence_values,
+                quantile_values,
+            )
             self._duration_cache.move_to_end(cache_key)
             while len(self._duration_cache) > _FRONTEND_CACHE_SIZE:
                 self._duration_cache.popitem(last=False)
-            return list(values)
+            return (
+                list(values),
+                list(presence_values)
+                if presence_values is not None
+                else None,
+                [list(row) for row in quantile_values]
+                if quantile_values is not None
+                else None,
+            )
 
     def _sample_latents(
         self,
@@ -1227,6 +1587,7 @@ class LiteRTRunner:
         fixed_latent_frames: int,
         vector_component: str,
         span_context_hidden: np.ndarray | None,
+        vector_timing: _VectorTimingFeatures | None,
         voice_index: int,
         language_index: int,
         emotion_index: int,
@@ -1257,6 +1618,10 @@ class LiteRTRunner:
         latents *= latent_mask[:, np.newaxis, :].astype(np.float32)
         expanded = np.zeros((1, fixed_latent_frames), dtype=np.int64)
         expanded[0, :latent_length] = np.asarray(expanded_phone_ids, dtype=np.int64)
+        vector_timing = _pad_vector_timing_features(
+            vector_timing,
+            fixed_latent_frames=fixed_latent_frames,
+        )
         voice = np.asarray([voice_index], dtype=np.int64)
         language = np.asarray([language_index], dtype=np.int64)
         emotion = np.asarray([emotion_index], dtype=np.int64)
@@ -1274,6 +1639,7 @@ class LiteRTRunner:
                     expanded,
                     vector_component,
                     span_context_hidden,
+                    vector_timing,
                     voice,
                     language,
                     emotion,
@@ -1299,6 +1665,7 @@ class LiteRTRunner:
                     expanded,
                     vector_component,
                     span_context_hidden,
+                    vector_timing,
                     voice,
                     language,
                     emotion,
@@ -1321,6 +1688,7 @@ class LiteRTRunner:
                     expanded,
                     vector_component,
                     span_context_hidden,
+                    vector_timing,
                     voice,
                     language,
                     emotion,
@@ -1346,6 +1714,7 @@ class LiteRTRunner:
         expanded: np.ndarray,
         vector_component: str,
         span_context_hidden: np.ndarray | None,
+        vector_timing: _VectorTimingFeatures | None,
         voice: np.ndarray,
         language: np.ndarray,
         emotion: np.ndarray,
@@ -1375,6 +1744,7 @@ class LiteRTRunner:
                 boundary_before,
                 boundary_after,
                 latent_mask,
+                vector_timing=vector_timing,
                 emotion_condition_scale=emotion_embed_scale,
                 affect_condition_scale=0.0,
                 reference_features=reference_features,
@@ -1395,6 +1765,7 @@ class LiteRTRunner:
                 boundary_before,
                 boundary_after,
                 latent_mask,
+                vector_timing=vector_timing,
                 emotion_condition_scale=emotion_embed_scale,
                 affect_condition_scale=1.0,
                 reference_features=reference_features,
@@ -1420,6 +1791,7 @@ class LiteRTRunner:
                 boundary_before,
                 boundary_after,
                 latent_mask,
+                vector_timing=vector_timing,
                 emotion_condition_scale=emotion_embed_scale,
                 affect_condition_scale=1.0,
                 reference_features=reference_features,
@@ -1434,6 +1806,7 @@ class LiteRTRunner:
                 expanded,
                 vector_component,
                 span_context_hidden,
+                vector_timing,
                 voice,
                 language,
                 emotion,
@@ -1462,6 +1835,7 @@ class LiteRTRunner:
             boundary_before,
             boundary_after,
             latent_mask,
+            vector_timing=vector_timing,
             emotion_condition_scale=0.0,
             affect_condition_scale=1.0,
             reference_features=reference_features,
@@ -1484,6 +1858,7 @@ class LiteRTRunner:
                 boundary_before,
                 boundary_after,
                 latent_mask,
+                vector_timing=vector_timing,
                 emotion_condition_scale=emotion_embed_scale,
                 affect_condition_scale=1.0,
                 reference_features=reference_features,
@@ -1509,6 +1884,7 @@ class LiteRTRunner:
         expanded: np.ndarray,
         vector_component: str,
         span_context_hidden: np.ndarray | None,
+        vector_timing: _VectorTimingFeatures | None,
         voice: np.ndarray,
         language: np.ndarray,
         emotion: np.ndarray,
@@ -1592,6 +1968,14 @@ class LiteRTRunner:
                 "span_context_hidden",
                 _repeat_batch(span_context_hidden, branch_count),
             )
+        if vector_timing is not None:
+            for name, value in _vector_timing_items(vector_timing):
+                self._add_optional_arg(
+                    args,
+                    vector_component,
+                    name,
+                    _repeat_batch(value, branch_count),
+                )
         velocities = np.asarray(self._session(vector_component).invoke(args), dtype=np.float32)
         if velocities.ndim != 3 or int(velocities.shape[0]) != branch_count:
             raise RuntimeError(
@@ -1624,6 +2008,7 @@ class LiteRTRunner:
         boundary_after: np.ndarray,
         latent_mask: np.ndarray,
         *,
+        vector_timing: _VectorTimingFeatures | None,
         emotion_condition_scale: float,
         affect_condition_scale: float,
         reference_features: _ReferenceFeatures,
@@ -1671,6 +2056,9 @@ class LiteRTRunner:
         self._add_optional_arg(args, component_name, "prefix_mask", prefix_mask)
         if span_context_hidden is not None:
             self._add_optional_arg(args, component_name, "span_context_hidden", span_context_hidden)
+        if vector_timing is not None:
+            for name, value in _vector_timing_items(vector_timing):
+                self._add_optional_arg(args, component_name, name, value)
         output = self._session(component_name).invoke(args)
         return np.asarray(output, dtype=np.float32)
 
@@ -2439,6 +2827,9 @@ class _LiteRTSession:
         self._inputs_by_arg = {_input_arg_index(detail): detail for detail in self.inputs}
 
     def invoke(self, args: Mapping[int, np.ndarray]) -> np.ndarray:
+        return self.invoke_all(args)[0]
+
+    def invoke_all(self, args: Mapping[int, np.ndarray]) -> list[np.ndarray]:
         missing = sorted(set(self._inputs_by_arg) - set(args))
         if missing:
             raise RuntimeError(f"Missing LiteRT input arg(s): {missing}")
@@ -2452,7 +2843,10 @@ class _LiteRTSession:
                 )
             self.interpreter.set_tensor(int(detail["index"]), array)
         self.interpreter.invoke()
-        return self.interpreter.get_tensor(int(self.outputs[0]["index"]))
+        return [
+            self.interpreter.get_tensor(int(output["index"]))
+            for output in self.outputs
+        ]
 
 
 def _normalize_emotion(value: Any) -> str:
@@ -2475,6 +2869,45 @@ def _emotion_guidance_metadata(terms: list[_EmotionGuidanceTerm]) -> list[dict[s
         {"emotion": term.emotion, "emotion_id": int(term.emotion_id), "scale": float(term.scale)}
         for term in terms
     ]
+
+
+def _blend_optional_numpy_logits(
+    null_logits: list[float] | None,
+    term_logits: list[float] | None,
+    *,
+    null_weight: float,
+    term_weight: float,
+) -> list[float] | None:
+    if null_logits is None and term_logits is None:
+        return None
+    if null_logits is None or term_logits is None:
+        raise RuntimeError(
+            "Duration guidance branches disagree on pause-presence output"
+        )
+    return (
+        float(null_weight) * np.asarray(null_logits, dtype=np.float32)
+        + float(term_weight) * np.asarray(term_logits, dtype=np.float32)
+    ).tolist()
+
+
+def _blend_optional_numpy_quantiles(
+    null_quantiles: list[list[float]] | None,
+    term_quantiles: list[list[float]] | None,
+    *,
+    null_weight: float,
+    term_weight: float,
+) -> list[list[float]] | None:
+    if null_quantiles is None and term_quantiles is None:
+        return None
+    if null_quantiles is None or term_quantiles is None:
+        raise RuntimeError(
+            "Duration guidance branches disagree on quantile output"
+        )
+    blended = (
+        float(null_weight) * np.asarray(null_quantiles, dtype=np.float32)
+        + float(term_weight) * np.asarray(term_quantiles, dtype=np.float32)
+    )
+    return np.sort(np.maximum(blended, 0.0), axis=-1).tolist()
 
 
 def _repeat_batch(value: np.ndarray, count: int) -> np.ndarray:
@@ -2748,6 +3181,279 @@ def _load_index(path: Path) -> dict[str, int]:
     return {str(row["id"]): int(row["index"]) for row in rows}
 
 
+def _expanded_vector_timing_features(
+    *,
+    phones: list[str],
+    durations: list[int],
+    word_boundary_candidate_indices: set[int],
+    punctuation_events: list[Mapping[str, Any]] | None = None,
+    config: Mapping[str, Any],
+) -> _VectorTimingFeatures | None:
+    """Derive the export timing quartet from final, post-floor durations."""
+
+    if not bool(config.get("enabled", False)):
+        return None
+    if len(phones) != len(durations):
+        raise ValueError("Vector timing phones and durations must align")
+    values = [int(value) for value in durations]
+    if any(value < 0 for value in values):
+        raise ValueError("Vector timing durations must be non-negative")
+    latent_length = sum(values)
+    features = dict(config.get("features") or {})
+    boundary_config = dict(config.get("boundary_events") or {})
+    modifier_config = dict(config.get("modifier_events") or {})
+    phone_config = dict(config.get("phone_vocab") or {})
+    phone_vocab_size = int(phone_config.get("size") or 0)
+    if phone_vocab_size <= 0:
+        raise ValueError("Vector timing phone vocabulary size must be positive")
+
+    spans: list[tuple[int, int] | None] = []
+    cursor = 0
+    phase = np.zeros((1, latent_length), dtype=np.float32)
+    log_duration = np.zeros((1, latent_length), dtype=np.float32)
+    for duration in values:
+        if duration <= 0:
+            spans.append(None)
+            continue
+        end = cursor + duration
+        spans.append((cursor, end))
+        if bool(features.get("local_timing", False)):
+            phase[0, cursor:end] = (
+                np.arange(duration, dtype=np.float32) + np.float32(0.5)
+            ) / np.float32(duration)
+            log_duration[0, cursor:end] = np.float32(math.log1p(duration))
+        cursor = end
+
+    boundary = np.zeros((1, latent_length), dtype=np.int64)
+    if bool(features.get("boundary_events", False)):
+        punctuation_symbols = [
+            str(item) for item in boundary_config.get("punctuation_symbols", ())
+        ]
+        punctuation_ids = [
+            int(item) for item in boundary_config.get("punctuation_phone_ids", ())
+        ]
+        punctuation_to_id = dict(
+            zip(punctuation_symbols, punctuation_ids, strict=True)
+        )
+        handled_indices: set[int] = set()
+        for event in punctuation_events or []:
+            try:
+                index = int(event.get("phone_index"))
+            except (TypeError, ValueError):
+                continue
+            if index < 0 or index >= len(phones):
+                raise ValueError("Vector timing punctuation event index is out of range")
+            source_phone = str(event.get("source_phone") or "")
+            event_id = punctuation_to_id.get(source_phone)
+            if event_id is None:
+                raise ValueError(
+                    f"Punctuation event {source_phone!r} is absent from timing controls"
+                )
+            emitted_phone = str(event.get("emitted_phone") or phones[index])
+            owner_index = index if emitted_phone == "<sil>" else index + 1
+            if owner_index >= len(phones) or phones[owner_index] != "<sil>":
+                raise ValueError(
+                    f"Punctuation event {source_phone!r} lacks its <sil> owner"
+                )
+            owner = spans[owner_index]
+            if owner is not None:
+                boundary[0, owner[0] : owner[1]] = event_id
+            else:
+                owner = _next_vector_timing_span(
+                    phones,
+                    spans,
+                    set(punctuation_symbols),
+                    owner_index + 1,
+                    1,
+                )
+                if owner is not None:
+                    boundary[0, owner[0]] = event_id
+            handled_indices.add(index)
+        for index, phone in enumerate(phones):
+            if index in handled_indices:
+                continue
+            event_id = punctuation_to_id.get(phone)
+            if event_id is None:
+                continue
+            if values[index] != 0:
+                raise ValueError(f"Punctuation {phone!r} must have zero duration")
+            if index + 1 >= len(phones) or phones[index + 1] != "<sil>":
+                raise ValueError(
+                    f"Punctuation {phone!r} lacks its following <sil> owner"
+                )
+            owner = spans[index + 1]
+            if owner is not None:
+                boundary[0, owner[0] : owner[1]] = event_id
+            else:
+                owner = _next_vector_timing_span(
+                    phones,
+                    spans,
+                    set(punctuation_symbols),
+                    index + 2,
+                    1,
+                )
+                if owner is not None:
+                    boundary[0, owner[0]] = event_id
+        synthetic_id = int(boundary_config.get("synthetic_word_boundary_id", -1))
+        for index in sorted(int(item) for item in word_boundary_candidate_indices):
+            if index < 0 or index >= len(spans):
+                raise ValueError("Vector timing word-boundary index is out of range")
+            owner = spans[index]
+            if owner is not None:
+                if not np.any(boundary[0, owner[0] : owner[1]]):
+                    boundary[0, owner[0] : owner[1]] = synthetic_id
+                continue
+            owner = _next_vector_timing_span(
+                phones,
+                spans,
+                set(punctuation_symbols),
+                index + 1,
+                1,
+            )
+            if owner is not None and boundary[0, owner[0]] == 0:
+                boundary[0, owner[0]] = synthetic_id
+
+    modifier = np.zeros((1, latent_length), dtype=np.int64)
+    unrepresented_modifier_events = 0
+    if bool(features.get("modifier_events", False)):
+        modifier_symbols = [
+            str(item) for item in modifier_config.get("symbols", ())
+        ]
+        modifier_masks = [
+            int(item) for item in modifier_config.get("bit_masks", ())
+        ]
+        modifier_to_mask = dict(
+            zip(modifier_symbols, modifier_masks, strict=True)
+        )
+        punctuation = set(
+            str(item) for item in boundary_config.get("punctuation_symbols", ())
+        )
+        for index, phone in enumerate(phones):
+            if not is_non_acoustic_phone_modifier(phone):
+                continue
+            if values[index] != 0:
+                raise ValueError(f"Modifier {phone!r} must have zero duration")
+            event_mask = modifier_to_mask.get(phone)
+            if event_mask is None:
+                raise ValueError(f"Modifier {phone!r} is absent from timing controls")
+            is_stress = phone in {"ˈ", "ˌ"}
+            if is_stress:
+                owner = _next_vector_acoustic_span(
+                    phones, spans, punctuation, index + 1, 1
+                )
+            else:
+                owner = _postfix_vector_modifier_owner_span(
+                    phones, spans, punctuation, index
+                )
+            if is_stress and owner is None:
+                owner = _next_vector_acoustic_span(
+                    phones, spans, punctuation, index - 1, -1
+                )
+            if owner is not None:
+                modifier[0, owner[0] : owner[1]] |= event_mask
+                continue
+            unrepresented_modifier_events += 1
+
+    return _VectorTimingFeatures(
+        boundary_event_ids=boundary,
+        modifier_event_ids=modifier,
+        phone_phase=phase,
+        phone_log_duration=log_duration,
+        unrepresented_zero_frame_modifier_events=unrepresented_modifier_events,
+    )
+
+
+def _next_vector_timing_span(
+    phones: list[str],
+    spans: list[tuple[int, int] | None],
+    punctuation: set[str],
+    start: int,
+    step: int,
+) -> tuple[int, int] | None:
+    index = start
+    while 0 <= index < len(spans):
+        if phones[index] == "<sil>" or phones[index] in punctuation:
+            return None
+        if spans[index] is not None:
+            return spans[index]
+        index += step
+    return None
+
+
+def _next_vector_acoustic_span(
+    phones: list[str],
+    spans: list[tuple[int, int] | None],
+    punctuation: set[str],
+    start: int,
+    step: int,
+) -> tuple[int, int] | None:
+    index = start
+    while 0 <= index < len(phones):
+        phone = phones[index]
+        if phone == "<sil>" or phone in punctuation:
+            return None
+        if spans[index] is not None and not is_non_acoustic_phone_modifier(phone):
+            return spans[index]
+        index += step
+    return None
+
+
+def _postfix_vector_modifier_owner_span(
+    phones: list[str],
+    spans: list[tuple[int, int] | None],
+    punctuation: set[str],
+    modifier_index: int,
+) -> tuple[int, int] | None:
+    index = modifier_index - 1
+    while index >= 0 and is_non_acoustic_phone_modifier(phones[index]):
+        index -= 1
+    if index < 0 or phones[index] == "<sil>" or phones[index] in punctuation:
+        return None
+    return spans[index]
+
+
+def _pad_vector_timing_features(
+    features: _VectorTimingFeatures | None,
+    *,
+    fixed_latent_frames: int,
+) -> _VectorTimingFeatures | None:
+    if features is None:
+        return None
+
+    def pad(value: np.ndarray, dtype: np.dtype[Any]) -> np.ndarray:
+        source = np.asarray(value, dtype=dtype)
+        if source.ndim != 2 or source.shape[0] != 1:
+            raise ValueError("Vector timing arrays must have shape [1, frames]")
+        if source.shape[1] > fixed_latent_frames:
+            raise ValueError("Vector timing arrays exceed selected latent bucket")
+        output = np.zeros((1, fixed_latent_frames), dtype=dtype)
+        output[:, : source.shape[1]] = source
+        return output
+
+    return _VectorTimingFeatures(
+        boundary_event_ids=pad(features.boundary_event_ids, np.dtype(np.int64)),
+        modifier_event_ids=pad(features.modifier_event_ids, np.dtype(np.int64)),
+        phone_phase=pad(features.phone_phase, np.dtype(np.float32)),
+        phone_log_duration=pad(
+            features.phone_log_duration, np.dtype(np.float32)
+        ),
+        unrepresented_zero_frame_modifier_events=(
+            features.unrepresented_zero_frame_modifier_events
+        ),
+    )
+
+
+def _vector_timing_items(
+    features: _VectorTimingFeatures,
+) -> tuple[tuple[str, np.ndarray], ...]:
+    return (
+        ("expanded_boundary_event_ids", features.boundary_event_ids),
+        ("expanded_modifier_event_ids", features.modifier_event_ids),
+        ("expanded_phone_phase", features.phone_phase),
+        ("expanded_phone_log_duration", features.phone_log_duration),
+    )
+
+
 def _frames_to_durations(
     values: list[float],
     *,
@@ -2783,6 +3489,259 @@ def _frames_to_durations(
     return durations
 
 
+def _apply_duration_pause_presence(
+    durations: list[int],
+    *,
+    pause_presence_logits: list[float],
+    phones: list[str],
+    punctuation_events: list[Mapping[str, Any]],
+    word_boundary_candidate_indices: set[int],
+    threshold_probability: float,
+) -> tuple[list[int], list[dict[str, Any]]]:
+    if len(durations) != len(phones) or len(pause_presence_logits) != len(phones):
+        raise RuntimeError(
+            "Duration pause-presence outputs do not align with phones"
+        )
+    if not 0.0 < float(threshold_probability) <= 1.0:
+        raise ValueError("Duration pause-presence threshold must be in (0, 1]")
+    punctuation_owned, word_owned = _duration_pause_owner_indices(
+        phones=phones,
+        punctuation_events=punctuation_events,
+        word_boundary_candidate_indices=word_boundary_candidate_indices,
+    )
+    eligible = punctuation_owned | word_owned
+    gated = list(durations)
+    audit: list[dict[str, Any]] = []
+    for index in sorted(eligible):
+        logit = float(pause_presence_logits[index])
+        probability = _stable_sigmoid(logit)
+        present = probability >= float(threshold_probability)
+        before = int(gated[index])
+        gated[index] = max(1, before) if present else 0
+        audit.append(
+            {
+                "phone_index": index,
+                "probability": probability,
+                "present": present,
+                "duration_before_gate": before,
+                "duration_after_gate": int(gated[index]),
+                "punctuation_owned": index in punctuation_owned,
+                "explicit_word_boundary": index in word_owned,
+            }
+        )
+    return gated, audit
+
+
+def _duration_pause_owner_indices(
+    *,
+    phones: list[str],
+    punctuation_events: list[Mapping[str, Any]],
+    word_boundary_candidate_indices: set[int],
+) -> tuple[set[int], set[int]]:
+    punctuation_owned: set[int] = set()
+    for event in punctuation_events:
+        try:
+            phone_index = int(event.get("phone_index"))
+        except (TypeError, ValueError):
+            continue
+        if not 0 <= phone_index < len(phones):
+            continue
+        emitted_phone = str(
+            event.get("emitted_phone") or phones[phone_index]
+        )
+        owner = (
+            phone_index
+            if emitted_phone == "<sil>"
+            else phone_index + 1
+        )
+        if 0 <= owner < len(phones) and phones[owner] == "<sil>":
+            punctuation_owned.add(owner)
+    for index, phone in enumerate(phones):
+        if (
+            phone == "<sil>"
+            and index > 0
+            and phones[index - 1] in _ZERO_DURATION_PUNCTUATION_PHONES
+        ):
+            punctuation_owned.add(index)
+    word_owned = {
+        int(index)
+        for index in word_boundary_candidate_indices
+        if 0 <= int(index) < len(phones) and phones[int(index)] == "<sil>"
+    }
+    return punctuation_owned, word_owned
+
+
+def _duration_hierarchy_sampling_key(
+    *,
+    language: str,
+    voice: str,
+    phones: list[str],
+) -> str:
+    values = [str(language), str(voice), str(len(phones)), *phones]
+    parts: list[str] = []
+    for value in values:
+        encoded = str(value).encode("utf-8")
+        parts.append(f"{len(encoded)}:{encoded.decode('utf-8')}")
+    return "|".join(parts)
+
+
+def _duration_hierarchy_hash_normal(
+    seed: int,
+    scope: str,
+    *,
+    max_abs_z: float,
+) -> float:
+    digest = hashlib.sha256(f"{int(seed)}:{scope}".encode("utf-8")).digest()
+    first = (int.from_bytes(digest[:8], "big") + 0.5) / float(1 << 64)
+    second = (int.from_bytes(digest[8:16], "big") + 0.5) / float(1 << 64)
+    value = math.sqrt(-2.0 * math.log(first)) * math.cos(2.0 * math.pi * second)
+    return max(-float(max_abs_z), min(float(max_abs_z), value))
+
+
+def _interpolate_duration_quantiles(
+    quantiles: list[float],
+    *,
+    probability: float,
+) -> float:
+    if len(quantiles) != 3:
+        raise RuntimeError("Duration quantiles must contain p10,p50,p90")
+    lower, median, upper = (float(value) for value in quantiles)
+    if (
+        not all(math.isfinite(value) and value >= 0.0 for value in quantiles)
+        or not lower <= median <= upper
+    ):
+        raise RuntimeError(
+            "Duration quantiles must be finite, nonnegative, and monotonic"
+        )
+    bounded = max(0.10, min(0.90, float(probability)))
+    if bounded <= 0.50:
+        alpha = (bounded - 0.10) / 0.40
+        return lower + alpha * (median - lower)
+    alpha = (bounded - 0.50) / 0.40
+    return median + alpha * (upper - median)
+
+
+def _apply_duration_hierarchy_sampling(
+    p50_durations: list[int],
+    *,
+    duration_quantiles: list[list[float]],
+    pause_presence_logits: list[float] | None,
+    phones: list[str],
+    punctuation_events: list[Mapping[str, Any]],
+    word_boundary_candidate_indices: set[int],
+    language: str,
+    voice: str,
+    seed: int,
+    duration_scale: float,
+    config: Mapping[str, Any],
+) -> tuple[list[int], list[dict[str, Any]], dict[str, Any]]:
+    if len(p50_durations) != len(phones) or len(duration_quantiles) != len(phones):
+        raise RuntimeError("Duration hierarchy outputs do not align with phones")
+    if pause_presence_logits is not None and len(pause_presence_logits) != len(phones):
+        raise RuntimeError("Duration hierarchy presence logits do not align with phones")
+    defaults = dict(config.get("defaults") or {})
+    pause_strength = float(defaults.get("pause_strength"))
+    speech_strength = float(defaults.get("speech_strength"))
+    sample_presence = bool(defaults.get("sample_presence"))
+    max_abs_z = float(defaults.get("max_abs_z"))
+    punctuation_owned, word_owned = _duration_pause_owner_indices(
+        phones=phones,
+        punctuation_events=punctuation_events,
+        word_boundary_candidate_indices=word_boundary_candidate_indices,
+    )
+    pause_owned = punctuation_owned | word_owned
+    phrase_indices: list[int] = []
+    phrase_index = 0
+    for index in range(len(phones)):
+        phrase_indices.append(phrase_index)
+        if index in punctuation_owned:
+            phrase_index += 1
+    key = _duration_hierarchy_sampling_key(
+        language=language,
+        voice=voice,
+        phones=phones,
+    )
+    key_sha256 = hashlib.sha256(key.encode("utf-8")).hexdigest()
+    scope = f"duration-hierarchy:{key_sha256}"
+    utterance_z = _duration_hierarchy_hash_normal(
+        seed,
+        f"{scope}:utterance",
+        max_abs_z=max_abs_z,
+    )
+    phrase_units: list[float] = []
+    phrase_quantiles: list[float] = []
+    for current in range(phrase_index + 1):
+        phrase_z = _duration_hierarchy_hash_normal(
+            seed,
+            f"{scope}:phrase:{current}",
+            max_abs_z=max_abs_z,
+        )
+        combined_z = max(
+            -max_abs_z,
+            min(max_abs_z, (utterance_z + phrase_z) / math.sqrt(2.0)),
+        )
+        unit = 0.5 * (1.0 + math.erf(combined_z / math.sqrt(2.0)))
+        phrase_units.append(unit)
+        phrase_quantiles.append(
+            max(0.10, min(0.90, 0.5 + (unit - 0.5) * pause_strength))
+        )
+    output = list(p50_durations)
+    audit: list[dict[str, Any]] = []
+    for index in sorted(pause_owned):
+        phrase = phrase_indices[index]
+        continuous = _interpolate_duration_quantiles(
+            duration_quantiles[index],
+            probability=phrase_quantiles[phrase],
+        ) * float(duration_scale)
+        probability = (
+            _stable_sigmoid(float(pause_presence_logits[index]))
+            if pause_presence_logits is not None
+            else 1.0
+        )
+        present = (
+            phrase_units[phrase] >= 1.0 - probability
+            if sample_presence
+            else probability >= 0.5
+        )
+        before = int(output[index])
+        output[index] = max(1, int(round(continuous))) if present else 0
+        audit.append(
+            {
+                "phone_index": index,
+                "probability": probability,
+                "sample_probability": phrase_units[phrase],
+                "present": present,
+                "duration_before_gate": before,
+                "duration_after_gate": int(output[index]),
+                "punctuation_owned": index in punctuation_owned,
+                "explicit_word_boundary": index in word_owned,
+            }
+        )
+    return output, audit, {
+        "schema_version": "scyllasband_duration_hierarchy_sampling_v1",
+        "enabled": True,
+        "mode": "sampled",
+        "policy": str(config.get("policy") or ""),
+        "seed": int(seed),
+        "sampling_key_sha256": key_sha256,
+        "pause_strength": pause_strength,
+        "speech_strength": speech_strength,
+        "sample_presence": sample_presence,
+        "max_abs_z": max_abs_z,
+        "utterance_z": utterance_z,
+        "before_total_frames": int(sum(p50_durations)),
+        "after_total_frames": int(sum(output)),
+    }
+
+
+def _stable_sigmoid(value: float) -> float:
+    numeric = float(value)
+    if numeric >= 0.0:
+        return 1.0 / (1.0 + math.exp(-numeric))
+    exponential = math.exp(numeric)
+    return exponential / (1.0 + exponential)
+
+
 _ZERO_DURATION_PUNCTUATION_PHONES = frozenset({
     "<pause_comma>",
     "<pause_semicolon>",
@@ -2806,6 +3765,20 @@ def _request_has_following_chunk(request: Any) -> bool:
     return chunk_count > 0 and 0 <= chunk_index < chunk_count - 1
 
 
+def _ellipsis_dot_counts_from_request(request: Any) -> tuple[int, ...]:
+    explicit = getattr(request, "ellipsis_dot_counts", ())
+    if explicit:
+        counts = tuple(int(value) for value in explicit)
+        if any(value < 2 for value in counts):
+            raise ValueError("ellipsis_dot_counts values must be at least two")
+        return counts
+    text = str(getattr(request, "text", "") or "")
+    return tuple(
+        3 if match.group(0) == "…" else len(match.group(0))
+        for match in re.finditer(r"\.{2,}|…", text)
+    )
+
+
 def _pause_ms_to_latent_frames(value: object, *, sample_rate: int, latent_hop_length: int) -> int:
     try:
         pause_ms = max(0.0, float(value or 0.0))
@@ -2824,6 +3797,7 @@ def _apply_punctuation_duration_floors(
     clause_frames: int,
     calibrated_frames: Mapping[str, int] | None = None,
     semantic_phones: Mapping[int, str] | None = None,
+    punctuation_repeat_counts: Mapping[int, int] | None = None,
     floor_terminal: bool = False,
     audit: list[dict[str, Any]] | None = None,
 ) -> list[int]:
@@ -2836,7 +3810,16 @@ def _apply_punctuation_duration_floors(
         for index, phone in dict(semantic_phones or {}).items()
         if str(phone)
     }
-    if sentence_frames <= 0 and clause_frames <= 0 and not any(calibrated.values()):
+    repeat_counts = {
+        int(index): max(2, int(count))
+        for index, count in dict(punctuation_repeat_counts or {}).items()
+    }
+    if (
+        sentence_frames <= 0
+        and clause_frames <= 0
+        and not any(calibrated.values())
+        and not any(count > 3 for count in repeat_counts.values())
+    ):
         return durations
 
     def floor_for(phone: str) -> tuple[int, int, int]:
@@ -2854,10 +3837,12 @@ def _apply_punctuation_duration_floors(
             break
         source_phone = semantic.get(index, emitted_phone)
         punctuation_floor, calibrated_floor, generic_floor = floor_for(source_phone)
-        if punctuation_floor > 0 and (
+        repeat_count = repeat_counts.get(index, 3)
+        repeat_scale = min(4.0, max(1.0, float(repeat_count) / 3.0))
+        if (
             source_phone in _SENTENCE_PUNCTUATION_PHONES
             or source_phone in _CLAUSE_PUNCTUATION_PHONES
-        ):
+        ) and (punctuation_floor > 0 or repeat_scale > 1.0):
             if emitted_phone in _SILENCE_PHONES:
                 target_index = index
             else:
@@ -2873,6 +3858,12 @@ def _apply_punctuation_duration_floors(
             floor_allowed = bool(floor_terminal or not terminal_target)
             if floor_allowed:
                 out[target_index] = max(learned_frames, punctuation_floor)
+            repeat_applied = False
+            if source_phone == "<ellipsis>" and repeat_scale > 1.0:
+                scaled_frames = int(round(float(out[target_index]) * repeat_scale))
+                if scaled_frames > out[target_index]:
+                    out[target_index] = scaled_frames
+                    repeat_applied = True
             if audit is not None:
                 audit.append(
                     {
@@ -2889,6 +3880,9 @@ def _apply_punctuation_duration_floors(
                         "floor_applied": int(out[target_index]) > learned_frames,
                         "terminal_target": terminal_target,
                         "terminal_floor_allowed": floor_allowed,
+                        "repeat_count": repeat_count,
+                        "repeat_scale": repeat_scale,
+                        "repeat_applied": repeat_applied,
                     }
                 )
     return out

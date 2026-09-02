@@ -2,11 +2,14 @@
 
 #include "scyllasband.h"
 
+#include <cstdint>
 #include <map>
 #include <string>
 #include <vector>
 
 namespace scyllasband_detail {
+
+std::string sha256_hex(const std::string& input);
 
 struct ScyllasBandTargetBucketInfo {
     int latent_frames = 0;
@@ -44,6 +47,28 @@ struct ScyllasBandBundleInfo {
     std::string word_boundary_g2p_output_symbol = " ";
     std::string word_boundary_duration_phone = "<sil>";
     float word_boundary_presence_threshold_frames = 0.5f;
+    bool duration_pause_presence_enabled = false;
+    float duration_pause_presence_threshold_probability = 0.5f;
+    bool duration_hierarchy_sampling_enabled = false;
+    bool duration_hierarchy_default_sampled = false;
+    float duration_hierarchy_pause_strength = 1.0f;
+    float duration_hierarchy_speech_strength = 0.0f;
+    bool duration_hierarchy_sample_presence = false;
+    float duration_hierarchy_max_abs_z = 2.0f;
+    bool vector_timing_enabled = false;
+    bool vector_boundary_events_enabled = false;
+    bool vector_modifier_events_enabled = false;
+    bool vector_local_timing_enabled = false;
+    std::string vector_timing_phone_vocab_asset;
+    std::string vector_timing_phone_vocab_sha256;
+    int vector_timing_phone_vocab_size = 0;
+    int vector_synthetic_word_boundary_id = 0;
+    std::vector<std::string> vector_punctuation_symbols;
+    std::vector<int64_t> vector_punctuation_phone_ids;
+    int vector_modifier_event_bits = 0;
+    std::vector<std::string> vector_modifier_symbols;
+    std::vector<int64_t> vector_modifier_phone_ids;
+    std::vector<int64_t> vector_modifier_bit_masks;
     std::map<std::string, std::string> voice_default_language;
     std::map<std::string, std::vector<std::string>> voice_languages;
     int sample_rate = 0;

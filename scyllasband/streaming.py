@@ -241,6 +241,7 @@ def synthesize_records_stream(
                         steps=opts.steps,
                         sampler=opts.sampler,
                         speed=opts.speed,
+                        duration_hierarchy_mode=opts.duration_hierarchy_mode,
                         context_before=chunk_plan.context_before,
                         context_after=chunk_plan.context_after,
                         chunk_index=index,
@@ -249,6 +250,9 @@ def synthesize_records_stream(
                         boundary_after=str(chunk["boundary_after"]),
                         min_sentence_pause_ms=float(opts.min_sentence_pause_ms),
                         min_clause_pause_ms=float(opts.min_clause_pause_ms),
+                        ellipsis_dot_counts=tuple(
+                            int(value) for value in chunk.get("ellipsis_dot_counts", ())
+                        ),
                     )
                 )
             except (ValueError, RuntimeError) as exc:

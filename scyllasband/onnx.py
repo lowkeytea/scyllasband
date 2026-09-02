@@ -268,6 +268,9 @@ class _ONNXSession:
         self._inputs_by_arg = {index: input_info for index, input_info in enumerate(self.inputs)}
 
     def invoke(self, args: Mapping[int, np.ndarray]) -> np.ndarray:
+        return self.invoke_all(args)[0]
+
+    def invoke_all(self, args: Mapping[int, np.ndarray]) -> list[np.ndarray]:
         missing = sorted(set(self._inputs_by_arg) - {int(key) for key in args})
         if missing:
             raise RuntimeError(f"Missing ONNX input arg(s): {missing}")
@@ -277,8 +280,8 @@ class _ONNXSession:
             array = np.asarray(value, dtype=_onnx_input_dtype(input_info.type))
             _validate_onnx_shape(input_info.name, input_info.shape, array.shape)
             feeds[input_info.name] = array
-        output_names = [self.outputs[0].name]
-        return self.session.run(output_names, feeds)[0]
+        output_names = [output.name for output in self.outputs]
+        return list(self.session.run(output_names, feeds))
 
 
 class _AutotuningONNXSession:

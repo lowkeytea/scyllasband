@@ -30,6 +30,9 @@ SCYLLASBAND_BACKEND_COREAI = 4
 
 SCYLLASBAND_SAMPLER_EULER = 0
 SCYLLASBAND_SAMPLER_HEUN = 1
+SCYLLASBAND_DURATION_HIERARCHY_DEFAULT = 0
+SCYLLASBAND_DURATION_HIERARCHY_P50 = 1
+SCYLLASBAND_DURATION_HIERARCHY_SAMPLED = 2
 
 SCYLLASBAND_LITERT_ACCELERATOR_AUTO = 0
 SCYLLASBAND_LITERT_ACCELERATOR_CPU = 1
@@ -128,6 +131,7 @@ class _ScyllasBandSynthesisRequest(ctypes.Structure):
         ("affect", ctypes.c_char_p),
         ("affect_guidance_scale", ctypes.c_float),
         ("has_affect_guidance_scale", ctypes.c_int32),
+        ("duration_hierarchy_mode", ctypes.c_int),
     ]
 
 
@@ -538,6 +542,9 @@ def _build_synthesis_request(request: Any) -> tuple[_ScyllasBandSynthesisRequest
         affect=_bytes(_affect_spec(getattr(request, "affect", None))),
         affect_guidance_scale=float(getattr(request, "affect_guidance_scale", 1.0)),
         has_affect_guidance_scale=1,
+        duration_hierarchy_mode=_duration_hierarchy_mode_id(
+            getattr(request, "duration_hierarchy_mode", "default")
+        ),
     )
     return native, prefix_buffer
 
@@ -1098,6 +1105,18 @@ def _sampler_id(value: str) -> int:
         return _SAMPLER_IDS[str(value or "heun").lower()]
     except KeyError as exc:
         raise ValueError(f"Unsupported Scylla's Band sampler: {value!r}") from exc
+
+
+def _duration_hierarchy_mode_id(value: str) -> int:
+    modes = {
+        "default": SCYLLASBAND_DURATION_HIERARCHY_DEFAULT,
+        "p50": SCYLLASBAND_DURATION_HIERARCHY_P50,
+        "sampled": SCYLLASBAND_DURATION_HIERARCHY_SAMPLED,
+    }
+    try:
+        return modes[str(value or "default").lower()]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported duration hierarchy mode: {value!r}") from exc
 
 
 def _litert_accelerator_id(value: str) -> int:

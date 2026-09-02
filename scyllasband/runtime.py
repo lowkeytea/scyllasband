@@ -50,6 +50,7 @@ class SynthesisRequest:
     steps: int = 8
     sampler: str = "euler"
     temperature: float = 1.0
+    duration_hierarchy_mode: str = "default"
     context_before: str | None = None
     context_after: str | None = None
     chunk_index: int | None = None
@@ -58,6 +59,7 @@ class SynthesisRequest:
     boundary_after: str | None = None
     min_sentence_pause_ms: float = DEFAULT_MIN_SENTENCE_PUNCTUATION_PAUSE_MS
     min_clause_pause_ms: float = DEFAULT_MIN_CLAUSE_PUNCTUATION_PAUSE_MS
+    ellipsis_dot_counts: tuple[int, ...] = ()
     prefix_latents: Any | None = None
 
 

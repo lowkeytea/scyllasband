@@ -29,6 +29,7 @@ PLAN_VERSION = "scyllasband.streaming.plan.v1"
 _SENTENCE_DOT_PLACEHOLDER = "<SCYLLASBAND_DOT>"
 _DECIMAL_DOT_RE = re.compile(r"(?<=\d)\.(?=\d)")
 _DOTTED_INITIALISM_RE = re.compile(r"(?<![A-Za-z])(?:[A-Za-z]\.){2,}")
+_ELLIPSIS_RUN_RE = re.compile(r"\.{2,}|…")
 _CONTEXT_TEXT_CHARS = 220
 _TERMINAL_BOUNDARY_CHARS = frozenset(".?!")
 _STRONG_CONTINUATION_CHARS = frozenset(";:")
@@ -49,6 +50,7 @@ class PlannerOptions:
     steps: int = 8
     sampler: str = "heun"
     speed: float = 1.0
+    duration_hierarchy_mode: str = "default"
     backend: str = "litert"
     emotion: str | None = None
     affect: Mapping[str, float] | str | None = None
@@ -372,6 +374,36 @@ def plan_chunks_from_prepared(
     return out
 
 
+def ellipsis_dot_counts(text: str) -> tuple[int, ...]:
+    """Return raw dot units while treating one Unicode ellipsis as three."""
+
+    return tuple(
+        3 if match.group(0) == "…" else len(match.group(0))
+        for match in _ELLIPSIS_RUN_RE.finditer(str(text or ""))
+    )
+
+
+def _attach_ellipsis_dot_counts(
+    split_records: list[dict[str, Any]],
+    *,
+    source_text: str,
+) -> list[dict[str, Any]]:
+    source_counts = ellipsis_dot_counts(source_text)
+    source_index = 0
+    output: list[dict[str, Any]] = []
+    for record in split_records:
+        item = dict(record)
+        occurrences = len(ellipsis_dot_counts(str(item.get("text") or "")))
+        if occurrences:
+            counts = list(source_counts[source_index : source_index + occurrences])
+            if len(counts) < occurrences:
+                counts.extend([3] * (occurrences - len(counts)))
+            item["ellipsis_dot_counts"] = counts
+            source_index += occurrences
+        output.append(item)
+    return output
+
+
 def prepare_render_chunks(
     runtime: Any,
     records: list[dict[str, Any]],
@@ -393,10 +425,13 @@ def prepare_render_chunks(
         source_text = str(record["text"])
         record_id = str(record.get("record_id") or f"record-{record_index:04d}")
         if opts.no_normalize_text:
-            split_records = split_text_chunk_records(
-                source_text,
-                max_chars=opts.max_chunk_chars,
-                min_chars=opts.min_chunk_chars,
+            split_records = _attach_ellipsis_dot_counts(
+                split_text_chunk_records(
+                    source_text,
+                    max_chars=opts.max_chunk_chars,
+                    min_chars=opts.min_chunk_chars,
+                ),
+                source_text=source_text,
             )
             for split_record in split_records:
                 prepared.append(
@@ -416,11 +451,15 @@ def prepare_render_chunks(
                 )
             continue
         normalized = runtime.normalize_text(source_text, language=language, voice_id=voice)
-        for split_record in split_text_chunk_records(
-            normalized,
-            max_chars=opts.max_chunk_chars,
-            min_chars=opts.min_chunk_chars,
-        ):
+        split_records = _attach_ellipsis_dot_counts(
+            split_text_chunk_records(
+                normalized,
+                max_chars=opts.max_chunk_chars,
+                min_chars=opts.min_chunk_chars,
+            ),
+            source_text=source_text,
+        )
+        for split_record in split_records:
             prepared.append(
                 {
                     **split_record,
@@ -518,12 +557,16 @@ def estimate_chunk_duration_metadata(
             steps=opts.steps,
             sampler=opts.sampler,
             speed=opts.speed,
+            duration_hierarchy_mode=opts.duration_hierarchy_mode,
             context_before=None,
             context_after=None,
             boundary_before=str(chunk["boundary_before"]),
             boundary_after=str(chunk["boundary_after"]),
             min_sentence_pause_ms=float(opts.min_sentence_pause_ms),
             min_clause_pause_ms=float(opts.min_clause_pause_ms),
+            ellipsis_dot_counts=tuple(
+                int(value) for value in chunk.get("ellipsis_dot_counts", ())
+            ),
         )
     )
 
@@ -1037,6 +1080,10 @@ def _split_chunk_for_budget_retry(
     ):
         return []
 
+    source_dot_counts = tuple(
+        int(value) for value in chunk.get("ellipsis_dot_counts", ())
+    ) or ellipsis_dot_counts(text)
+    source_dot_index = 0
     out: list[dict[str, Any]] = []
     previous_after: str | None = None
     for piece_index, piece in enumerate(pieces):
@@ -1063,6 +1110,18 @@ def _split_chunk_for_budget_retry(
             else record["boundary_before"] in {"paragraph_start", "sentence_start"}
         )
         record["ends_sentence"] = record["boundary_after"] in _SENTENCE_END_BOUNDARIES
+        fallback_dot_counts = ellipsis_dot_counts(piece)
+        piece_dot_counts: list[int] = []
+        for local_index in range(len(fallback_dot_counts)):
+            if source_dot_index < len(source_dot_counts):
+                piece_dot_counts.append(source_dot_counts[source_dot_index])
+            else:
+                piece_dot_counts.append(fallback_dot_counts[local_index])
+            source_dot_index += 1
+        if piece_dot_counts:
+            record["ellipsis_dot_counts"] = piece_dot_counts
+        else:
+            record.pop("ellipsis_dot_counts", None)
         if predicted_count is not None:
             record[predicted_key] = int(predicted_count)
         if fixed_count is not None:

@@ -4,6 +4,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace scyllasband_detail {
 
@@ -12,6 +13,39 @@ struct ScyllasBandDurationEstimate {
     int fixed_latent_frames = 0;
     std::string metadata_json;
 };
+
+std::string duration_hierarchy_sampling_key(
+    const std::string& language,
+    const std::string& voice,
+    const std::vector<std::string>& phones
+);
+double duration_hierarchy_hash_normal(
+    uint64_t seed,
+    const std::string& scope,
+    double max_abs_z
+);
+int64_t duration_hierarchy_round_nonnegative(double value);
+
+struct ScyllasBandDurationHierarchyPauseSample {
+    int64_t frames = 0;
+    bool present = false;
+    double unit_probability = 0.5;
+    double duration_quantile = 0.5;
+};
+
+ScyllasBandDurationHierarchyPauseSample duration_hierarchy_sample_pause(
+    uint64_t seed,
+    const std::string& sampling_key_sha256,
+    int phrase_index,
+    double lower,
+    double median,
+    double upper,
+    double presence_logit,
+    double duration_scale,
+    bool sample_presence,
+    double pause_strength,
+    double max_abs_z
+);
 
 class ScyllasBandBackendEngine {
 public:
