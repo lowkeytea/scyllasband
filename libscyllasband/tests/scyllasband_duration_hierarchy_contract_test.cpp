@@ -66,6 +66,12 @@ std::string manifest(const std::string& phrase_boundary) {
 }  // namespace
 
 int main() {
+    if (scyllasband_detail::g2p_lowercase_text("ĐỢI ÄÉÑŒ ẞ") !=
+        "đợi äéñœ ß") {
+        std::cerr << "Native G2P Unicode lowercase does not match Python"
+                  << std::endl;
+        return 1;
+    }
     const std::vector<std::string> phones = {
         "AA", "<pause_comma>", "<sil>", "ɜ"
     };
@@ -131,6 +137,28 @@ int main() {
                       << expected.seed << std::endl;
             return 1;
         }
+    }
+
+    // This is the final minimum-frame policy used by the production duration
+    // expansion call site. Sampled-absent explicit word-boundary and remapped
+    // punctuation silences must stay absent; lexical phones retain their floor.
+    const int64_t absent_word_boundary =
+        scyllasband_detail::duration_hierarchy_apply_nonempty_phone_floor(
+            0, true, true, false
+        );
+    const int64_t absent_remapped_punctuation =
+        scyllasband_detail::duration_hierarchy_apply_nonempty_phone_floor(
+            0, true, true, false
+        );
+    const int64_t zero_lexical =
+        scyllasband_detail::duration_hierarchy_apply_nonempty_phone_floor(
+            0, true, false, false
+        );
+    if (absent_word_boundary != 0 || absent_remapped_punctuation != 0 ||
+        zero_lexical != 1) {
+        std::cerr << "Hierarchy-sampled pause presence was not preserved"
+                  << std::endl;
+        return 1;
     }
 
     const auto nonce = std::chrono::steady_clock::now().time_since_epoch().count();

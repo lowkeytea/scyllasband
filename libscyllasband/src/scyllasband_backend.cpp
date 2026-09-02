@@ -781,7 +781,7 @@ std::vector<int64_t> encode_g2p_text(
     if (lang_it == bundle.g2p_text_to_id.end()) {
         throw std::runtime_error("G2P language '" + language + "' is not supported by this bundle");
     }
-    std::string work = bundle.g2p_lowercase ? lowercase_ascii_backend(text) : text;
+    std::string work = bundle.g2p_lowercase ? g2p_lowercase_text(text) : text;
     std::vector<int64_t> sequence;
     sequence.push_back(static_cast<int64_t>(lang_it->second));
     int emitted_chars = 0;
@@ -3541,8 +3541,13 @@ ScyllasBandDurationExpansionMetadata expand_duration_values(
                 ? 0
                 : std::max<int64_t>(1, frame_count)
             );
-        } else if (!phone.empty()) {
-            frame_count = std::max<int64_t>(1, frame_count);
+        } else {
+            frame_count = duration_hierarchy_apply_nonempty_phone_floor(
+                frame_count,
+                hierarchy_sampled,
+                pause_presence_eligible,
+                phone.empty()
+            );
         }
         const std::string& semantic_phone = (
             static_cast<std::size_t>(index) < prepared.punctuation_floor_phones.size() &&
@@ -6006,6 +6011,61 @@ int64_t duration_hierarchy_round_nonnegative(double value) {
     if (fraction > 0.5) return static_cast<int64_t>(lower + 1.0);
     const int64_t lower_integer = static_cast<int64_t>(lower);
     return lower_integer % 2 == 0 ? lower_integer : lower_integer + 1;
+}
+
+std::string g2p_lowercase_text(const std::string& value) {
+    std::string output;
+    output.reserve(value.size());
+    for (const std::string& encoded : utf8_codepoints(value)) {
+        uint32_t codepoint = utf8_codepoint_value(encoded);
+        if (codepoint >= 0x0041U && codepoint <= 0x005AU) {
+            codepoint += 0x20U;
+        } else if ((codepoint >= 0x00C0U && codepoint <= 0x00D6U) ||
+                   (codepoint >= 0x00D8U && codepoint <= 0x00DEU)) {
+            codepoint += 0x20U;
+        } else if (codepoint >= 0x0100U && codepoint <= 0x012FU &&
+                   codepoint % 2U == 0U) {
+            codepoint += 1U;
+        } else if (codepoint >= 0x0132U && codepoint <= 0x0137U &&
+                   codepoint % 2U == 0U) {
+            codepoint += 1U;
+        } else if (codepoint >= 0x0139U && codepoint <= 0x0147U &&
+                   codepoint % 2U == 1U) {
+            codepoint += 1U;
+        } else if (codepoint >= 0x014AU && codepoint <= 0x0177U &&
+                   codepoint % 2U == 0U) {
+            codepoint += 1U;
+        } else if (codepoint == 0x0178U) {
+            codepoint = 0x00FFU;
+        } else if (codepoint >= 0x0179U && codepoint <= 0x017DU &&
+                   codepoint % 2U == 1U) {
+            codepoint += 1U;
+        } else if (codepoint == 0x01A0U || codepoint == 0x01AFU) {
+            codepoint += 1U;
+        } else if (codepoint >= 0x1E00U && codepoint <= 0x1E95U &&
+                   codepoint % 2U == 0U) {
+            codepoint += 1U;
+        } else if (codepoint >= 0x1EA0U && codepoint <= 0x1EFEU &&
+                   codepoint % 2U == 0U) {
+            codepoint += 1U;
+        } else if (codepoint == 0x1E9EU) {
+            codepoint = 0x00DFU;
+        }
+        append_utf8_codepoint(output, codepoint);
+    }
+    return output;
+}
+
+int64_t duration_hierarchy_apply_nonempty_phone_floor(
+    int64_t frame_count,
+    bool hierarchy_sampled,
+    bool pause_presence_eligible,
+    bool phone_empty
+) {
+    if (phone_empty || (hierarchy_sampled && pause_presence_eligible)) {
+        return frame_count;
+    }
+    return std::max<int64_t>(1, frame_count);
 }
 
 ScyllasBandDurationHierarchyPauseSample duration_hierarchy_sample_pause(

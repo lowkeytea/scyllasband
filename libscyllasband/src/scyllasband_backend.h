@@ -26,6 +26,15 @@ double duration_hierarchy_hash_normal(
 );
 int64_t duration_hierarchy_round_nonnegative(double value);
 
+std::string g2p_lowercase_text(const std::string& value);
+
+int64_t duration_hierarchy_apply_nonempty_phone_floor(
+    int64_t frame_count,
+    bool hierarchy_sampled,
+    bool pause_presence_eligible,
+    bool phone_empty
+);
+
 struct ScyllasBandDurationHierarchyPauseSample {
     int64_t frames = 0;
     bool present = false;

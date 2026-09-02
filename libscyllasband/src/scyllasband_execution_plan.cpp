@@ -409,7 +409,7 @@ ScyllasBandDurationFlowPreparedInputs prepare_scyllasband_duration_flow_inputs(
     inputs.boundary_before_id = boundary_id_for_value(
         resolved_request.boundary_before,
         {"sentence_start", "paragraph_start", "clause_continue", "chunk_continue"},
-        "sentence_start"
+        "paragraph_start"
     );
     inputs.boundary_after_id = boundary_id_for_value(
         resolved_request.boundary_after,

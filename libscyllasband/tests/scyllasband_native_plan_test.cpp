@@ -68,6 +68,43 @@ int validate_text_only_g2p_execution_plan() {
     return 0;
 }
 
+int validate_single_request_boundary_defaults() {
+    scyllasband_detail::ScyllasBandBundleInfo bundle;
+    bundle.sample_rate = 24000;
+    bundle.hop_length = 256;
+    bundle.latent_hop_length = 512;
+    bundle.latent_dim = 4;
+    bundle.phone_frames = 4;
+    bundle.latent_frames = 8;
+    bundle.phone_to_id = {{"<pad>", 0}, {"<sil>", 1}, {"a", 2}};
+    scyllasband_detail::ScyllasBandResolvedRequest resolved;
+    resolved.voice_index = 0;
+    resolved.language_index = 0;
+    resolved.emotion_index = 0;
+    resolved.has_explicit_phones = true;
+    ScyllasBandSynthesisRequest request{};
+    request.explicit_phones = "<sil> a";
+    try {
+        const auto prepared =
+            scyllasband_detail::prepare_scyllasband_duration_flow_inputs(
+                bundle, resolved, request
+            );
+        if (prepared.boundary_before_id != 1 ||
+            prepared.boundary_after_id != 0) {
+            return fail(
+                "single-request boundary defaults do not match Python "
+                "paragraph-start/sentence-end semantics"
+            );
+        }
+    } catch (const std::exception& exc) {
+        return fail(
+            std::string("single-request boundary default preparation failed: ") +
+            exc.what()
+        );
+    }
+    return 0;
+}
+
 }  // namespace
 
 int main() {
@@ -87,6 +124,10 @@ int main() {
     const int execution_plan_status = validate_text_only_g2p_execution_plan();
     if (execution_plan_status != 0) {
         return execution_plan_status;
+    }
+    const int boundary_default_status = validate_single_request_boundary_defaults();
+    if (boundary_default_status != 0) {
+        return boundary_default_status;
     }
 
     const char* text =
