@@ -8,8 +8,8 @@ val scyllasbandModelsDir = repositoryRoot.resolve("scyllasband/models")
 // back to full ONNX. Versioned v2 is always searched before v1 and the old
 // flat v1 layout remains readable for existing checkouts.
 val scyllasbandOnnxInt8BundleDir = sequenceOf(
-    "v2/onnx-int8",
     "v2/onnx",
+    "v2/onnx-int8",
     "v1/onnx-int8",
     "v1/onnx",
     "onnx-int8",
@@ -17,14 +17,14 @@ val scyllasbandOnnxInt8BundleDir = sequenceOf(
 )
     .map(scyllasbandModelsDir::resolve)
     .firstOrNull { it.resolve("manifest.json").isFile }
-    ?: scyllasbandModelsDir.resolve("v2/onnx-int8")
+    ?: scyllasbandModelsDir.resolve("v2/onnx")
 val exampleDataDir = repositoryRoot.resolve("data")
 val generatedAssetsDir = layout.buildDirectory.dir("generated/scyllasbandAssets/main")
 
 val prepareScyllasBandAssets by tasks.registering(Sync::class) {
     doFirst {
         check(scyllasbandOnnxInt8BundleDir.resolve("manifest.json").isFile) {
-            "Scylla's Band ONNX manifest not found under ${scyllasbandModelsDir.absolutePath}. Run `python -m scyllasband download --model-version v2 --runtime-bundles onnx-int8`."
+            "Scylla's Band ONNX manifest not found under ${scyllasbandModelsDir.absolutePath}. Run `python -m scyllasband download --model-version v2 --runtime-bundles onnx`."
         }
         check(scyllasbandOnnxInt8BundleDir.resolve("onnx/components/shared_weights.bin").isFile) {
             "Scylla's Band ONNX shared weights are missing under ${scyllasbandOnnxInt8BundleDir.absolutePath}."

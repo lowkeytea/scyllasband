@@ -1,587 +1,171 @@
 # Scylla's Band
 
-Scylla's Band is the public inference/runtime package for the `scyllasband` continuous-latent TTS model. Bundles predict phone durations and rectified acoustic latent flow, then decode those latents through a Scylla's Band acoustic adapter and Vocos vocoder.
+Scylla's Band is a local TTS runtime for ten managed voices. It predicts phone durations, generates continuous acoustic latents with rectified flow, and decodes speech at 24 kHz through an acoustic adapter and Vocos.
 
-The downloader defaults to the v2 repository and the CPU-optimized INT8 ONNX bundle. Full-precision ONNX and LiteRT remain explicit bundle choices. Versioned local directories let v1 and v2 coexist, and automatic bundle selection always prefers v2.
+The **dev branch's replacement v2** uses measured delivery controls: **energy, tension, valence, assertiveness**, each from **0 to 4**, with **2 as neutral**, plus **whisper on/off**. It replaces the earlier emotion-based v2 development model. The runtime still supports v1 with its original controls.
 
-## Highlights
+## Quick start
 
-- INT8 ONNX is the default portable v2 inference path; FP32 ONNX is available for parity and quality checks.
-- Optional per-channel dynamic INT8 weights reduce the bundle by about 33% and accelerate CPU inference while preserving duration, conditioning, and vocoder components in FP32.
-- LiteRT is available for explicit native and embedded validation.
-- 24 kHz output with 100-mel acoustic features and 24-D acoustic latents.
-- Seven public text-input languages: `en_us`, `en_gb`, `es`, `it`, `fr`, `de`, and `vi`.
-- Ten managed voices: `ariadne`, `felix`, `gwen`, `ink`, `max`, `orpheus`, `rex`, `scylla`, `stone`, and `tuesday`.
-- V2 exposes five independently scored controls: `calm`, `joy`, `anger`, `sadness`, and `whisper`. Older v1 axis orders remain readable when a v1 bundle is selected.
-- Affect CFG acts on both duration and acoustic-flow prediction while retaining voice/reference conditioning.
-- Long-form chunking is enabled by default, including boundary metadata, punctuation pause floors, prefix-latent carryover, and span context.
-- Group-speak input can label lines or inline spans with `[voice]`, `[voice:language]`, or `[voice:language:axis=value,...]`.
-- Runtime code is self-contained in `scyllasband/`; training and export tooling are intentionally outside this inference package.
-
-Runnable mobile integrations are provided for
-[Android](examples/android/README.md) and [iOS](examples/ios/README.md). The
-iOS sample packages the native runtime as a reusable `ScyllasBandKit` local pod
-so application code never needs to import the C ABI directly.
-
-## Audio Samples
-
-Open the [interactive voice and affect gallery](https://lowkeytea.github.io/scyllasband/) to play the managed voices and affect examples. The [sample index and generation details](samples/README.md) remain available in the repository.
-
-Join the [Scylla's Band Discord](https://discord.gg/cNdBuM3tS) for release updates, help, and community discussion.
-
-## Quick Start
-
-Commands below assume you run from the Scylla's Band repository root.
+From this repository:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install --upgrade pip wheel setuptools
 pip install -e .
 pip install numpy huggingface_hub onnxruntime
 
-python -m scyllasband download
+python -m scyllasband download --yes
 python -m scyllasband validate-bundle
 python -m scyllasband list-voices
-python -m scyllasband speak --voice scylla --language en_us --emotion calm=0.5 -o hello.wav "Hello from Scylla's Band."
+python -m scyllasband speak --voice scylla --language en_us \
+    --delivery energy=2,tension=2,valence=2,assertiveness=2,whisper=off \
+    --sampler heun --steps 8 -o hello.wav "Hello from Scylla's Band."
 ```
 
-`python -m scyllasband download` first asks for v1 or v2, then shows bundle-type checkboxes. V2 is the noninteractive default and resolves to `spybyscript/scyllasbandv2`; v1 resolves to `spybyscript/scyllasband`. By default v2 writes:
+Downloads default to the FP32 ONNX bundle from `spybyscript/scyllasbandv2`, pinned to release `v2-measured-20260922`. It installs under `scyllasband/models/v2/onnx`. Voice/reference conditioning is embedded in the measured graphs; separate voice packs are unnecessary.
 
-```text
-scyllasband/models/v2/onnx-int8/  # default portable inference bundle
-scyllasband/models/v2/voices/     # voice packs copied from that release
-```
+## Delivery controls
 
-To fetch FP32 ONNX and LiteRT as well:
+| Control | Request | Default |
+| --- | --- | --- |
+| Energy | 0–4 or `auto` | 2 |
+| Tension | 0–4 or `auto` | 2 |
+| Valence | 0–4 or `auto` | 2 |
+| Assertiveness | 0–4 or `auto` | 2 |
+| Whisper | `on`, `off`, or `auto` | `off` |
 
 ```bash
-python -m scyllasband download --model-version v2 --runtime-bundles onnx --yes
-python -m scyllasband download --model-version v2 --runtime-bundles litert --yes
-python -m scyllasband validate-bundle scyllasband/models/v2/onnx
+python -m scyllasband speak --voice ariadne \
+    --delivery energy=1.2,tension=2.8,valence=1,assertiveness=3 \
+    --sampler heun --steps 8 -o mixed.wav "I thought you might come back."
+
+python -m scyllasband speak --voice ink --language en_gb \
+    --delivery whisper=on -o whisper.wav "Keep your voice down."
+```
+
+Unspecified axes use neutral defaults. `--delivery auto` leaves every coordinate unspecified; `energy=auto` leaves only that coordinate unspecified. An unspecified coordinate has a separate presence mask and is distinct from requesting 2. It does **not** invoke an automatic performance planner.
+
+The four axes interact. Requested values are learned conditioning, not guaranteed scorer outputs or named emotions. Their useful range varies with voice, language and text. Start near 2 and listen when moving toward the extremes. Expressiveness was an auxiliary training target, not a fifth inference slider.
+
+Measured v2 rejects `--emotion`, legacy `--affect`, and emotion CFG. The Python request's separate `energy` parameter remains a waveform-gain control; use `delivery={"energy": ...}` for the new learned energy coordinate.
+
+## Upgrading or keeping v1
+
+An installed emotion-based v2 is detected from its manifest. Synthesis displays a replacement notice. Downloading v2 stages and validates the new bundle before replacing the selected installation; a failed download leaves the installed bundle intact.
+
+```bash
+# Replace superseded v2; leave v1 installed.
+python -m scyllasband download --model-version v2 --yes
+
+# Install or use v1 explicitly, retaining its original affect controls.
+python -m scyllasband download --model-version v1 --runtime-bundles onnx --yes
+python -m scyllasband speak scyllasband/models/v1/onnx \
+    --voice scylla --emotion calm=0.5,joy=0.25 -o v1.wav "Hello again."
+```
+
+Automatic selection prefers an installed measured v2 over superseded v2 or v1. Explicit bundle paths always select that bundle. V1 can coexist in `models/v1`, and legacy flat v1 installations remain discoverable. V1 is removed only through the explicit `--delete-v1` option or an opted-in interactive deletion choice. See the [v1 model card](MODEL_CARD.md) for its original model contract.
+
+## Backends
+
+| Release | Default download | Other options |
+| --- | --- | --- |
+| Measured v2 | `onnx` (FP32) | `onnx-int8` for explicit comparison |
+| V1 | `onnx-int8`; Core AI also on supported Apple hosts | Existing FP32, LiteRT and Core AI bundles |
+
+Both measured variants use `--backend onnx`. INT8 quantizes the vector estimator's QKV and feed-forward layers and uses the previously exported quantized G2P. Duration, context and vocoder components remain FP32. INT8 produces different waveforms; numerical execution checks do not establish perceptual equivalence. FP32 is the release reference.
+
+```bash
+python -m scyllasband download --model-version v2 --runtime-bundles onnx-int8 --yes
 python -m scyllasband speak scyllasband/models/v2/onnx-int8 \
-    --voice scylla --language en_us -o hello_int8.wav \
-    "Hello from INT8 ONNX."
+    --voice rex --delivery energy=2.5 -o comparison.wav "Let's try this again."
 ```
 
-The INT8 bundle uses the normal `onnx` backend; its bundle path is the only required runtime selection. `--runtime-bundles both` downloads FP32 ONNX plus LiteRT. `--runtime-bundles all` selects every declared bundle type.
-
-If v1 is installed, selecting v2 interactively offers an unchecked deletion checkbox. Noninteractive cleanup requires `--delete-v1` and runs only after the requested v2 bundles validate. Without cleanup, both releases coexist under `models/v1` and `models/v2`.
-
-Automatic commands search v2 before v1, prefer INT8 ONNX for the ONNX backend, and retain the old flat v1 layout as a compatibility fallback. LiteRT requires an explicit matching bundle or backend. You can pass an explicit bundle path as the first positional argument to `speak`, `plan`, `stream`, `group-speak`, `validate-bundle`, or `list-voices`.
-
-## CLI
-
-Common commands:
-
-```bash
-python -m scyllasband download
-python -m scyllasband validate-bundle
-python -m scyllasband list-voices
-python -m scyllasband normalize-text --language es "Cuesta EUR 12,50 el 22/05/2026."
-
-python -m scyllasband speak \
-    --voice ariadne \
-    --language en_us \
-    --emotion calm=0.5,joy=0.5 \
-    -o hello.wav \
-    "This is the ONNX Scylla's Band runtime."
-
-python -m scyllasband speak \
-    --file data/emotional_text.txt \
-    --voice gwen \
-    --language en_us \
-    --emotion joy=0.7,whisper=0.4 \
-    --emotion-scale 1.25 \
-    --metadata emotional.json \
-    -o emotional.wav
-
-python -m scyllasband group-speak \
-    --file data/groupSpeak.txt \
-    --emotion-scale 1.5 \
-    -o dialogue.wav
-```
-
-Installed entry points:
-
-```bash
-scyllasband speak --voice scylla --language en_us -o hello.wav "Hello."
-scyllasband-speak --voice scylla --language en_us -o hello.wav "Hello."
-scyllasband-group-speak --file data/groupSpeak.txt -o dialogue.wav
-```
-
-Affect-tagged group files use the same normalized `[0, 1]` strengths as `--emotion`:
-
-```text
-[ink:en_gb:calm=0.5,joy=0.75] Lovely, [es] muy elegante, [en_gb] and very subtle.
-[rex:en_us:calm=0.5,anger=0.5] Are you really going to do that?
-```
-
-Language-only inline tags retain the active affect vector, while a new `axis=value` tag replaces it.
-
-### Emotion Controls and CFG
-
-The selected bundle manifest is authoritative for affect names and dimensions.
-Axis-order version 1 is the six-coordinate v1 contract
-`calm, joy, anger, sadness, sarcasm, questioning`. Axis-order version 2 is
-the older six-coordinate whisper contract. Current v2 bundles use axis-order
-version 3: `calm, joy, anger, sadness, whisper`.
-
-The runtime validates the axis-order version, names, dimensions, and graph
-input contract together. `model_version` remains release metadata, so an
-unknown or mismatched axis is rejected rather than silently remapped.
-
-For current v2, omitting affect selects neutral
-`[0.5, 0.25, 0, 0, 0]`. A partial request starts from `calm=0.5` with all
-other axes zero, then overlays supplied values; `anger=0.25` therefore means
-`[0.5, 0, 0.25, 0, 0]`. Explicit calm is supported from `0.25` through
-`0.75`, matching human calm levels 1 through 3.
-
-Values are continuous and composable rather than mutually exclusive emotion
-classes. Training ratings use a `0` to `4` scale and non-calm values map as
-`1 -> 0.25`, `2 -> 0.5`, `3 -> 0.75`, and `4 -> 1.0`.
-
-```bash
-# Anger retains the supported calm baseline through partial-default handling.
-python -m scyllasband speak --voice scylla --emotion anger=0.75 -o angry.wav "That was not the agreement."
-
-# Whisper can be mixed with a core delivery axis.
-python -m scyllasband speak --voice rex --emotion calm=0.5,whisper=0.75 -o whisper.wav "Please keep this quiet."
-```
-
-`--emotion-scale` is a separate control. It does not change or extend the `[0, 1]` axis values; it controls how far duration and acoustic-flow predictions move from the learned null-emotion branch:
-
-```text
-guided = null + scale * (conditioned - null)
-```
-
-- `0` selects the learned null-affect prediction.
-- `1` uses the requested emotion vector directly and is the default.
-- Values above `1` amplify the difference. `1.25` to `1.5` is a useful first range when the direct effect is too subtle.
-
-The runtime deliberately has no fixed upper cap, so values such as `2.5` are valid. Higher CFG is extrapolation, however, and can eventually produce exaggerated timing, voice instability, or distortion depending on the voice and sentence. The current model's vector estimator used `0.15` affect-condition dropout during training, which supplies the null branch used by CFG. Voice/reference conditioning remains enabled in that branch so guidance targets delivery instead of intentionally discarding identity. A scale other than `1` evaluates both null and conditioned branches, so it costs more than direct conditioning.
-
-### Backend Selection
-
-The default backend is `onnx`. V2 automatic selection prefers `scyllasband/models/v2/onnx-int8`; full-precision ONNX uses the same backend. The legacy `auto` spelling remains accepted. LiteRT and Core AI require explicit matching bundles.
-
-```bash
-# Default ONNX path
-python -m scyllasband speak --voice scylla --language en_us -o hello.wav "Hello."
-
-# Explicit ONNX path and provider list
-python -m scyllasband speak scyllasband/models/v2/onnx \
-    --backend onnx \
-    --onnx-providers CPUExecutionProvider \
-    --voice scylla \
-    --language en_us \
-    -o hello_onnx.wav \
-    "Hello from ONNX."
-
-# Optional CPU-optimized INT8 ONNX path
-python -m scyllasband speak scyllasband/models/v2/onnx-int8 \
-    --backend onnx \
-    --voice scylla \
-    --language en_us \
-    -o hello_int8.wav \
-    "Hello from INT8 ONNX."
-
-# Experimental LiteRT path
-python -m scyllasband speak scyllasband/models/v2/litert \
-    --backend litert \
-    --voice scylla \
-    --language en_us \
-    -o hello_litert.wav \
-    "Hello from LiteRT."
-
-# Apple Core AI path (macOS 27 / Apple Silicon)
-python -m scyllasband download --runtime-bundles coreai
-python -m scyllasband speak scyllasband/models/v2/coreai \
-    --backend coreai \
-    --litert-accelerator gpu \
-    --voice gwen \
-    --language en_us \
-    -o hello_coreai.wav \
-    "Finally, native Core AI on Apple."
-```
-
-The Python ONNX backend requires `onnxruntime`. The Python LiteRT reference path requires one of `ai-edge-litert`, `tflite-runtime`, or TensorFlow. Native LiteRT uses staged LiteRT shared libraries through `libscyllasband`. On macOS 27, the Core AI backend automatically builds the Swift/C++ bridge with Xcode 27 and uses native `.aimodel` assets; it has no ONNX or LiteRT dependency.
-
-ONNX, Python LiteRT, and native LiteRT expose the selected bundle's manifest-declared affect and CFG contract. Bundles that do not declare `controls.affect.enabled` reject affect requests.
-
-### Long-Form Controls
-
-`--chunk-text` is enabled by default. Use `--no-chunk-text` only when debugging a single raw synthesis request.
-
-Relevant defaults:
-
-```text
-backend: onnx
-steps: 8
-sampler: heun
-chunk text: enabled
-max chunk chars: 220
-min chunk chars: 48
-boundary fade/crossfade: 8 ms
-minimum nonterminal in-chunk clause pause: 160 ms
-minimum nonterminal in-chunk sentence pause: 320 ms
-lookahead chunks: 1
-```
-
-Useful flags:
-
-```bash
-python -m scyllasband speak --file long.txt --voice scylla --language en_us -o long.wav
-python -m scyllasband speak --file long.txt --voice scylla --language en_us --stream --events events.jsonl -o long.wav
-python -m scyllasband plan --file long.txt --voice scylla --language en_us -o plan.json
-python -m scyllasband stream --file long.txt --voice scylla --language en_us --events events.jsonl -o stream_chunks
-```
-
-`stream` emits JSONL events and can optionally write each completed chunk as a WAV file. Production hosts should call the Python runtime API or native C ABI directly.
-
-### Speed Shortcuts
-
-Scylla's Band uses a flow sampler. More steps generally cost more runtime and can improve stability.
-
-```bash
-python -m scyllasband speak --voice scylla --steps 8 --sampler heun -o hq.wav "Default quality path."
-python -m scyllasband speak --voice scylla --fast -o fast.wav "Four-step adaptive chunking."
-python -m scyllasband speak --voice scylla --faster -o faster.wav "Two-step adaptive chunking."
-```
-
-`--fast` expands to `--adaptive-chunking --steps 4`. `--faster` expands to `--adaptive-chunking --steps 2 --max-chunk-chars 180`.
+For measured v2, `both` and `all` select FP32 and INT8 ONNX. No measured LiteRT or Core AI bundle is published in this release. V1 retains its backend choices. Each bundle's manifest is authoritative.
 
 ## Python API
 
 ```python
 from scyllasband import ScyllasBandRuntime, SynthesisRequest
 
-runtime = ScyllasBandRuntime.from_bundle(
-    "scyllasband/models/v2/onnx",
-    backends=["onnx"],
-)
-
-result = runtime.synthesize(
-    SynthesisRequest(
-        text="Hello from Scylla's Band.",
-        voice_id="scylla",
-        language="en_us",
-        affect={"joy": 0.7, "whisper": 0.25},
-        affect_guidance_scale=1.0,
-        sampler="heun",
-        steps=8,
-    )
-)
+runtime = ScyllasBandRuntime.from_bundle("scyllasband/models/v2/onnx", backends=["onnx"])
+result = runtime.synthesize(SynthesisRequest(
+    text="It is a real pleasure to meet you.",
+    voice_id="ariadne",
+    language="en_us",
+    delivery={"energy": 2.3, "tension": 1.7, "valence": 2.6,
+              "assertiveness": 2.0, "whisper": "off"},
+    sampler="heun", steps=8, seed=2027,
+))
+# result.audio, result.sample_rate, result.metadata
 ```
 
-The current v2 bundle uses the ordered axes `calm, joy, anger, sadness, whisper`. Values stay independently bounded in `[0, 1]`; overlays do not replace the core delivery. `affect_guidance_scale` is independent of those values and follows the CFG behavior described above.
+Reuse the runtime across requests. `runtime.warmup()` can initialize sessions before interactive use. `plan_text`, `plan_records`, and `synthesize_stream` support long-form work; per-record `delivery` values propagate through planning, preflight, retries and synthesis.
 
-Long-lived applications can pay graph initialization before the first user request:
+## Long form and dialogue
 
-```python
-runtime = ScyllasBandRuntime.from_bundle(
-    "scyllasband/models/v2/onnx",
-    backends=["onnx"],
-    onnx_autotune_threads=True,
-)
+```bash
+python -m scyllasband speak --voice ariadne --file story.txt \
+    --delivery energy=2.2,valence=2.3 --sampler heun --steps 8 \
+    --metadata story.json -o story.wav
 
-# Run once during application startup. The discarded one-step render initializes
-# G2P, duration, context, the smallest vector bucket, and its vocoder. ONNX vector
-# thread tuning is cached by bundle/runtime/machine fingerprint for later processes.
-warmup = runtime.warmup(voice_id="scylla", language="en_us")
-print(warmup["runtime_status"])
+python -m scyllasband group-speak --file dialogue.txt -o dialogue.wav
 ```
 
-Every chunk synthesized by the same `ScyllasBandRuntime` already reuses its component
-sessions. `warmup()` is idempotent unless `force=True`; it is intended for a
-persistent application or service, not immediately before a one-shot CLI request.
-An explicit `onnx_intra_op_num_threads` value disables autotuning. The CLI exposes
-the same controls through `--onnx-intra-op-threads`, `--onnx-inter-op-threads`,
-`--onnx-autotune-threads`, and `--onnx-autotune-candidates`. Autotuning applies
-only when `CPUExecutionProvider` is primary; accelerator providers should use
-their own execution and device-buffer controls. The CLI autotune flag adds its
-one-time benchmark cost to that process's first synthesis; run it once to seed
-the cache, or hide the work behind application startup with `warmup()`.
-
-For long-form text, prefer `ScyllasBandRuntime.synthesize_stream()` or the CLI so chunk planning, punctuation pause floors, prefix latents, span context, and retry splitting stay in the shared planning path.
-
-## Voices
-
-The current release exposes ten managed voice IDs. Each voice is available for the four public language IDs in the bundle manifest. Some voices default to `en_gb`; passing `--language` is the most explicit way to select dialect.
-
-| Voice | Default Language | Notes |
-| --- | --- | --- |
-| `ariadne` | `en_us` | Managed public voice |
-| `felix` | `en_us` | Managed public voice |
-| `gwen` | `en_us` | Managed public voice |
-| `ink` | `en_gb` | Managed public voice |
-| `max` | `en_us` | Managed public voice |
-| `orpheus` | `en_gb` | Managed public voice |
-| `rex` | `en_us` | Managed public voice |
-| `scylla` | `en_us` | Managed public voice |
-| `stone` | `en_us` | Managed public voice |
-| `tuesday` | `en_gb` | Managed public voice |
-
-Voice/reference assets live under `assets/voice_packs/` in both ONNX and LiteRT bundles. Runtime reference packs include 128-D style features and 32-D prosody features for the managed voice/language entries. These identity and reference features remain separate from the six-dimensional affect vector.
-
-## How It Works
-
-Scylla's Band is a continuous-latent duration-flow TTS system:
+A measured dialogue file can set controls per tagged span:
 
 ```text
-raw text or explicit phones
-  -> spoken-text normalization
-  -> Scylla's Band G2P / phone frontend
-  -> long-form chunk planning, boundary labels, and span context
-  -> duration predictor conditioned on voice, language, reference, and affect
-  -> phone-duration expansion to latent frames
-  -> rectified-flow vector estimator with prefix/context conditioning
-     and optional affect CFG
-  -> acoustic latents
-  -> Scylla's Band acoustic adapter plus frozen Vocos 24 kHz vocoder
-  -> waveform and chunk metadata
+[ariadne:en_us:energy=2.3,valence=2.5] Good to see you. [es] Me alegra verte.
+[rex:en_us:tension=2.6,assertiveness=2.5] We should get going.
+[ink:en_gb:whisper=on] Keep this between us.
 ```
 
-## Current Model Snapshot
+Language tags retain the active delivery request. A new delivery tag replaces it, with unspecified coordinates reset to neutral. Legacy emotion tags remain available with v1 and are rejected by measured v2.
 
-This snapshot describes the public `scyllasband` 1.0 inference release.
+The host chunks long text and assembles waveforms. **Each generated chunk currently receives one global control vector.** Training used local physical/window measurements as auxiliary objectives, but this release does not accept start/middle/end control curves or predict a changing delivery plan. Prefix carryover and old emotion-guided reference selection are disabled for measured v2 to match its trained inference path. Multi-sentence rhythm can still sound uniform or stilted.
 
-| Component | Current release |
+## Voices and languages
+
+| Voices | English dialect |
 | --- | --- |
-| Architecture | Continuous-latent duration prediction plus rectified acoustic flow |
-| Default public backend | ONNX Runtime bundle under `onnx/` |
-| Experimental backend | LiteRT bundle under `litert/` |
-| Apple backend | Core AI bundle under `coreai/` (iOS/macOS 27) |
-| Sample rate | 24,000 Hz |
-| Acoustic features | 100 mel bins, hop length 256 |
-| Latent representation | 24-D latents, latent hop length 512 |
-| Languages | `en_us`, `en_gb`, `es`, `it` |
-| Voices | 10 managed voices |
-| Affect | 5 independent `[0, 1]` axes: `calm`, `joy`, `anger`, `sadness`, `whisper` |
-| Affect CFG | Null/conditioned linear guidance on duration and vector velocity; default `1`, minimum `0`, no fixed upper cap |
-| G2P | Scylla's Band G2P transformer, phrase input, CTC decode, fixed 512 text tokens |
-| Duration predictor | 74-phone vocabulary, 192 hidden size, 4 layers, 4 heads, 512 positions |
-| Vector estimator | 512 hidden size, 12 layers, 8 heads, AdaLN conditioning, QK norm |
-| Context conditioning | Prefix latents up to 24 frames plus 3-segment span context over up to 768 phones |
-| Vocoder path | Scylla's Band acoustic adapter plus frozen `charactr/vocos-mel-24khz` backend |
-| Fixed export budgets | 512 G2P text tokens, 512 phone frames, 640 latent frames |
-| Target buckets | 256, 384, 512, and 640 latent frames, selected by smallest fit |
+| Ariadne, Felix, Gwen, Max, Rex, Scylla, Stone | `en_us` |
+| Ink, Orpheus, Tuesday | `en_gb` |
 
-Training data is not distributed with this runtime package. Scylla's Band was trained primarily on synthetic multilingual speech: seed vocabulary came from Wiktionary-derived word lists, scripted prompt generation covered many target words in unique sentences, and the resulting text was rendered as synthetic speech before filtering with ASR/alignment checks. The current release uses independent per-sample affect scores instead of a single desired emotion category, so one clip can supervise several core/overlay dimensions. The selected vector estimator was trained with `0.15` affect-condition dropout for CFG, alongside chunk-context views, prefix conditioning, and span context. Punctuation boundary phones are followed by explicit `<sil>` slots, matching the aligned frontend targets. Runtime pause floors extend nonterminal silence slots inside an active request, while the final learned silence keeps its model-predicted duration; clean inter-chunk silence is added by the host assembler.
+All ten also support `es`, `it`, `fr`, `de`, and `vi`: 60 trained voice/locale pairs. `en` selects the voice's own English dialect. The runtime rejects unsupported voice/dialect combinations.
 
-## Bundle Layout
+The trained Scylla's Band G2P is the production text frontend. Duration training used alignment/eSpeak phone representations. Export validation distinguishes exact-phone acoustic parity from raw-text frontend behavior; a successful graph export does not rule out pronunciation mistakes.
 
-### ONNX Bundle
+## Native and mobile integration
 
-```text
-bundle/
-  manifest.json
-  onnx/
-    g2p/
-      model.onnx
-      tokenizer.json
-      phoneme_dict.json
-    components/
-      duration_predictor.onnx
-      vector_context_encoder.onnx
-      vector_estimator_b256.onnx
-      vocoder_b256.onnx
-      vocoder_adapter_b256.onnx
-      ...
-      vector_estimator_b640.onnx
-      vocoder_b640.onnx
-      vocoder_adapter_b640.onnx
-      shared_weights.bin
-      shared_weights.json
-  assets/
-    phone_vocab.json
-    languages.json
-    emotions.json
-    voices.json
-    g2p/
-      tokenizer.json
-      normalization.json
-      language_map.json
-      export_config.json
-      phoneme_dict.json
-      pronunciation_overrides.json
-    voice_packs/
-      reference_packs.json
-      <voice_id>.npz
-```
-
-The ONNX export uses opset 18 and shared external data. The four-bucket release stores shared component weights in a single `shared_weights.bin` blob instead of duplicating every large initializer inside each bucket graph. The current affect model uses one full vector graph per bucket; it does not require separate prefix and tail estimator artifacts.
-
-### LiteRT Bundle
-
-```text
-bundle/
-  manifest.json
-  litert/
-    g2p.tflite
-    duration_predictor.tflite
-    vector_context_encoder.tflite
-    vector_estimator_256.tflite
-    vocoder_256.tflite
-    vocoder_adapter_256.tflite
-    ...
-    vector_estimator.tflite
-    vocoder.tflite
-    vocoder_adapter.tflite
-  assets/
-    ...
-```
-
-LiteRT currently carries more duplicated bucket-specific graph data than ONNX, but it remains useful for mobile/native runtime validation and accelerator experiments. Like ONNX, the current public bundle ships full vector graphs for the 256, 384, 512, and 640 frame buckets.
-
-### Core AI Bundle
-
-The Apple bundle stores `g2p.aimodel`, `duration_predictor.aimodel`,
-`vector_context_encoder.aimodel`, `vector_estimator.aimodel`, and
-`vocoder.aimodel` under `coreai/`. Estimator and vocoder frame buckets are
-fixed functions in shared-weight assets, avoiding per-bucket weight files.
-G2P and its `assets/g2p/` sidecars can be updated independently of the
-four-language acoustic assets.
-
-## Native runtimes and Android
-
-`libscyllasband/` owns the native runtime, long-form planning, streaming callbacks, host-language C ABI, and ONNX/LiteRT/Core AI execution paths. All three use the same G2P, duration, reference-pack, emotion CFG, flow-sampling, target-bucket, and vocoder orchestration; only the graph-session adapter changes.
-
-The [Android sample](examples/android/README.md) packages the CPU-optimized INT8 ONNX bundle and exposes all managed voices, manifest-declared languages, the manifest-declared affect axes with strength, and non-negative emotion CFG. Its editor uses inline speaker points and streams each completed native audio chunk while later chunks render. The Kotlin wrapper creates and warms one persistent runtime; `libscyllasband` owns a configurable target-bucket LRU, with a capacity-one memory profile used by default on Android.
-
-The [iOS sample](examples/ios/README.md) packages `ScyllasBandKit` and the Core
-AI bundle. The pod is a copyable iOS 27 static framework with no ONNX
-dependency; the SwiftUI app streams Float32 PCM through `AVAudioEngine` and
-keeps the currently spoken chunk visible in light and dark appearance.
-
-For normal CLI use, the first LiteRT-backed `speak`, `stream`, `plan`, or `group-speak` run automatically prepares the native runtime when `libscyllasband` is missing. The loader detects the host platform (`linux-x86_64`, `linux-arm64`, `macos-arm64`, or `windows-x86_64`), stages the matching LiteRT runtime from an installed `ai_edge_litert` package or downloads the prebuilt runtime, configures CMake, and builds the shared `scyllasband_native` library. This requires CMake plus a working C++ toolchain for the host.
-
-Set `SCYLLASBAND_NATIVE_AUTO_BUILD=0` to disable this behavior, or set `SCYLLASBAND_NATIVE_LIBRARY=/path/to/libscyllasband_native.*` to use a specific library. Set `SCYLLASBAND_NATIVE_AUTO_DOWNLOAD_LITERT=0` if runtime startup should never download the LiteRT prebuilt.
-
-The manual equivalent is still useful for packaging, debugging, or building the C++ smoke tool:
+The C++ ONNX runtime supports measured v2 and legacy v1. See [native build instructions](libscyllasband/README.md).
 
 ```bash
-python -m scyllasband download --runtime-bundles litert
-
-cd libscyllasband
-python scripts/stage_litert_sdk.py --download-runtime --overwrite
-cmake -S . -B build -DSCYLLASBAND_ENABLE_LITERT=ON -DSCYLLASBAND_BUILD_TOOLS=ON
-cmake --build build --target scyllasband_native -j
-cmake --build build --target scyllasband_native_speak -j
+scyllasband_native_speak --bundle scyllasband/models/v2/onnx \
+    --voice ariadne --language en_us --delivery energy=2.3,valence=2.5 \
+    --text "Hello again." --output native.wav
 ```
 
-For native GPU accelerator experiments, also stage the platform GPU prebuilt:
+The stable C ABI uses the existing `affect` string slot with the explicit prefix `delivery:` for measured requests, for example `delivery:energy=2.3,whisper=off`. An empty conditioning string defaults to neutral for measured v2. It retains its original meaning for v1. Python callers should use the dedicated `delivery` field.
 
-```bash
-python scripts/stage_litert_sdk.py \
-    --download-runtime \
-    --download-gpu-accelerator \
-    --overwrite
-```
+[Android](examples/android/README.md) and [iOS](examples/ios/README.md) integrations require an ONNX bundle for measured v2. Device-specific performance and Apple builds must be validated on their target platforms.
 
-The native LiteRT path supports `cpu`, `gpu`, and `auto` accelerator requests. The public bundle uses full vector graphs rather than the optional split prefix/tail layout. The selected accelerator policy and any fallback remain visible in synthesis metadata.
+## Validation and limitations
 
-When `speak` or `group-speak` uses the default managed native library, Scylla's Band compares the built library with `libscyllasband`'s CMake, header, and source files. It automatically rebuilds before loading when those inputs are newer. An explicitly supplied `SCYLLASBAND_NATIVE_LIBRARY` remains caller-managed and is never replaced.
+The release checks include component export parity, real synthesis across all ten voices and seven locale IDs, mixed controls, whisper, Python/native phone and duration comparison, and unchanged v1 inference. Tests and audio artifacts are separate evidence: passing tests does not establish naturalness.
 
-## Text Handling
+Known limitations include pronunciation errors, occasional cracking or metallic quality, weaker extreme anger/sadness, and limited coherent multi-sentence prosody. Scorer agreement is approximate; listening decides quality. No arbitrary-speaker cloning is provided.
 
-Text preparation is intentionally runtime-owned:
+See [the measured v2 model card](MODEL_CARD_V2.md) for training provenance and [the next-model plan](docs/measured_delivery_next_steps.md) for temporal conditioning work. The existing [audio gallery](https://lowkeytea.github.io/scyllasband/) contains earlier demonstrations and is not a measured-v2 validation set.
 
-- Spoken-text normalization expands numbers, dates, times, currency, percentages, ordinals, punctuation, and common language aliases.
-- Scylla's Band G2P supports phrase-level frontend conversion for `en_us`, `en_gb`, `es`, and `it`.
-- Long-form chunking runs after normalization so chunk budgets reflect what the model will speak.
-- Boundary labels distinguish sentence starts/ends, paragraph starts/ends, clause continuations, and artificial chunk continuations.
-- Punctuation boundary phones are followed by explicit `<sil>` slots; runtime pause floors keep internal clause and sentence boundaries controllable without stretching punctuation phones or the final learned silence out of distribution.
+## Repository structure
 
-Use `--no-normalize-text` only for pre-normalized regression tests. Use `--phones` only when intentionally bypassing text and G2P with model-ready phone symbols.
+- `scyllasband/`: public Python API, CLI, bundle contract and backend execution.
+- `libscyllasband/`: C++ runtime and platform bridges.
+- `examples/`: application integrations.
+- `tests/`: public-runtime regression checks.
+- `data/`, `samples/`: example text and earlier listening material.
 
-## Model Validation
+Training and export tooling live outside this inference repository. The runtime has no trainer-package dependency.
 
-The repository includes a frozen multilingual long-form suite under
-`data/testing/long_form`. The selected bundle manifest determines which
-voice, language, and affect jobs exist. Unsupported languages are not rendered,
-and the sixth-axis condition follows the declared affect axis order: v1 bundles
-run `questioning_2`, while v2 bundles run `whisper_2`.
+## License and acknowledgments
 
-Install the optional ASR dependency and run a smoke evaluation:
-
-```bash
-pip install -e '.[validation]'
-python -m scyllasband.validation corpus
-python -m scyllasband.validation plan \
-    --bundle scyllasband/models/v2/onnx \
-    --tier smoke --output validation_runs/shipped-smoke
-python -m scyllasband.validation render \
-    --run validation_runs/shipped-smoke \
-    --backend onnx --bundle scyllasband/models/v2/onnx
-python -m scyllasband.validation asr \
-    --run validation_runs/shipped-smoke --profile smoke --workers 1
-python -m scyllasband.validation report \
-    --run validation_runs/shipped-smoke
-
-# Publish compact review audio and results for the static benchmark site.
-python -m scyllasband.validation publish \
-    --run validation_runs/shipped-smoke \
-    --output benchmark/v1 \
-    --pages-output docs/benchmark/v1
-```
-
-Use `--profile release` for multilingual `large-v3` ASR. Increase `--workers`
-only when the GPU has room for one model instance per worker. `core` evaluates
-every declared voice/language cell on narrative text; `full` adds dialogue and
-pronunciation challenges. Every stage is resumable and accepts voice, language,
-condition, document, or job filters.
-
-The report at `validation_runs/shipped-smoke/report/index.html` compares the
-available backends and presents each source script, generated audio, ASR
-transcript, and word-level diff together. An external PyTorch
-renderer can write the same per-job artifact contract and be added with
-`import-results`; the public runtime never imports trainer code. Core ML is
-reserved in the schema but does not yet have a public renderer.
-
-`publish` turns a lossless validation work directory into a compact static
-artifact with 96 kbit/s review audio, sanitized JSON/CSV results, and the same
-interactive report. The checked-in [benchmark](benchmark/) directory describes
-the shipping release matrix, and the optional Pages output makes it available
-from the public voice gallery. A report always shows completed coverage against
-the frozen job count; partial runs are never presented as complete benchmarks.
-
-## Repository Structure
-
-```text
-scyllasband/
-  scyllasband/                 Python package, CLI, download, ONNX/LiteRT runners
-  libscyllasband/              native runtime, C ABI, ONNX/LiteRT execution
-  benchmark/                   versioned public WER and listening results
-  examples/android/            ONNX Android sample and Kotlin wrapper
-  data/                        small local CLI examples
-  models/                      downloaded runtime bundles and voice assets
-  README.md                    runtime usage and architecture overview
-  MODEL_CARD.md                model-card details for the current release
-```
-
-Training data, trainer checkpoints, and export tooling are not part of this public inference package.
-
-## Limitations
-
-- Public text-input languages are limited to `en_us`, `en_gb`, `es`, and `it`.
-- The native ONNX path is available when `libscyllasband` is built with `SCYLLASBAND_ENABLE_ONNX=ON` and ONNX Runtime headers/library paths.
-- LiteRT is experimental for this release and should be validated on the target device before being treated as production.
-- Core AI requires iOS 27 or macOS 27 and Xcode 27 for local bridge builds.
-- Very long inputs are chunked. Host applications should preserve chunk-relative loudness and normalize only after stitching a full utterance if they apply extra loudness processing.
-- Affect values and CFG are conditioning controls, not guarantees of a particular perceived emotion in every voice, language, or sentence. Strong CFG should be listening-tested for the intended text.
-
-## License
-
-Apache 2.0. See [LICENSE](LICENSE).
-
-## Acknowledgments
-
-Scylla's Band builds on:
-
-- [ONNX Runtime](https://onnxruntime.ai/) for the default runtime backend.
-- [LiteRT](https://ai.google.dev/edge/litert) for experimental native/mobile execution.
-- Apple Core AI for native iOS and macOS 27 model execution.
-- [Vocos](https://arxiv.org/abs/2306.00814) and `charactr/vocos-mel-24khz` for the frozen 24 kHz vocoder backbone.
-- [DeepPhonemizer](https://github.com/as-ideas/DeepPhonemizer) lineage for the Scylla's Band G2P training workflow.
-- [Montreal Forced Aligner](https://montreal-forced-aligner.readthedocs.io/) for alignment-derived duration supervision in the training pipeline.
+Apache 2.0; see [LICENSE](LICENSE). Scylla's Band uses ONNX Runtime, Vocos (`charactr/vocos-mel-24khz`), DeepPhonemizer-derived G2P tooling, and Montreal Forced Aligner. Legacy/platform deployments also use LiteRT and Apple Core AI.

@@ -101,6 +101,7 @@ struct ScyllasBandBundleInfo {
     int span_context_hidden_size = 0;
     int span_context_max_phones = 0;
     bool emotion_guidance_enabled = false;
+    bool delivery_enabled = false;
     bool affect_enabled = false;
     std::string affect_graph_input_contract;
     std::vector<std::string> affect_axes;

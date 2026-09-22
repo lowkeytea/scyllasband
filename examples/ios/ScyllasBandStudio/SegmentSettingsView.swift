@@ -39,6 +39,23 @@ struct SegmentSettingsView: View {
                     }
                 }
 
+                if bundleInfo.deliveryEnabled {
+                    Section("Delivery · neutral is 2") {
+                        ForEach(["energy", "tension", "valence", "assertiveness"], id: \.self) { axis in
+                            VStack(alignment: .leading) {
+                                Text("\(axis.capitalized) · \(settings.delivery?[axis] ?? 2, specifier: "%.2f")")
+                                Slider(value: Binding(
+                                    get: { settings.delivery?[axis] ?? 2 },
+                                    set: { value in
+                                        if settings.delivery == nil { settings.delivery = [:] }
+                                        settings.delivery?[axis] = value
+                                    }), in: 0...4)
+                            }
+                        }
+                        Toggle("Whisper", isOn: Binding(
+                            get: { settings.whisper ?? false }, set: { settings.whisper = $0 }))
+                    }
+                } else {
                 Section {
                     Picker("Emotion", selection: emotionSelection) {
                         Text("Neutral").tag("")
@@ -59,12 +76,14 @@ struct SegmentSettingsView: View {
                 } footer: {
                     Text("CFG 0 selects the learned null-affect branch, 1 applies the requested emotion directly, and values above 1 amplify it. High values can sound unstable.")
                 }
+                }
             }
             .navigationTitle("Speaker settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
+                        settings.validate(using: bundleInfo)
                         settings.emotionStrength = min(max(settings.emotionStrength, 0), 1)
                         if !settings.emotionCFG.isFinite || settings.emotionCFG < 0 {
                             settings.emotionCFG = 1

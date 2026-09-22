@@ -159,6 +159,7 @@ def g2p_phrase_segments(
     *,
     max_chars: int = DEFAULT_G2P_PHRASE_MAX_CHARS,
     drop_bracketed_notes: bool = True,
+    preserve_commas: bool = False,
 ) -> list[str]:
     value = normalize_g2p_phrase_punctuation(text)
     if drop_bracketed_notes:
@@ -168,7 +169,8 @@ def g2p_phrase_segments(
         return []
 
     chunks: list[str] = []
-    for chunk in _split_on_punctuation(value, boundary_chars=_BOUNDARY_PUNCTUATION):
+    boundaries = _BOUNDARY_PUNCTUATION | (_SOFT_BOUNDARY_PUNCTUATION if preserve_commas else frozenset())
+    for chunk in _split_on_punctuation(value, boundary_chars=boundaries):
         chunks.extend(_split_long_chunk(chunk, max_chars=max_chars))
     return [chunk for chunk in chunks if not _WHITESPACE_ONLY_RE.fullmatch(chunk)]
 

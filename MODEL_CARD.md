@@ -36,6 +36,8 @@ Public resources:
 
 The public resources are inference-only. Training data, trainer checkpoints, and export tooling are not distributed with the model.
 
+This card describes **v1**. For the current replacement v2 and its measured controls, see [MODEL_CARD_V2.md](MODEL_CARD_V2.md). Select v1 explicitly with `download --model-version v1` and a `models/v1` bundle path.
+
 ## Intended Use
 
 Scylla's Band is intended for:
@@ -59,7 +61,7 @@ pip install --upgrade pip wheel setuptools
 pip install -e .
 pip install numpy huggingface_hub onnxruntime
 
-python -m scyllasband download
+python -m scyllasband download --model-version v1 --runtime-bundles onnx
 python -m scyllasband validate-bundle
 python -m scyllasband speak \
     --voice scylla \
@@ -73,7 +75,7 @@ Download the optional CPU-optimized INT8 ONNX bundle with:
 
 ```bash
 python -m scyllasband download --runtime-bundles onnx-int8
-python -m scyllasband speak scyllasband/models/onnx-int8 \
+python -m scyllasband speak scyllasband/models/v1/onnx-int8 \
     --voice scylla --language en_us -o hello_int8.wav \
     "Hello from INT8 ONNX."
 ```
@@ -196,7 +198,7 @@ The selected bundle's `manifest.json` is authoritative for its shapes, controls,
 Full-precision ONNX is the default Python and desktop/server path. The export uses opset 18, four full acoustic-generator/vocoder target buckets, and shared external weights. CPU execution through `CPUExecutionProvider` is the validated baseline.
 
 ```text
-scyllasband/models/onnx/
+scyllasband/models/v1/onnx/
   manifest.json
   onnx/g2p/model.onnx
   onnx/components/duration_predictor.onnx
@@ -215,7 +217,7 @@ scyllasband/models/onnx/
 The optional `onnx-int8` bundle uses per-channel dynamic QInt8 weights for G2P and the vector estimator transformer core. Activations, duration prediction, span/reference conditioning, adaptive projections, and the vocoder remain FP32. It uses the normal ONNX backend and is the default bundled model in the Android sample.
 
 ```text
-scyllasband/models/onnx-int8/
+scyllasband/models/v1/onnx-int8/
   manifest.json
   onnx/g2p/model.onnx
   onnx/components/vector_estimator_b{256,384,512,640}.onnx
@@ -228,7 +230,7 @@ scyllasband/models/onnx-int8/
 LiteRT provides an explicit experimental native/mobile bundle for `libscyllasband`; it is never selected as an implicit fallback. The current public bundle uses one full acoustic-generator graph per target bucket rather than separate prefix/tail graphs. Accelerator support and fallback policy remain platform- and runtime-dependent.
 
 ```text
-scyllasband/models/litert/
+scyllasband/models/v1/litert/
   manifest.json
   litert/g2p.tflite
   litert/duration_predictor.tflite
@@ -272,11 +274,11 @@ The public full-precision ONNX, INT8 ONNX, and LiteRT bundles pass the 1.0 bundl
 Useful checks:
 
 ```bash
-python -m scyllasband validate-bundle scyllasband/models/onnx
-python -m scyllasband validate-bundle scyllasband/models/onnx-int8
-python -m scyllasband validate-bundle scyllasband/models/litert
+python -m scyllasband validate-bundle scyllasband/models/v1/onnx
+python -m scyllasband validate-bundle scyllasband/models/v1/onnx-int8
+python -m scyllasband validate-bundle scyllasband/models/v1/litert
 
-python -m scyllasband speak scyllasband/models/onnx \
+python -m scyllasband speak scyllasband/models/v1/onnx \
     --backend onnx \
     --voice scylla \
     --language en_us \

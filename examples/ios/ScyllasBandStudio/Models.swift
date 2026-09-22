@@ -7,6 +7,8 @@ struct SegmentSettings: Codable, Equatable {
     var emotion: String?
     var emotionStrength: Float
     var emotionCFG: Float
+    var delivery: [String: Float]?
+    var whisper: Bool?
 
     init(
         voiceIdentifier: String,
@@ -23,13 +25,18 @@ struct SegmentSettings: Codable, Equatable {
     }
 
     func nativeSettings() -> SBScyllasBandSegmentSettings {
-        SBScyllasBandSegmentSettings(
+        let result = SBScyllasBandSegmentSettings(
             voiceIdentifier: voiceIdentifier,
             language: language,
             emotion: emotion,
             emotionStrength: emotionStrength,
             emotionCFG: emotionCFG
         )
+        if delivery != nil || whisper != nil {
+            let values = ["energy", "tension", "valence", "assertiveness"].map { "\($0)=\(delivery?[$0] ?? 2)" }
+            result.deliverySpec = (values + ["whisper=\((whisper ?? false) ? "on" : "off")"]).joined(separator: ",")
+        }
+        return result
     }
 
     mutating func validate(using info: SBScyllasBandBundleInfo) {
@@ -40,6 +47,11 @@ struct SegmentSettings: Codable, Equatable {
         }
         if let emotion, !info.affectAxes.contains(emotion) {
             self.emotion = nil
+        }
+        if info.deliveryEnabled {
+            emotion = nil; emotionCFG = 1
+        } else {
+            delivery = nil; whisper = nil
         }
         emotionStrength = min(max(emotionStrength, 0), 1)
         if !emotionCFG.isFinite || emotionCFG < 0 {

@@ -109,6 +109,8 @@ typedef struct {
     int32_t has_seed;
     float speed;
     float temperature;
+    /* Legacy affect spec, or delivery:energy=2,tension=2,valence=2,assertiveness=2,whisper=off
+       for a measured-delivery bundle. Tagged use preserves the existing C ABI. */
     const char* affect;
     float affect_guidance_scale;
     int32_t has_affect_guidance_scale;

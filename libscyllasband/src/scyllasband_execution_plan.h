@@ -30,6 +30,8 @@ struct ScyllasBandDurationFlowPreparedInputs {
     int64_t language_id = -1;
     int64_t emotion_id = -1;
     std::vector<float> affect_values;
+    std::vector<float> delivery_values;
+    std::vector<uint8_t> delivery_present;
     float affect_condition_mask = 0.0f;
     std::vector<float> affect_condition_mask_values;
     int64_t boundary_before_id = 0;

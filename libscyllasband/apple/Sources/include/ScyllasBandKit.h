@@ -28,6 +28,7 @@ typedef NS_ERROR_ENUM(ScyllasBandErrorDomain, SBScyllasBandErrorCode) {
 @property(nonatomic, readonly) NSInteger sampleRate;
 @property(nonatomic, copy, readonly) NSArray<SBScyllasBandVoice *> *voices;
 @property(nonatomic, copy, readonly) NSArray<NSString *> *affectAxes;
+@property(nonatomic, readonly) BOOL deliveryEnabled;
 
 - (instancetype)init NS_UNAVAILABLE;
 
@@ -40,6 +41,8 @@ typedef NS_ERROR_ENUM(ScyllasBandErrorDomain, SBScyllasBandErrorCode) {
 @property(nonatomic, copy, readonly, nullable) NSString *emotion;
 @property(nonatomic, readonly) float emotionStrength;
 @property(nonatomic, readonly) float emotionCFG;
+/** Measured v2 axis=value specification without the delivery: prefix. */
+@property(nonatomic, copy, nullable) NSString *deliverySpec;
 
 - (instancetype)initWithVoiceIdentifier:(NSString *)voiceIdentifier
                                language:(NSString *)language

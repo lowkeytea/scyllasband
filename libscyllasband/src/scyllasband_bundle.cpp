@@ -822,6 +822,24 @@ ScyllasBandBundleInfo load_scyllasband_bundle_info(
     info.span_context_max_phones = int_for_key(span, "context_max_phones");
     const std::string guidance = object_for_key(controls, "emotion_guidance");
     info.emotion_guidance_enabled = bool_for_key(guidance, "enabled", false);
+    info.delivery_enabled = string_for_key(controls, "graph_input_contract") == "scyllasband_measured_delivery_v1";
+    if (info.delivery_enabled) {
+        const std::string delivery = object_for_key(controls, "delivery");
+        if (!bool_for_key(delivery, "enabled", false) ||
+            string_array_for_key(delivery, "axes") != std::vector<std::string>{"energy", "tension", "valence", "assertiveness"} ||
+            float_for_key(delivery, "neutral", -1.0f) != 2.0f ||
+            string_for_key(delivery, "whisper") != "binary" ||
+            string_for_key(delivery, "normalization") != "(rating-2)/4" ||
+            !bool_for_key(delivery, "presence_mask", false) ||
+            string_for_key(delivery, "scope") != "utterance" ||
+            bool_for_key(delivery, "timeline_conditioning", true) ||
+            string_for_key(span, "scope") != "utterance" ||
+            info.prefix_conditioning_enabled || info.reference_packs_enabled ||
+            bool_for_key(object_for_key(controls, "affect"), "enabled", false) ||
+            info.emotion_guidance_enabled) {
+            throw std::runtime_error("Invalid measured delivery bundle contract");
+        }
+    }
     const std::string affect = object_for_key(controls, "affect");
     info.affect_enabled = bool_for_key(affect, "enabled", false);
     if (info.affect_enabled) {

@@ -60,6 +60,7 @@ class _AffectFeatures:
     condition_mask: np.ndarray
     requested: object
     preset: str | None
+    delivery_present: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -187,6 +188,8 @@ class LiteRTRunner:
         self.vector_timing_enabled = bool(
             self.vector_timing_config.get("enabled", False)
         )
+        from .delivery import delivery_enabled
+        self.delivery_enabled = delivery_enabled(manifest)
         affect_config = controls.get("affect", {})
         self.affect_config = (
             dict(affect_config) if isinstance(affect_config, Mapping) else {}
@@ -1407,6 +1410,7 @@ class LiteRTRunner:
             tuple(
                 float(value) for value in affect_features.condition_mask.reshape(-1)
             ),
+            tuple(bool(v) for v in affect_features.delivery_present.reshape(-1)) if affect_features.delivery_present is not None else (),
             float(affect_condition_scale),
             float(emotion_condition_scale),
             reference_features.key,
@@ -1461,6 +1465,9 @@ class LiteRTRunner:
             self._add_optional_arg(
                 args, "duration_predictor", "affect_values", affect_features.values
             )
+            if affect_features.delivery_present is not None:
+                self._add_optional_arg(args, "duration_predictor", "delivery_values", affect_features.values)
+                self._add_optional_arg(args, "duration_predictor", "delivery_present", affect_features.delivery_present)
             self._add_optional_arg(
                 args,
                 "duration_predictor",
@@ -2041,6 +2048,9 @@ class LiteRTRunner:
         self._add_optional_arg(args, component_name, "language_id", language)
         self._add_optional_arg(args, component_name, "emotion_id", emotion)
         self._add_optional_arg(args, component_name, "affect_values", affect_features.values)
+        if affect_features.delivery_present is not None:
+            self._add_optional_arg(args, component_name, "delivery_values", affect_features.values)
+            self._add_optional_arg(args, component_name, "delivery_present", affect_features.delivery_present)
         self._add_optional_arg(args, component_name, "boundary_before_id", boundary_before)
         self._add_optional_arg(args, component_name, "boundary_after_id", boundary_after)
         self._add_optional_arg(args, component_name, "latent_mask", latent_mask)
@@ -2450,6 +2460,8 @@ class LiteRTRunner:
             getattr(request, "context_after", None),
             language=language,
         )
+        if self._span_context_config().get("scope") == "utterance":
+            before_ids, after_ids = [], []
         target_ids = [int(item) for item in target_phone_ids]
         ids, segments = _balanced_span_context_ids(
             before_ids,
@@ -2629,6 +2641,11 @@ class LiteRTRunner:
         return emotion, self._lookup(self.emotion_to_id, emotion, "emotion")
 
     def _resolve_affect(self, request: Any) -> _AffectFeatures:
+        from .delivery import DELIVERY_CHANNELS, delivery_tensors, validate_delivery_request
+        validate_delivery_request(self.manifest, request)
+        if getattr(self, "delivery_enabled", False):
+            values, present, resolved = delivery_tensors(getattr(request, "delivery", None))
+            return _AffectFeatures(False, DELIVERY_CHANNELS, values, np.zeros((1,), dtype=np.float32), resolved, None, present)
         raw = getattr(request, "affect", None)
         raw_emotion = str(getattr(request, "emotion", None) or "").strip()
         if not self.affect_enabled:
@@ -2764,6 +2781,11 @@ class LiteRTRunner:
         return scale
 
     def _affect_metadata(self, affect: _AffectFeatures) -> dict[str, Any]:
+        if affect.delivery_present is not None:
+            return {"affect_enabled": False, "delivery_enabled": True,
+                    "delivery": affect.requested, "delivery_axes": list(affect.axes),
+                    "delivery_values": affect.values[0].tolist(),
+                    "delivery_present": affect.delivery_present[0].tolist()}
         if not affect.enabled:
             return {"affect_enabled": False}
         return {
@@ -4009,6 +4031,7 @@ def _g2p_text_segments(text: str, *, config: Mapping[str, Any] | None = None) ->
             text,
             max_chars=max_chars,
             drop_bracketed_notes=drop_bracketed_notes,
+            preserve_commas=bool(config_map.get("preserve_commas", False)),
         )
         return segments or [str(text or "").strip()]
 

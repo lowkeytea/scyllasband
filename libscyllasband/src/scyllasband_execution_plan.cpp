@@ -264,7 +264,10 @@ ScyllasBandDurationFlowExecutionPlan build_scyllasband_duration_flow_plan(
         "boundary_after_id",
         "latent_mask",
     };
-    if (bundle.affect_enabled) {
+    if (bundle.delivery_enabled) {
+        duration_inputs = {"phone_ids", "voice_id", "language_id", "delivery_values", "delivery_present", "phone_mask"};
+        vector_inputs = {"noise", "time", "expanded_phone_ids", "voice_id", "language_id", "delivery_values", "delivery_present", "latent_mask", "span_context_hidden"};
+    } else if (bundle.affect_enabled) {
         duration_inputs.push_back("affect_values");
         duration_inputs.push_back("affect_condition_mask");
         vector_inputs.push_back("affect_values");
@@ -399,6 +402,8 @@ ScyllasBandDurationFlowPreparedInputs prepare_scyllasband_duration_flow_inputs(
     inputs.language_id = resolved_request.language_index;
     inputs.emotion_id = resolved_request.emotion_index;
     inputs.affect_values = resolved_request.affect_values;
+    inputs.delivery_values = resolved_request.delivery_values;
+    inputs.delivery_present = resolved_request.delivery_present;
     inputs.affect_condition_mask = resolved_request.affect_condition_mask;
     const std::size_t affect_mask_size = (
         bundle.affect_enabled && bundle.affect_axis_order_version == "3"

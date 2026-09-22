@@ -16,6 +16,7 @@ from .contract import (
     load_bundle_manifest,
     validate_bundle_layout,
 )
+from .delivery import delivery_enabled, validate_delivery_request
 from .litert import LiteRTRunner
 from .native import NativeScyllasBandRuntime
 from .onnx import ONNXRunner
@@ -61,6 +62,7 @@ class SynthesisRequest:
     min_clause_pause_ms: float = DEFAULT_MIN_CLAUSE_PUNCTUATION_PAUSE_MS
     ellipsis_dot_counts: tuple[int, ...] = ()
     prefix_latents: Any | None = None
+    delivery: Mapping[str, Any] | str | None = None
 
 
 @dataclass(frozen=True)
@@ -200,6 +202,7 @@ class ScyllasBandRuntime:
         voice_id: str,
         language: str | None = None,
         emotion: str | None = None,
+        delivery: Mapping[str, Any] | str | None = None,
         affect: Mapping[str, float] | str | None = None,
         affect_guidance_scale: float | None = None,
         emotion_guidance: str | None = None,
@@ -214,6 +217,7 @@ class ScyllasBandRuntime:
             voice=voice_id,
             language=language,
             emotion=emotion,
+            delivery=delivery,
             affect=affect,
             affect_guidance_scale=affect_guidance_scale,
             emotion_guidance=emotion_guidance,
@@ -247,6 +251,7 @@ class ScyllasBandRuntime:
         voice_id: str | None = None,
         language: str | None = None,
         emotion: str | None = None,
+        delivery: Mapping[str, Any] | str | None = None,
         affect: Mapping[str, float] | str | None = None,
         affect_guidance_scale: float | None = None,
         emotion_guidance: str | None = None,
@@ -274,6 +279,7 @@ class ScyllasBandRuntime:
             voice=voice_id,
             language=language,
             emotion=emotion,
+            delivery=delivery,
             affect=affect,
             affect_guidance_scale=affect_guidance_scale,
             emotion_guidance=emotion_guidance,
@@ -572,6 +578,9 @@ class ScyllasBandRuntime:
         return isinstance(affect, dict) and bool(affect.get("enabled", False))
 
     def _validate_affect_request(self, request: SynthesisRequest, *, backend: str) -> None:
+        validate_delivery_request(self.manifest, request)
+        if delivery_enabled(self.manifest):
+            return
         scale = float(request.affect_guidance_scale)
         if not math.isfinite(scale) or scale < 0.0:
             raise ValueError("emotion_scale must be finite and non-negative")

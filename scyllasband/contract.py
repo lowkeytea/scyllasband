@@ -612,6 +612,7 @@ def validate_bundle_layout(bundle_dir: str | Path) -> ScyllasBandBundleManifest:
     manifest = load_bundle_manifest(bundle_path)
     validate_vector_timing_conditioning_contract(manifest, bundle_path)
     _validate_affect_contract(manifest)
+    validate_delivery_contract(manifest)
     validate_duration_pause_presence_contract(manifest)
     validate_duration_hierarchy_sampling_contract(manifest)
 
@@ -990,6 +991,41 @@ def _vector_timing_components(
         or name.removeprefix("vector_estimator_prefix_").isdigit()
         or name.removeprefix("vector_estimator_tail_").isdigit()
     ]
+
+
+def validate_delivery_contract(manifest: ScyllasBandBundleManifest) -> None:
+    from .delivery import DELIVERY_SCHEMA, DELIVERY_AXES
+    controls = manifest.controls
+    raw = controls.get("delivery", {})
+    declared = controls.get("graph_input_contract") == DELIVERY_SCHEMA
+    if not declared and not raw:
+        for component in manifest.components.values():
+            if {"delivery_values", "delivery_present"}.intersection(component.inputs):
+                raise BundleValidationError("Delivery graph inputs require the measured delivery contract")
+        return
+    if not declared or not isinstance(raw, dict) or raw.get("enabled") is not True:
+        raise BundleValidationError("Measured delivery requires its enabled graph contract")
+    if tuple(raw.get("axes", ())) != DELIVERY_AXES or raw.get("range") != [0.0, 4.0]:
+        raise BundleValidationError("Measured delivery requires ordered energy/tension/valence/assertiveness axes in [0, 4]")
+    if (raw.get("neutral") != 2 or raw.get("whisper") != "binary"
+            or raw.get("presence_mask") is not True or raw.get("normalization") != "(rating-2)/4"
+            or raw.get("scope") != "utterance" or raw.get("timeline_conditioning") is not False):
+        raise BundleValidationError("Measured delivery normalization, presence, whisper or temporal contract is invalid")
+    if controls.get("affect", {}).get("enabled") or controls.get("emotions", {}).get("enabled"):
+        raise BundleValidationError("Measured delivery cannot also enable legacy emotion conditioning")
+    duration_inputs = ("phone_ids", "voice_id", "language_id", "delivery_values", "delivery_present", "phone_mask")
+    vector_inputs = ("noise", "time", "expanded_phone_ids", "voice_id", "language_id", "delivery_values", "delivery_present", "latent_mask", "span_context_hidden")
+    if manifest.components["duration_predictor"].inputs != duration_inputs:
+        raise BundleValidationError("Measured duration graph inputs do not match the contract")
+    for component in _vector_timing_components(manifest):
+        if component.inputs != vector_inputs:
+            raise BundleValidationError("Measured vector graph inputs do not match the contract")
+    if controls.get("reference_packs", {}).get("enabled") or controls.get("emotion_guidance", {}).get("enabled"):
+        raise BundleValidationError("Measured delivery requires fixed graph references without emotion CFG")
+    if controls.get("prefix_conditioning", {}).get("enabled"):
+        raise BundleValidationError("This measured release did not train prefix requests")
+    if controls.get("span_conditioning", {}).get("scope") != "utterance":
+        raise BundleValidationError("This measured release requires utterance-only span context")
 
 
 def _validate_affect_contract(manifest: ScyllasBandBundleManifest) -> None:

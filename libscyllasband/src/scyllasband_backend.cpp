@@ -266,6 +266,9 @@ struct ScyllasBandLiteRtInputStorage {
     std::vector<int64_t> boundary_after_id;
     std::vector<float> emotion_condition_mask;
     std::vector<float> affect_values;
+    std::vector<float> delivery_values;
+    std::vector<uint8_t> delivery_present;
+    std::vector<int64_t> delivery_shape;
     std::vector<float> affect_condition_mask;
     std::vector<float> reference_style;
     std::vector<float> reference_prosody;
@@ -717,7 +720,7 @@ std::vector<std::string> split_long_g2p_segment(
     return pieces;
 }
 
-std::vector<std::string> split_g2p_segments(const std::string& text, std::size_t max_chars = 140) {
+std::vector<std::string> split_g2p_segments(const std::string& text, std::size_t max_chars = 140, bool preserve_commas = false) {
     std::vector<std::string> punctuation_segments;
     std::string current;
     auto flush_current = [&]() {
@@ -730,7 +733,7 @@ std::vector<std::string> split_g2p_segments(const std::string& text, std::size_t
     for (std::size_t index = 0; index < text.size(); ++index) {
         const char ch = text[index];
         current.push_back(ch);
-        if (g2p_segment_boundary_char(ch)) {
+        if (g2p_segment_boundary_char(ch) || (preserve_commas && ch == ',')) {
             while (index + 1 < text.size()) {
                 const char next = text[index + 1];
                 if (g2p_segment_boundary_char(next)) {
@@ -2281,7 +2284,8 @@ ScyllasBandG2PResult run_g2p_text(
     );
     result.segments = split_g2p_segments(
         request.text,
-        std::min<std::size_t>(140, safe_phrase_chars)
+        std::min<std::size_t>(140, safe_phrase_chars),
+        bundle.delivery_enabled
     );
     const bool has_silence = bundle.phone_to_id.find("<sil>") != bundle.phone_to_id.end();
     const bool has_pause_comma = bundle.phone_to_id.find("<pause_comma>") != bundle.phone_to_id.end();
@@ -2966,7 +2970,9 @@ ScyllasBandLiteRtInputStorage build_duration_predictor_inputs(
     storage.phone_shape = {1, static_cast<int64_t>(prepared.phone_ids.size())};
     storage.scalar_shape = {1};
     storage.affect_shape = {1, static_cast<int64_t>(prepared.affect_values.size())};
-    storage.affect_condition_mask_shape = {1, static_cast<int64_t>(prepared.affect_condition_mask_values.size())};
+    storage.affect_condition_mask_shape = bundle.affect_axis_order_version == "3"
+        ? std::vector<int64_t>{1, static_cast<int64_t>(prepared.affect_condition_mask_values.size())}
+        : std::vector<int64_t>{1};
     storage.reference_style_shape = {1, static_cast<int64_t>(prepared.reference_style.size())};
     storage.reference_prosody_shape = {1, static_cast<int64_t>(prepared.reference_prosody.size())};
     storage.identity_reference_shape = {1, static_cast<int64_t>(prepared.identity_reference.size())};
@@ -2982,6 +2988,9 @@ ScyllasBandLiteRtInputStorage build_duration_predictor_inputs(
     storage.boundary_after_id = {prepared.boundary_after_id};
     storage.emotion_condition_mask = {emotion_condition_scale};
     storage.affect_values = prepared.affect_values;
+    storage.delivery_values = prepared.delivery_values;
+    storage.delivery_present = prepared.delivery_present;
+    storage.delivery_shape = {1, static_cast<int64_t>(prepared.delivery_values.size())};
     storage.affect_condition_mask = prepared.affect_condition_mask_values;
     for (float& value : storage.affect_condition_mask) {
         value *= emotion_condition_scale;
@@ -3026,6 +3035,12 @@ ScyllasBandLiteRtInputStorage build_duration_predictor_inputs(
         } else if (semantic == "emotion_condition_mask") {
             append_tensor_view(storage, raw_name, SCYLLASBAND_TENSOR_FLOAT32, storage.scalar_shape,
                                storage.emotion_condition_mask.data(), sizeof(float));
+        } else if (semantic == "delivery_values") {
+            append_tensor_view(storage, raw_name, SCYLLASBAND_TENSOR_FLOAT32, storage.delivery_shape,
+                               storage.delivery_values.data(), storage.delivery_values.size() * sizeof(float));
+        } else if (semantic == "delivery_present") {
+            append_tensor_view(storage, raw_name, SCYLLASBAND_TENSOR_BOOL, storage.delivery_shape,
+                               storage.delivery_present.data(), storage.delivery_present.size() * sizeof(uint8_t));
         } else if (semantic == "affect_values") {
             append_tensor_view(storage, raw_name, SCYLLASBAND_TENSOR_FLOAT32, storage.affect_shape,
                                storage.affect_values.data(), storage.affect_values.size() * sizeof(float));
@@ -3904,7 +3919,9 @@ ScyllasBandLiteRtInputStorage build_vector_estimator_inputs(
     storage.views.reserve(semantic_inputs.size());
     storage.scalar_shape = {1};
     storage.affect_shape = {1, static_cast<int64_t>(prepared.affect_values.size())};
-    storage.affect_condition_mask_shape = {1, static_cast<int64_t>(prepared.affect_condition_mask_values.size())};
+    storage.affect_condition_mask_shape = bundle.affect_axis_order_version == "3"
+        ? std::vector<int64_t>{1, static_cast<int64_t>(prepared.affect_condition_mask_values.size())}
+        : std::vector<int64_t>{1};
     storage.reference_style_shape = {1, static_cast<int64_t>(prepared.reference_style.size())};
     storage.reference_prosody_shape = {1, static_cast<int64_t>(prepared.reference_prosody.size())};
     storage.identity_reference_shape = {1, static_cast<int64_t>(prepared.identity_reference.size())};
@@ -3975,6 +3992,9 @@ ScyllasBandLiteRtInputStorage build_vector_estimator_inputs(
     storage.boundary_after_id = {prepared.boundary_after_id};
     storage.emotion_condition_mask = {emotion_condition_scale};
     storage.affect_values = prepared.affect_values;
+    storage.delivery_values = prepared.delivery_values;
+    storage.delivery_present = prepared.delivery_present;
+    storage.delivery_shape = {1, static_cast<int64_t>(prepared.delivery_values.size())};
     storage.affect_condition_mask = prepared.affect_condition_mask_values;
     for (float& value : storage.affect_condition_mask) {
         value *= emotion_condition_scale;
@@ -4055,13 +4075,19 @@ ScyllasBandLiteRtInputStorage build_vector_estimator_inputs(
         } else if (semantic == "emotion_condition_mask") {
             append_tensor_view(storage, raw_name, SCYLLASBAND_TENSOR_FLOAT32, storage.scalar_shape,
                                storage.emotion_condition_mask.data(), sizeof(float));
+        } else if (semantic == "delivery_values") {
+            append_tensor_view(storage, raw_name, SCYLLASBAND_TENSOR_FLOAT32, storage.delivery_shape,
+                               storage.delivery_values.data(), storage.delivery_values.size() * sizeof(float));
+        } else if (semantic == "delivery_present") {
+            append_tensor_view(storage, raw_name, SCYLLASBAND_TENSOR_BOOL, storage.delivery_shape,
+                               storage.delivery_present.data(), storage.delivery_present.size() * sizeof(uint8_t));
         } else if (semantic == "affect_values") {
             append_tensor_view(storage, raw_name, SCYLLASBAND_TENSOR_FLOAT32, storage.affect_shape,
                                storage.affect_values.data(), storage.affect_values.size() * sizeof(float));
         } else if (semantic == "affect_condition_mask") {
             append_tensor_view(storage, raw_name, SCYLLASBAND_TENSOR_FLOAT32, storage.affect_condition_mask_shape,
                                storage.affect_condition_mask.data(), storage.affect_condition_mask.size() * sizeof(float));
-} else if (semantic == "identity_reference") {
+        } else if (semantic == "identity_reference") {
             append_tensor_view(storage, raw_name, SCYLLASBAND_TENSOR_FLOAT32, storage.identity_reference_shape,
                                storage.identity_reference.data(), storage.identity_reference.size() * sizeof(float));
         } else if (semantic == "identity_reference_mask") {
@@ -5617,6 +5643,7 @@ private:
         std::vector<std::string> next_phones;
         previous_phones = phones_for_span_context_text(resolved_request.context_before, resolved_request, request);
         next_phones = phones_for_span_context_text(resolved_request.context_after, resolved_request, request);
+        if (bundle_info_.delivery_enabled) { previous_phones.clear(); next_phones.clear(); }
         std::vector<std::string> target_phones;
         target_phones.reserve(prepared.phones.size());
         for (std::size_t index = 0; index < prepared.phones.size(); ++index) {

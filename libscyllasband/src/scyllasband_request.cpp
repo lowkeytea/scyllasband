@@ -369,6 +369,45 @@ std::pair<std::string, int> resolve_emotion(
     return {emotion, lookup_index(bundle.emotion_to_id, emotion, "emotion")};
 }
 
+void resolve_delivery(const ScyllasBandSynthesisRequest& request, ScyllasBandResolvedRequest& resolved) {
+    if (!trim(nullable_string(request.emotion)).empty() ||
+        !trim(nullable_string(request.emotion_guidance)).empty() ||
+        (request.has_affect_guidance_scale && request.affect_guidance_scale != 1.0f) ||
+        request.emotion_embed_scale != 1.0f) {
+        throw std::runtime_error("Measured delivery does not support emotion presets or emotion CFG");
+    }
+    // Preserve the C ABI: the existing conditioning-spec slot is tagged for delivery.
+    std::string spec = trim(nullable_string(request.affect));
+    if (spec.rfind("delivery:", 0) == 0) spec = spec.substr(9);
+    else if (!spec.empty()) throw std::runtime_error("Measured controls require a delivery: conditioning spec");
+    resolved.delivery_values.assign(5, 0.0f);
+    resolved.delivery_present.assign(5, spec == "auto" ? 0 : 1);
+    if (spec.empty() || spec == "neutral" || spec == "auto") return;
+    const std::vector<std::string> axes = {"energy", "tension", "valence", "assertiveness", "whisper"};
+    std::map<std::string, bool> seen;
+    std::istringstream stream(spec); std::string part;
+    while (std::getline(stream, part, ',')) {
+        const auto equal = part.find('=');
+        if (equal == std::string::npos) throw std::runtime_error("Delivery expects axis=value");
+        const std::string key = trim(part.substr(0, equal));
+        const std::string raw = trim(part.substr(equal + 1));
+        const auto found = std::find(axes.begin(), axes.end(), key);
+        if (found == axes.end() || seen[key]) throw std::runtime_error("Unknown or duplicate delivery axis: " + key);
+        seen[key] = true;
+        const auto index = static_cast<std::size_t>(found - axes.begin());
+        if (raw == "auto") { resolved.delivery_present[index] = 0; continue; }
+        if (index == 4) {
+            if (raw != "on" && raw != "off") throw std::runtime_error("Whisper must be on/off/auto");
+            resolved.delivery_values[index] = raw == "on" ? 1.0f : 0.0f;
+        } else {
+            std::size_t used = 0; const float value = std::stof(raw, &used);
+            if (used != raw.size() || !std::isfinite(value) || value < 0.0f || value > 4.0f)
+                throw std::runtime_error("Delivery values must be finite and within [0, 4]");
+            resolved.delivery_values[index] = (value - 2.0f) / 4.0f;
+        }
+    }
+}
+
 }  // namespace
 
 ScyllasBandResolvedRequest resolve_scyllasband_request_context(
@@ -398,7 +437,11 @@ ScyllasBandResolvedRequest resolve_scyllasband_request_context(
         );
     }
 
-    if (bundle.affect_enabled) {
+    if (bundle.delivery_enabled) {
+        resolve_delivery(request, resolved);
+        resolved.emotion = "neutral";
+        resolved.emotion_index = 0;
+    } else if (bundle.affect_enabled) {
         const AffectResolution affect = resolve_affect(bundle, request);
         resolved.affect_requested = affect.requested;
         resolved.affect_preset = affect.preset;
@@ -469,6 +512,28 @@ std::string request_context_json(const ScyllasBandResolvedRequest& request) {
                      << "}";
         }
         metadata << "]";
+    }
+    if (!request.delivery_values.empty()) {
+        const std::vector<std::string> axes = {"energy", "tension", "valence", "assertiveness", "whisper"};
+        metadata << ",\"delivery_enabled\":true,\"delivery_values\":[";
+        for (std::size_t i = 0; i < axes.size(); ++i) {
+            if (i) metadata << ",";
+            metadata << request.delivery_values[i];
+        }
+        metadata << "],\"delivery_present\":[";
+        for (std::size_t i = 0; i < axes.size(); ++i) {
+            if (i) metadata << ",";
+            metadata << (request.delivery_present[i] ? "true" : "false");
+        }
+        metadata << "],\"delivery\":{";
+        for (std::size_t i = 0; i < axes.size(); ++i) {
+            if (i) metadata << ",";
+            metadata << "\"" << axes[i] << "\":";
+            if (!request.delivery_present[i]) metadata << (i == 4 ? "\"auto\"" : "null");
+            else if (i == 4) metadata << (request.delivery_values[i] > 0.5f ? "\"on\"" : "\"off\"");
+            else metadata << (request.delivery_values[i] * 4.0f + 2.0f);
+        }
+        metadata << "}";
     }
     metadata << ",\"affect_requested\":";
     if (request.affect_requested.empty()) {

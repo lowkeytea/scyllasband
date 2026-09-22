@@ -125,6 +125,8 @@ class ScyllasBand private constructor(
         require(settings.language in voice.languages) {
             "${settings.language} is not available for ${settings.voiceId}"
         }
+        require(settings.delivery == null || info.deliveryEnabled) { "This bundle does not support measured delivery" }
+        require(!info.deliveryEnabled || (settings.emotion == null && settings.emotionCfg == 1f)) { "Measured v2 uses delivery controls without emotion CFG" }
         require(settings.emotion == null || settings.emotion in info.affectAxes) {
             "Unknown Scylla's Band affect axis: ${settings.emotion}"
         }
@@ -158,17 +160,18 @@ class ScyllasBand private constructor(
                 )
             }
         }
-        val axesJson = manifest.getJSONObject("controls")
-            .getJSONObject("affect")
-            .getJSONArray("axes")
+        val controls = manifest.getJSONObject("controls")
+        val measured = controls.optString("graph_input_contract") == "scyllasband_measured_delivery_v1"
+        val axesJson = controls.optJSONObject("affect")?.optJSONArray("axes")
         val axes = buildList {
-            for (index in 0 until axesJson.length()) add(axesJson.getString(index))
+            if (axesJson != null) for (index in 0 until axesJson.length()) add(axesJson.getString(index))
         }
         return ScyllasBandBundleInfo(
             modelName = manifest.getString("model_name"),
             sampleRate = manifest.getJSONObject("audio").getInt("sample_rate"),
             voices = voices,
             affectAxes = axes,
+            deliveryEnabled = measured,
         )
     }
 

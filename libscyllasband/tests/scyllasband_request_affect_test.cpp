@@ -84,5 +84,26 @@ int main() {
             return fail("calm bound failure did not identify the affected axis");
         }
     }
+    auto measured = test_bundle();
+    measured.affect_enabled = false;
+    measured.delivery_enabled = true;
+    auto request = request_with_affect(nullptr);
+    request.emotion_embed_scale = 1.0f;
+    const auto neutral = scyllasband_detail::resolve_scyllasband_request_context(measured, request);
+    if (!matches(neutral.delivery_values, {0, 0, 0, 0, 0}) ||
+        neutral.delivery_present != std::vector<uint8_t>{1, 1, 1, 1, 1})
+        return fail("Measured neutral must use zero values with all coordinates present");
+    request.affect = "delivery:energy=1.2,valence=auto,whisper=on";
+    const auto partial_delivery = scyllasband_detail::resolve_scyllasband_request_context(measured, request);
+    if (!matches(partial_delivery.delivery_values, {-0.2f, 0, 0, 0, 1}) ||
+        partial_delivery.delivery_present != std::vector<uint8_t>{1, 1, 0, 1, 1})
+        return fail("Measured partial delivery encoding differs from Python");
+    for (const char* invalid : {"joy=0.5", "delivery:energy=5", "delivery:energy=nan", "delivery:whisper=.5", "delivery:energy=1,energy=2"}) {
+        request.affect = invalid;
+        bool rejected = false;
+        try { (void)scyllasband_detail::resolve_scyllasband_request_context(measured, request); }
+        catch (const std::exception&) { rejected = true; }
+        if (!rejected) return fail(std::string("Accepted invalid measured request: ") + invalid);
+    }
     return 0;
 }

@@ -1,452 +1,108 @@
 ---
 license: apache-2.0
-language:
-  - en
-  - es
-  - it
-  - fr
-  - de
-  - vi
+language: [en, es, it, fr, de, vi]
 library_name: onnxruntime
-tags:
-  - text-to-speech
-  - tts
-  - onnx
-  - litert
-  - pytorch
-  - speech-synthesis
-  - duration-flow
-  - multilingual
-  - expressive-tts
-  - emotion
-  - whisper
 pipeline_tag: text-to-speech
+tags: [text-to-speech, tts, onnx, pytorch, multilingual, expressive-tts, duration-flow, whisper]
 ---
 
-# Scylla's Band v2
+# Scylla's Band v2 — measured delivery
 
-Scylla's Band v2 is a multilingual, multi-voice, expressive text-to-speech
-model for local and self-hosted inference. It predicts phone durations,
-generates continuous acoustic latents with rectified flow, and decodes those
-latents to a 24 kHz waveform through a learned acoustic adapter and a frozen
-Vocos waveform decoder.
+Release **`v2-measured-20260922`** replaces the earlier emotion-based v2 development release. It promotes the completed measured-delivery training continuation, called v3 during development, under the public v2 name. The public runtime's `dev` branch supports this release and preserves the separate v1 contract.
 
-The v2 release expands language and delivery coverage while keeping the same
-managed ten-voice identity set. Its primary runtime targets are ONNX Runtime
-for desktop, server, Android, and iOS use, plus LiteRT for native and embedded
-deployments.
+The model exposes **energy, tension, valence and assertiveness** on **0–4 scales with neutral at 2**, plus **binary whisper**. Emotion names and coarse L0–L4 labels are no longer the conditioning inputs. Combining the controls changes the generated delivery; a request is not a guarantee of a particular perceived emotion or exact external scorer value.
 
-Public resources:
+## Quick start
 
-- V2 model bundles and PyTorch checkpoints:
-  [`spybyscript/scyllasbandv2`](https://huggingface.co/spybyscript/scyllasbandv2)
-- Runtime source: [`lowkeytea/scyllasband`](https://github.com/lowkeytea/scyllasband)
-- [Interactive voice, language, and affect samples](https://lowkeytea.github.io/scyllasband/)
-- [Scylla's Band Discord](https://discord.gg/cNdBuM3tS)
-
-The Hugging Face repository contains both deployable inference bundles and the
-corresponding `.pt` checkpoints. Training data is not distributed.
-
-## What Changed in V2
-
-- French, German, and Vietnamese join English, Spanish, and Italian.
-- The public language IDs are `en_us`, `en_gb`, `es`, `it`, `fr`, `de`, and
-  `vi`.
-- Affect axis-order version 3 exposes five trained dimensions: `calm`, `joy`,
-  `anger`, `sadness`, and `whisper`. It does not invent an untrained sarcasm
-  coordinate to preserve the shape of v1.
-- The affect contract is explicitly versioned in every bundle, preventing v1
-  axis positions from being misinterpreted by the v2 runtime.
-- Runtime text normalization is expanded for French, German, and Vietnamese,
-  including language-specific number and punctuation handling.
-- English dialect ownership is explicit. Ink, Orpheus, and Tuesday use
-  `en_gb`; the other managed voices use `en_us`. Audio trained as British
-  English remains labeled `en_gb` rather than being folded into `en_us`.
-- Duration targets use alignment-derived timing tied to the actual audio
-  files. The v2 acoustic model is trained from the aligned/eSpeak phone
-  representation; the shipped phrase-level G2P is the runtime frontend, not a
-  source of acoustic-training labels.
-- Duration prediction preserves candidate ordinary word boundaries derived
-  from frozen MFA word intervals and jointly predicts whether a pause is
-  present and how long it lasts. Spaces are not converted into a uniform
-  silence.
-- Positive pause durations expose monotonic p10, p50, and p90 estimates. The
-  default runtime samples them coherently with one utterance-level value plus
-  phrase-level variation, instead of adding independent noise to each phone.
-  PyTorch, ONNX, LiteRT, and the native runtime share the same seeded sampling
-  contract; deterministic p50 inference remains available explicitly.
-- Training includes long and chunked views, explicit punctuation silences,
-  three-segment span context, stronger condition dropout, and a vocoder adapter
-  trained on both oracle and generated acoustic latents.
-- The model repository now ships PyTorch checkpoints with the inference
-  bundles instead of placing them in a separate training-model repository.
-- LiteRT is shipped alongside ONNX for native and embedded use. The iOS sample
-  uses the ONNX bundle in this release.
-
-## Intended Use
-
-Scylla's Band v2 is intended for:
-
-- Speech synthesis with ten managed voices.
-- American or British English, Spanish, Italian, French, German, and
-  Vietnamese synthesis, subject to each voice's manifest-declared English
-  dialect.
-- Long-form narration with automatic planning and chunking.
-- Multi-voice dialogue from tagged text.
-- Continuous and mixed control over calm, joy, anger, sadness, and whisper.
-- Cross-platform inference through ONNX Runtime.
-- Native and embedded inference through LiteRT.
-- Research, inspection, and re-export from the included PyTorch checkpoints.
-
-Scylla's Band is not an arbitrary-speaker cloning system. It is not intended
-for impersonation, fraud, deception, or generating speech that falsely
-represents a real person as speaking.
-
-## Quick Start
-
-Install the public runtime. Downloads select v2 and its repository by default:
+Install the current [runtime dev branch](https://github.com/lowkeytea/scyllasband/tree/dev), plus `numpy`, `huggingface_hub` and `onnxruntime`:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip wheel setuptools
-pip install -e .
-pip install numpy huggingface_hub onnxruntime
-
-python -m scyllasband download \
-    --model-version v2 \
-    --runtime-bundles onnx \
-    --yes
-python -m scyllasband validate-bundle scyllasband/models/v2/onnx
-python -m scyllasband speak scyllasband/models/v2/onnx \
-    --backend onnx \
-    --voice scylla \
-    --language en_us \
-    --emotion calm=0.5 \
-    --seed 2027 \
-    -o hello.wav \
-    "Hello from Scylla's Band v2."
+python -m scyllasband download --model-version v2 --yes
+python -m scyllasband speak --voice ariadne --language en_us \
+    --delivery energy=2.3,tension=1.7,valence=2.6,assertiveness=2,whisper=off \
+    --sampler heun --steps 8 -o hello.wav "It is a pleasure to meet you."
 ```
 
-An expressive whisper example:
+The default is FP32 ONNX. Downloads pin this release tag and install under `scyllasband/models/v2/onnx`. The manifest declares graph contract `scyllasband_measured_delivery_v1`; a runtime that only understands old v2 affect tensors cannot run these graphs.
 
-```bash
-python -m scyllasband speak scyllasband/models/v2/onnx \
-    --backend onnx \
-    --voice ink \
-    --language en_gb \
-    --emotion calm=0.25,whisper=0.8 \
-    --emotion-scale 1.25 \
-    --steps 8 \
-    --sampler heun \
-    -o whispered.wav \
-    "Keep your voice down. Someone is still in the corridor."
-```
+An installed old v2 triggers a replacement notice. V1 remains separately available from [`spybyscript/scyllasband`](https://huggingface.co/spybyscript/scyllasband) and remains compatible with its emotion controls. Upgrading v2 does not remove v1 unless the user explicitly selects deletion.
 
-The selected bundle's `manifest.json` is authoritative for available bundle
-variants, voices, languages, affect axes, shapes, and backend defaults.
+## Controls
 
-## Model Details
+| Input | Values | Default |
+| --- | --- | --- |
+| Energy, tension, valence, assertiveness | 0–4 or unspecified | 2 each |
+| Whisper | on/off or unspecified | off |
 
-| Field | Value |
+`--delivery auto` omits all coordinates. A per-axis `auto` omits just that coordinate; other unspecified fields in a partial request use neutral defaults. Omission is represented by a separate mask, not by the value 2. It is not an automatic text-to-performance planner.
+
+The graph receives `(rating - 2) / 4` for the four continuous axes and 0/1 for whisper, plus five presence bits. The public interface accepts the original 0–4 values. Expressiveness is an auxiliary training target, not an inference axis. Legacy emotion presets and emotion CFG are unsupported by this model.
+
+Controls are **global within each generated chunk**. Frame-level physical targets and qualified window-level rating targets supervised training, but local window ratings were not supplied as time-varying control inputs. This release does not support control curves, singing, or trained automatic variation over a multi-sentence passage.
+
+## Model and inference
+
+| Property | Value |
 | --- | --- |
-| Model family | Continuous-latent duration/flow TTS |
-| Public model version | `2` |
-| Primary portable backend | ONNX Runtime |
-| Mobile backends | ONNX Runtime and LiteRT |
-| License | Apache 2.0 |
-| Output sample rate | 24 kHz |
-| Acoustic representation | 100 mel bins, 24-dimensional acoustic latents |
-| Waveform / latent hop | 256 / 512 samples |
-| Public language IDs | `en_us`, `en_gb`, `es`, `it`, `fr`, `de`, `vi` |
-| Managed voices | 10 |
-| Affect controls | 5 independently scored axes, axis-order version 3 |
-| Duration inference | Seeded coherent p10/p50/p90 pause sampling; explicit p50 mode |
-| Default quality profile | 8-step Heun sampling |
-| Fixed graph budgets | 512 G2P text tokens, 512 phone frames, 640 latent frames |
-| Latent target buckets | 256, 384, 512, 640, selected by smallest fit |
+| Public model version | 2 |
+| Architecture | Phone-duration predictor → continuous rectified-flow latent generator → acoustic adapter/Vocos |
+| Audio | Mono 24 kHz; 100 mel features; 24 latent channels |
+| Mel / latent hop | 256 / 512 samples |
+| Duration model | Hidden size 192; 4 layers |
+| Vector model | Hidden size 512; 12 layers; 8 attention heads; adaptive layer normalization and QK normalization |
+| Maximum graph phone frames | 512 |
+| Latent buckets | 256, 512, 768, 1024 frames |
+| Reference sampler | Heun, 8 steps |
+| Voice conditioning | Fixed per-voice/per-locale identity and prosody references embedded in the graphs |
+| Text frontend | Trained Scylla's Band G2P with its matched tokenizer and vocabulary |
 
-Managed voices:
+Inference matches the accepted measured training/evaluation path: utterance-only span context, fixed references, no prefix requests, no emotion-guided reference routing, and no old v2 hierarchical pause-sampling heads. The duration continuation includes relative word timing and adjacent-word/pause objectives. Durations remain predicted deterministically; different controls can alter them.
 
-```text
-ariadne, felix, gwen, ink, max, orpheus, rex, scylla, stone, tuesday
-```
+## Voices and language coverage
 
-English dialect assignment:
+Ten voices: Ariadne, Felix, Gwen, Ink, Max, Orpheus, Rex, Scylla, Stone, Tuesday.
 
-| English language ID | Voices |
-| --- | --- |
-| `en_gb` | Ink, Orpheus, Tuesday |
-| `en_us` | Ariadne, Felix, Gwen, Max, Rex, Scylla, Stone |
+All ten have Spanish (`es`), Italian (`it`), French (`fr`), German (`de`) and Vietnamese (`vi`). Ink, Orpheus and Tuesday use British English (`en_gb`); the other seven use American English (`en_us`). This is **60 trained voice/locale pairs**, not every combination of ten voices and seven locale IDs.
 
-All managed voices are trained for Spanish, Italian, French, German, and
-Vietnamese. The bundle manifest lists the exact supported languages and default
-language for each voice.
+## Training data and objectives
 
-## Architecture
+The continuation used the prepared multilingual v3 corpus merged with the refreshed English recordings and selected original English alternate takes. Original and refreshed audio were measured to improve coverage of delivery ranges and distinct takes. Coarse generation labels were replaced as request conditioning by acoustic measurements and an audio emotion model's assessments.
 
-```text
-text
-  -> spoken-text normalization and phrase planning
-  -> Scylla's Band phrase-level G2P
-  -> phone IDs, punctuation, and boundary/context features
-  -> duration prediction
-  -> duration-expanded phone conditioning
-  -> rectified-flow acoustic latent estimation
-  -> Scylla's Band acoustic adapter and frozen Vocos decoder
-  -> 24 kHz waveform
-  -> long-form assembly when needed
-```
+The completed full continuation contains **1,786,967 compiled training records and 46,605 validation records**. These are prepared-record counts, not a claim of that many unique source recordings. Ten voices and all 60 locale pairs were included. Duration and vector stages each completed 20 epochs; the promoted duration checkpoint is best epoch 16 and the vector checkpoint is best epoch 20.
 
-| Component | Details |
-| --- | --- |
-| Text frontend | Seven-language phrase-level G2P with fixed 512-token input budget |
-| Duration predictor | 192 hidden size, 4 layers, 4 heads, up to 512 phone positions |
-| Acoustic generator | 24-D rectified-flow latents, 512 hidden size, 12 layers, 8 heads, AdaLN conditioning, QK normalization |
-| Span context | Three context segments over up to 768 phones |
-| Conditioning | Voice, language, boundary/span context, five-axis affect, and schema-v4 identity/prosody reference features |
-| Vocoder | Six-layer, 384-channel acoustic adapter into frozen `charactr/vocos-mel-24khz` |
+The vector training combines the flow objective with local physical, qualified window-rating and whisper objectives. Window-rating targets include energy, tension, valence, assertiveness and expressiveness. Request-axis dropout and all-request dropout teach absent-coordinate cases. The duration continuation adds relative rhythm objectives. The acoustic adapter and Vocos decoder were retained from the matched frontend assets rather than retrained for this continuation.
 
-V2 uses explicit punctuation silence targets plus learned, MFA-derived pause
-candidates at ordinary word boundaries. The runtime protects sentence-ending
-punctuation with a 107 ms minimum while leaving ordinary word-boundary timing
-under model control. Long-form planning prefers real clause punctuation when a
-chunk must be divided so learned timing survives the join.
+Source audio is synthetic TTS. Scorer measurements are imperfect supervision and do not establish emotional ground truth. Coverage is uneven, especially for extreme delivery and expressive connected multi-sentence English. Training audio is not distributed.
 
-The default duration path samples only eligible pause owners. Its random values
-are shared at utterance and phrase scope so nearby pauses move together while
-lexical timing remains anchored. A request seed makes the duration lattice
-reproducible across PyTorch, ONNX, LiteRT, and native execution. Use
-`--duration-hierarchy-mode p50` for the deterministic median lattice; use
-`--duration-hierarchy-mode sampled` to request the release default explicitly.
+## Artifacts
 
-## Affect and Whisper Controls
+- `onnx/`: FP32 release reference; default download.
+- `onnx-int8/`: optional dynamic INT8 vector-core/G2P variant. Duration, context and vocoder remain FP32. Listen before choosing it for a quality-sensitive application.
+- `pytorch/`: matched duration, vector, adapter/vocoder, autoencoder and G2P checkpoints, with associated release configuration assets.
+- `SHA256SUMS.json`: published-file hashes and cross-bundle contract metadata.
 
-V2 exposes four core delivery axes and one overlay:
+Measured LiteRT and Core AI artifacts are **not** included in this release. Earlier platform bundles must not be mixed with the new duration/vector graphs. Python and native C++ execution use ONNX Runtime; target-device performance remains platform dependent.
 
-```text
-core:     calm, joy, anger, sadness
-overlay:  whisper
-```
+Duration checkpoint SHA-256: `5e62af2e78d5578f27c9a259cf3c9739c59adfe0c432277e8c45fbd33ac2d9db`.
 
-Each axis is independently bounded in `[0, 1]` and multiple axes may be
-nonzero. For example, whisper can be combined with sadness or anger instead of
-being selected as a mutually exclusive speaking style.
+Vector checkpoint SHA-256: `36f630770e4023d5efbb4f4b3c463122ccca5af8abb76c2600140a4beae73bfd`.
 
-With no affect supplied, the neutral preset is `[0.5, 0.25, 0, 0, 0]`
-(`calm=0.5,joy=0.25`). A partial affect request starts from `calm=0.5` and
-zeroes the other axes before applying the supplied values. Thus
-`anger=0.25` means `[0.5, 0, 0.25, 0, 0]`, not an unsupported calm-zero
-condition. Explicit calm is supported over `0.25` to `0.75`; runtimes reject
-or floor zero according to the selected bundle contract.
+## Validation and limitations
 
-Training ratings use a `0` to `4` scale and are normalized for inference:
+Release validation separates graph accuracy, frontend/timing behavior and perceived speech quality:
 
-| Human rating | Runtime value |
-| ---: | ---: |
-| 0 | 0.0 |
-| 1 | 0.25 |
-| 2 | 0.5 |
-| 3 | 0.75 |
-| 4 | 1.0 |
+- FP32 component comparisons against PyTorch during export.
+- Real public-runtime synthesis across ten voices, all seven locale IDs, mixed controls, whisper and absent coordinates.
+- Python/native comparisons of phones and rounded durations.
+- Real v1 synthesis with exact waveform comparison against the prior dev runtime.
+- FP32/INT8 comparisons: phone sequences and durations agree for the ten-voice English comparison set; waveforms differ. This does not establish perceptual equivalence.
 
-`--emotion-scale` controls classifier-free guidance separately from the axis
-values:
+The developer's listening evaluations support more gradual and useful control than earlier models. No blinded perceptual benchmark or universal quality improvement is claimed. Listening is decisive; external emotion-score agreement is approximate.
 
-```text
-guided = null + scale * (conditioned - null)
-```
+Known problems include occasional pronunciation errors and cracking, metallic or thin quality on difficult pitches, limited strong anger/sadness, and stilted or uniform rhythm across multiple sentences. Global control requests do not solve temporal performance planning. Long-form host chunking helps manage model length but does not supply learned discourse prosody.
 
-`1` uses the requested affect vector directly. Values around `1.25` to `1.5`
-are a practical first range for stronger delivery. Higher values extrapolate
-beyond direct conditioning and can produce exaggerated timing, voice drift, or
-distortion. Guidance scales other than `1` require both null and conditioned
-model evaluation.
+The system supports managed voices, not arbitrary speaker cloning. Intended uses include local speech, narration, character dialogue and delivery-control research. Do not use it for impersonation or deceptive attribution of speech.
 
-Whisper response varies by voice, language, wording, sampler, and strength. It
-is a learned delivery overlay, not a post-processing whisper effect.
+## License and acknowledgments
 
-## Runtime Bundles
-
-The Hugging Face repository uses one directory per runtime variant:
-
-```text
-onnx/       # FP32 ONNX Runtime bundle
-onnx-int8/  # dynamically quantized ONNX Runtime bundle
-litert/     # LiteRT native and embedded bundle
-pytorch/    # matching training and export checkpoints
-```
-
-### ONNX
-
-ONNX Runtime is the primary cross-platform inference path. Full-precision and
-INT8 variants use the same manifest-driven runtime contract.
-The export uses opset 18, target-bucket graphs, and shared external weights.
-
-```text
-onnx/
-  manifest.json
-  onnx/g2p/model.onnx
-  onnx/g2p/tokenizer.json
-  onnx/components/duration_predictor.onnx
-  onnx/components/vector_context_encoder.onnx
-  onnx/components/vector_estimator_b{256,384,512,640}.onnx
-  onnx/components/vocoder_adapter_b{256,384,512,640}.onnx
-  onnx/components/vocoder_b{256,384,512,640}.onnx
-  onnx/components/shared_weights.bin
-  assets/
-```
-
-### LiteRT
-
-The LiteRT bundle contains the same duration, flow, reference-routing, G2Pv2,
-and acoustic-adapter/Vocos path for native and embedded runtimes. The native
-runtime consumes stored (uncompressed) schema-v4 NPZ voice packs directly.
-
-```text
-litert/
-  manifest.json
-  litert/g2p.tflite
-  litert/duration_predictor.tflite
-  litert/vector_context_encoder.tflite
-  litert/vector_estimator_{256,384,512}.tflite
-  litert/vector_estimator.tflite
-  litert/vocoder_adapter_{256,384,512}.tflite
-  litert/vocoder_adapter.tflite
-  litert/vocoder_{256,384,512}.tflite
-  litert/vocoder.tflite
-  assets/
-```
-
-Download and run it with:
-
-```bash
-python -m scyllasband download \
-    --model-version v2 \
-    --runtime-bundles litert \
-    --yes
-python -m scyllasband speak scyllasband/models/v2/litert \
-    --backend litert \
-    --voice gwen \
-    --language en_us \
-    -o hello_litert.wav \
-    "Hello from LiteRT."
-```
-
-ONNX and LiteRT are the primary v2 release targets. The selected manifest
-declares the exact graphs, buckets, controls, and runtime requirements. Both
-bundles expose the same three duration outputs when hierarchical sampling is
-enabled: median durations, pause-presence logits, and p10/p50/p90 duration
-quantiles.
-
-## PyTorch Checkpoints
-
-The v2 Hugging Face repository keeps export and research checkpoints beside
-the inference bundles:
-
-```text
-pytorch/
-  duration.pt
-  vector_estimator.pt
-  vocoder.pt
-  autoencoder.pt
-  g2p.pt
-  scyllasband_v2_clean.json
-```
-
-These files are not required for normal ONNX or LiteRT inference. Components
-must be used with their matching configuration, condition indexes, phone
-vocabulary, G2P tokenizer, and language/affect metadata. Mixing checkpoints or
-sidecars from another release is unsupported.
-
-## Training Data and Labels
-
-Training data is not distributed. V2 was trained primarily on synthetic speech
-covering the managed voices and seven public language IDs. Text generation was
-designed for broad vocabulary, difficult pronunciations, heteronyms, numbers,
-acronyms, varied sentence lengths, and emotional delivery.
-
-Prepared audio was checked with ASR, alignment, acoustic-quality detection,
-and human review. Selected clips were regenerated at higher synthesis quality
-when the original contained clipping, micro-stutters, chirps, unstable pitch,
-or other mechanical artifacts. Duration supervision comes from forced
-alignment against the actual audio rather than a duration value stored in the
-source manifest.
-
-The affect dataset is rated independently across all five axes. Multiple
-nonzero values can describe one clip, allowing mixtures such as quiet anger,
-sad joy, or emotional whispering. Ratings are used as
-continuous supervision rather than treating the original requested emotion as
-ground truth.
-
-## Validation
-
-Release validation should keep the same text, phones, voice, language, affect,
-guidance, sampler, steps, seed, duration hierarchy mode, and duration scale when
-comparing PyTorch, ONNX, and LiteRT. The public validation tooling produces per-voice,
-per-language, and per-affect ASR/WER reports with review audio and transcript
-diffs.
-
-Useful checks:
-
-```bash
-python -m scyllasband validate-bundle scyllasband/models/v2/onnx
-python -m scyllasband validate-bundle scyllasband/models/v2/litert
-python -m scyllasband compare-metadata LEFT.json RIGHT.json
-```
-
-The selected bundle's manifest, not this prose, is authoritative for finalized
-artifacts and controls.
-
-## Limitations
-
-- The model supports managed voices rather than arbitrary speaker cloning.
-- Each voice uses one manifest-declared English dialect; requesting the other
-  English dialect for that voice is unsupported.
-- Affect and whisper response varies by voice, language, wording, sampler,
-  steps, and CFG scale.
-- Strong CFG can exaggerate timing or destabilize identity.
-- Very long text is synthesized in planned chunks; unusual fragments and poor
-  punctuation can still produce awkward pacing.
-- Sampled pauses add controlled performance variation, not unrestricted
-  prosody generation. The same seed reproduces the same duration lattice, but
-  changing text, phones, voice, language, or phrase boundaries changes the
-  sampling key.
-- Names, rare words, code, malformed input, and language-mismatched text can be
-  mispronounced.
-- The FP32 and INT8 G2P graphs can select different phones on low-confidence
-  or rare phrases even when the acoustic graphs otherwise use matching inputs.
-- Synthetic training data can preserve pronunciation, prosody, dialect, and
-  language biases from its source systems.
-- LiteRT acceleration depends on the host runtime and available accelerator;
-  CPU fallback remains important for unsupported graphs.
-
-## Safety and Misuse
-
-Do not use Scylla's Band to impersonate people, deceive listeners, bypass
-consent, or create speech that represents a real person as saying something
-they did not say. Generated audio should be disclosed as synthetic whenever
-the context could otherwise confuse a listener.
-
-## License
-
-Scylla's Band v2 is released under Apache 2.0. See [`LICENSE`](LICENSE).
-
-## Citation
-
-```bibtex
-@software{spybyscript_scyllasband_v2_2026,
-  author = {Spybyscript},
-  title = {Scylla's Band v2: Multilingual Expressive Duration-Flow Text-to-Speech},
-  year = {2026},
-  url = {https://huggingface.co/spybyscript/scyllasbandv2},
-  license = {Apache-2.0}
-}
-```
-
-## Acknowledgments
-
-Scylla's Band uses ONNX Runtime and LiteRT for portable and native inference.
-Vocos provides the frozen 24 kHz waveform-decoder
-backbone. Wiktionary-derived vocabulary, eSpeak phonemization, and Montreal
-Forced Aligner tooling contributed to text coverage and duration supervision.
+Apache 2.0. ONNX Runtime provides inference; Vocos provides the frozen 24 kHz waveform decoder. DeepPhonemizer-derived tooling, Wiktionary-derived vocabulary, eSpeak phonemization and Montreal Forced Aligner contributed to the frontend and alignment workflow.

@@ -8,6 +8,10 @@ The public ABI is defined in `include/scyllasband.h`. Host code should use the
 `scyllasband_*` functions, `SCYLLASBAND_*` constants, and `ScyllasBand*`
 types. The current ABI and public bundle contract are version `1.0.0`.
 
+Measured v2 (`scyllasband_measured_delivery_v1`) is supported by the ONNX backend. Use `--delivery energy=2,tension=2,valence=2,assertiveness=2,whisper=off` in the native CLI. C callers preserve the ABI by setting `request.affect` to a string prefixed with `delivery:`; Python callers use `delivery`. Neutral is 2, whisper is binary, and omitted coordinates use separate presence masks. Existing v1 affect requests retain their original behavior. Measured v2 has no emotion CFG, prefix requests, or temporal control curves. Its fixed voice/locale references are embedded in the graphs.
+
+Only FP32 and INT8 ONNX measured bundles are published. The LiteRT/Core AI instructions below continue to apply to compatible legacy bundles, not to an unexported measured model.
+
 ## Runtime contract
 
 A synthesis request can provide raw text or explicit phones, a managed voice,

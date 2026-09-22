@@ -539,7 +539,7 @@ def _build_synthesis_request(request: Any) -> tuple[_ScyllasBandSynthesisRequest
         has_seed=0 if seed is None else 1,
         speed=float(getattr(request, "speed", 1.0)),
         temperature=float(getattr(request, "temperature", 1.0)),
-        affect=_bytes(_affect_spec(getattr(request, "affect", None))),
+        affect=_bytes(_conditioning_spec(request)),
         affect_guidance_scale=float(getattr(request, "affect_guidance_scale", 1.0)),
         has_affect_guidance_scale=1,
         duration_hierarchy_mode=_duration_hierarchy_mode_id(
@@ -1128,3 +1128,13 @@ def _litert_accelerator_id(value: str) -> int:
 
 def _int_or_default(value: Any, default: int) -> int:
     return default if value is None else int(value)
+
+
+def _conditioning_spec(request: Any) -> str | None:
+    delivery = getattr(request, "delivery", None)
+    if delivery is not None:
+        if getattr(request, "affect", None) is not None:
+            raise ValueError("Pass either measured delivery or legacy affect, not both")
+        from .delivery import delivery_spec
+        return "delivery:" + delivery_spec(delivery)
+    return _affect_spec(getattr(request, "affect", None))

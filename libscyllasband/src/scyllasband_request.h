@@ -28,6 +28,8 @@ struct ScyllasBandResolvedRequest {
     std::string affect_requested;
     std::string affect_preset;
     std::vector<float> affect_values;
+    std::vector<float> delivery_values;
+    std::vector<uint8_t> delivery_present;
     float affect_condition_mask = 0.0f;
     float affect_guidance_scale = 1.0f;
     int prefix_latent_dim = 0;

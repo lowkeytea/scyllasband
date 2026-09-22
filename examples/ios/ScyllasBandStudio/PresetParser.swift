@@ -20,7 +20,7 @@ enum PresetParserError: LocalizedError {
 
 enum PresetParser {
     private static let pattern = try! NSRegularExpression(pattern: #"\[([-A-Za-z0-9_.,:=]+)\]"#)
-    private static let languageTags: Set<String> = ["en", "en_us", "en_gb", "es", "it"]
+    private static let languageTags: Set<String> = ["en", "en_us", "en_gb", "es", "it", "fr", "de", "vi"]
 
     static func parse(
         _ source: String,
@@ -71,6 +71,25 @@ enum PresetParser {
             if !parts[0].isEmpty { next.voiceIdentifier = String(parts[0]) }
             if parts.count > 1, !parts[1].isEmpty { next.language = String(parts[1]) }
             if parts.count > 2, !parts[2].isEmpty {
+                if bundleInfo.deliveryEnabled {
+                    next.delivery = [:]; next.whisper = false; next.emotion = nil; next.emotionCFG = 1
+                    var seen = Set<String>()
+                    for term in parts[2].split(separator: ",") {
+                        let pair = term.split(separator: "=", maxSplits: 1)
+                        guard pair.count == 2 else { throw PresetParserError.invalidTag(label) }
+                        let axis = String(pair[0]); let raw = String(pair[1])
+                        guard seen.insert(axis).inserted else { throw PresetParserError.invalidTag(label) }
+                        if axis == "whisper" {
+                            guard raw == "on" || raw == "off" else { throw PresetParserError.invalidTag(label) }
+                            next.whisper = raw == "on"
+                        } else {
+                            guard ["energy", "tension", "valence", "assertiveness"].contains(axis),
+                                  let value = Float(raw), value.isFinite, (0...4).contains(value)
+                            else { throw PresetParserError.invalidTag(label) }
+                            next.delivery?[axis] = value
+                        }
+                    }
+                } else {
                 let terms = parts[2].split(separator: ",")
                 guard terms.count == 1 else { throw PresetParserError.invalidTag(label) }
                 let affect = terms[0].split(separator: "=", maxSplits: 1)
@@ -80,6 +99,7 @@ enum PresetParser {
                 }
                 next.emotion = String(affect[0])
                 next.emotionStrength = strength
+                }
             }
         } else if languageTags.contains(clean) {
             next.language = clean
@@ -147,6 +167,12 @@ enum DefaultWalkthrough {
         defaults: SegmentSettings,
         bundleInfo: SBScyllasBandBundleInfo
     ) throws -> [ScriptSegment] {
+        if bundleInfo.deliveryEnabled {
+            return try PresetParser.parse(
+                "[ariadne:en_us:energy=2.3,valence=2.5]It is a pleasure to meet you.\n" +
+                "[rex:es:tension=2.5,assertiveness=2.5]Tenemos que salir ahora.\n" +
+                "[ink:en_gb:whisper=on]Keep this between us.", defaults: defaults, bundleInfo: bundleInfo)
+        }
         var segments = try PresetParser.parse(taggedSource, defaults: defaults, bundleInfo: bundleInfo)
         for index in segments.indices where index < emotionCFG.count {
             segments[index].settings.emotionCFG = emotionCFG[index]

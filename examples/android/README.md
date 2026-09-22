@@ -1,5 +1,8 @@
 # Scylla's Band Android sample
 
+Measured v2 uses four 0–4 sliders (neutral 2) and a whisper switch. The SDK detects its manifest and preserves the original emotion UI for v1. The measured starter script uses the new delivery tags; old emotion-tagged presets remain legacy-model examples. Download measured FP32 with `python -m scyllasband download --model-version v2 --runtime-bundles onnx --yes`. No measured LiteRT/Core AI bundle is available. These interface changes require a target-platform build/device check; Linux ONNX validation does not substitute for that.
+
+
 This sample demonstrates the current Scylla's Band duration-flow model through the native ONNX Runtime backend.
 
 ## What it demonstrates

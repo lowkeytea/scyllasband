@@ -53,6 +53,7 @@ class PlannerOptions:
     duration_hierarchy_mode: str = "default"
     backend: str = "litert"
     emotion: str | None = None
+    delivery: Mapping[str, Any] | str | None = None
     affect: Mapping[str, float] | str | None = None
     affect_guidance_scale: float = 1.0
     emotion_guidance: str | None = None
@@ -86,6 +87,7 @@ class PlanRecord:
     normalized_text: str
     start_char: int = 0
     end_char: int = 0
+    delivery: Mapping[str, Any] | str | None = None
     affect: Mapping[str, float] | str | None = None
     affect_guidance_scale: float = 1.0
 
@@ -95,6 +97,7 @@ class PlanRecord:
             "voice": self.voice,
             "language": self.language,
             "emotion": self.emotion,
+            "delivery": self.delivery,
             "affect": self.affect,
             "affect_guidance_scale": self.affect_guidance_scale,
             "emotion_guidance": self.emotion_guidance,
@@ -246,6 +249,7 @@ def plan_text(
     voice: str,
     language: str | None = None,
     emotion: str | None = None,
+    delivery: Mapping[str, Any] | str | None = None,
     affect: Mapping[str, float] | str | None = None,
     affect_guidance_scale: float | None = None,
     emotion_guidance: str | None = None,
@@ -259,6 +263,7 @@ def plan_text(
                 "voice": voice,
                 "language": language,
                 "emotion": emotion,
+                "delivery": delivery,
                 "affect": affect,
                 "affect_guidance_scale": affect_guidance_scale,
                 "emotion_guidance": emotion_guidance,
@@ -415,6 +420,7 @@ def prepare_render_chunks(
         voice = str(record["voice"])
         language = runtime.resolve_language_for_voice(voice, record.get("language"))
         emotion = _optional_text(record.get("emotion")) or opts.emotion
+        delivery = record.get("delivery") if record.get("delivery") is not None else opts.delivery
         affect = record.get("affect") if record.get("affect") is not None else opts.affect
         affect_guidance_scale = float(
             record.get("affect_guidance_scale")
@@ -441,6 +447,7 @@ def prepare_render_chunks(
                         "voice": voice,
                         "language": language,
                         "emotion": emotion,
+                        "delivery": delivery,
                         "affect": affect,
                         "affect_guidance_scale": affect_guidance_scale,
                         "emotion_guidance": emotion_guidance,
@@ -467,6 +474,7 @@ def prepare_render_chunks(
                     "voice": voice,
                     "language": language,
                     "emotion": emotion,
+                    "delivery": delivery,
                     "affect": affect,
                     "affect_guidance_scale": affect_guidance_scale,
                     "emotion_guidance": emotion_guidance,
@@ -543,6 +551,7 @@ def estimate_chunk_duration_metadata(
             voice_id=str(chunk["voice"]),
             language=str(chunk["language"]),
             emotion=_optional_text(chunk.get("emotion")) or opts.emotion,
+            delivery=chunk.get("delivery") if chunk.get("delivery") is not None else opts.delivery,
             affect=chunk.get("affect") if chunk.get("affect") is not None else opts.affect,
             affect_guidance_scale=float(
                 chunk.get("affect_guidance_scale")
@@ -805,6 +814,7 @@ def _plan_records_from_input(runtime: Any, records: list[dict[str, Any]], opts: 
                 voice=voice,
                 language=language,
                 emotion=_optional_text(record.get("emotion")) or opts.emotion,
+                delivery=record.get("delivery") if record.get("delivery") is not None else opts.delivery,
                 affect=record.get("affect") if record.get("affect") is not None else opts.affect,
                 affect_guidance_scale=float(
                     record.get("affect_guidance_scale")
@@ -1269,6 +1279,7 @@ def _chain_key(chunk: dict[str, Any], opts: PlannerOptions) -> tuple[Any, ...]:
         str(chunk.get("voice") or ""),
         str(chunk.get("language") or ""),
         _optional_text(chunk.get("emotion")),
+        _stable_delivery_key(chunk.get("delivery") if chunk.get("delivery") is not None else opts.delivery),
         _stable_affect_key(chunk.get("affect") if chunk.get("affect") is not None else opts.affect),
         float(
             chunk.get("affect_guidance_scale")
@@ -1283,6 +1294,11 @@ def _chain_key(chunk: dict[str, Any], opts: PlannerOptions) -> tuple[Any, ...]:
         float(opts.emotion_embed_scale),
         _reference_key(chunk),
     )
+
+
+def _stable_delivery_key(value: object) -> object:
+    from .delivery import delivery_spec
+    return delivery_spec(value) if value is not None else None
 
 
 def _stable_affect_key(value: object) -> object:

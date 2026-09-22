@@ -23,7 +23,7 @@ struct Options {
     std::string text_file;
     std::string voice = "gwen";
     std::string language = "en_us";
-    std::string emotion = "neutral";
+    std::string emotion;
     std::string emotion_guidance;
     std::string affect;
     float affect_guidance_scale = 1.0f;
@@ -59,6 +59,7 @@ void usage(std::ostream& out) {
            "  --language ID                 Language id, default en_us\n"
            "  --emotion ID                  Emotion id, default neutral\n"
            "  --emotion-guidance SPEC       Mixed emotion guidance, e.g. sad:0.7,excited:0.4\n"
+           "  --delivery SPEC               Measured v2 energy/tension/valence/assertiveness/whisper\n"
            "  --affect SPEC                 Affect preset or comma-separated axis=value terms\n"
            "  --affect-guidance-scale N     Affect CFG scale, default 1.0\n"
            "  --steps N                     Flow steps, default 8\n"
@@ -205,6 +206,9 @@ bool parse_args(int argc, char** argv, Options* options) {
             if (!consume_value(index, argc, argv, &options->emotion)) return false;
         } else if (arg == "--emotion-guidance") {
             if (!consume_value(index, argc, argv, &options->emotion_guidance)) return false;
+        } else if (arg == "--delivery") {
+            if (!consume_value(index, argc, argv, &value)) return false;
+            options->affect = "delivery:" + value;
         } else if (arg == "--affect") {
             if (!consume_value(index, argc, argv, &options->affect)) return false;
         } else if (arg == "--affect-guidance-scale") {

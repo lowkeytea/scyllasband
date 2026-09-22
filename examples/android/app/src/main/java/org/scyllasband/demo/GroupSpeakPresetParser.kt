@@ -1,11 +1,12 @@
 package org.scyllasband.demo
 
+import org.scyllasband.android.ScyllasBandDelivery
 import org.scyllasband.android.ScyllasBandBundleInfo
 import org.scyllasband.android.ScyllasBandSegmentSettings
 
 object GroupSpeakPresetParser {
     private val tagPattern = Regex("\\[([-A-Za-z0-9_.,:=]+)]")
-    private val languageTags = setOf("en", "en_us", "en_gb", "es", "it")
+    private val languageTags = setOf("en", "en_us", "en_gb", "es", "it", "fr", "de", "vi")
 
     fun parse(
         source: String,
@@ -37,6 +38,7 @@ object GroupSpeakPresetParser {
     ): ScyllasBandSegmentSettings {
         var voiceId = current.voiceId
         var language = current.language
+        var delivery = current.delivery
         var emotion = current.emotion
         var strength = current.emotionStrength
         val clean = label.trim().lowercase()
@@ -46,6 +48,30 @@ object GroupSpeakPresetParser {
             if (parts[0].isNotBlank()) voiceId = parts[0]
             if (parts.getOrElse(1) { "" }.isNotBlank()) language = parts[1]
             parts.getOrNull(2)?.takeIf { it.isNotBlank() }?.let { affect ->
+                if (bundleInfo.deliveryEnabled) {
+                    var d = ScyllasBandDelivery()
+                    val seen = mutableSetOf<String>()
+                    for (term in affect.split(',')) {
+                        val pair = term.split('=', limit = 2)
+                        require(pair.size == 2 && seen.add(pair[0])) { "Invalid delivery tag" }
+                        val axis = pair[0]; val raw = pair[1]
+                        if (axis == "whisper") {
+                            require(raw == "on" || raw == "off") { "Whisper must be on or off" }
+                            d = d.copy(whisper = raw == "on")
+                        } else {
+                            val v = raw.toFloatOrNull() ?: error("Invalid delivery value")
+                            d = when (axis) {
+                                "energy" -> d.copy(energy = v)
+                                "tension" -> d.copy(tension = v)
+                                "valence" -> d.copy(valence = v)
+                                "assertiveness" -> d.copy(assertiveness = v)
+                                else -> error("Unknown measured delivery axis '$axis'")
+                            }
+                        }
+                    }
+                    delivery = d; emotion = null; strength = 0f
+                    return@let
+                }
                 val terms = affect.split(',')
                 require(terms.size == 1) {
                     "This Android editor supports one emotion per point; preset tag [$label] mixes several axes"
@@ -75,6 +101,8 @@ object GroupSpeakPresetParser {
             language = language,
             emotion = emotion,
             emotionStrength = strength,
+            delivery = delivery,
+            emotionCfg = if (bundleInfo.deliveryEnabled) 1f else current.emotionCfg,
         )
     }
 

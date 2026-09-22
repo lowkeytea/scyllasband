@@ -16,6 +16,8 @@ DEFAULT_CHUNK_FIELDS = (
     "voice",
     "language",
     "emotion",
+    "delivery",
+    "delivery_present",
     "affect",
     "affect_guidance_scale",
     "emotion_guidance",
@@ -222,6 +224,11 @@ def _normalize_chunk(
             request.get("resolved_emotion"),
             top.get("emotion"),
         ),
+        "delivery": _normalize_delivery(_first_present(
+            metadata.get("delivery"), request.get("delivery"), summary.get("delivery"),
+            chunk.get("delivery"), top.get("delivery"),
+        )),
+        "delivery_present": _first_present(metadata.get("delivery_present"), request.get("delivery_present")),
         "affect": _normalize_affect(
             _first_present(
                 chunk.get("affect"),
@@ -335,6 +342,13 @@ def _normalize_chunk(
             )
         ),
     }
+
+
+def _normalize_delivery(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    from .delivery import resolve_delivery
+    return resolve_delivery(value)
 
 
 def _load_chunk_summary(chunk: dict[str, Any], *, base_dir: Path | None) -> dict[str, Any]:

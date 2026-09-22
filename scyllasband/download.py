@@ -4,6 +4,9 @@ import json
 from pathlib import Path
 import shutil
 import tempfile
+import uuid
+
+from .delivery import DELIVERY_SCHEMA, DELIVERY_RELEASE
 from typing import Iterable
 
 from .contract import coreai_host_supported, validate_bundle_layout
@@ -34,8 +37,8 @@ SUPPORTED_BUNDLE_SUBDIRS = (
 BUNDLE_SUBDIR_DESCRIPTIONS = {
     "coreai": ("Core AI int8 bundle for iOS 27 / macOS 27", "~220 MB"),
     "coreai-fp32": ("Core AI fp32 variant of the default", "~420 MB"),
-    DEFAULT_ONNX_INT8_BUNDLE_SUBDIR: ("int8 ONNX bundle, CPU-friendly, all platforms", "~280 MB"),
-    DEFAULT_BUNDLE_SUBDIR: ("fp32 ONNX variant of the default", "~410 MB"),
+    DEFAULT_ONNX_INT8_BUNDLE_SUBDIR: ("INT8 ONNX comparison bundle", "~316 MB"),
+    DEFAULT_BUNDLE_SUBDIR: ("Full precision ONNX, measured v2 default", "~498 MB"),
     "litert": ("LiteRT bundle for Android and embedded runtimes", ""),
 }
 BUNDLE_SUBDIR_GROUPS = {
@@ -44,17 +47,11 @@ BUNDLE_SUBDIR_GROUPS = {
 }
 
 
-def default_bundle_subdirs() -> tuple[str, ...]:
-    """Platform-aware download set: Core AI plus int8 ONNX on macOS 27+, int8 ONNX elsewhere.
-
-    onnx-int8 is the default ONNX artifact everywhere — desktop synthesis and
-    the sample apps both prefer it. The larger fp32 `onnx` bundle, `litert`,
-    and anything else must be requested explicitly (or via `all`).
-    """
-
-    if coreai_host_supported():
+def default_bundle_subdirs(model_version: str = DEFAULT_MODEL_VERSION) -> tuple[str, ...]:
+    """Prefer validated portable measured v2; retain v1 platform defaults."""
+    if normalize_model_version(model_version) == "v1" and coreai_host_supported():
         return ("coreai", DEFAULT_ONNX_INT8_BUNDLE_SUBDIR)
-    return (DEFAULT_ONNX_INT8_BUNDLE_SUBDIR,)
+    return (DEFAULT_ONNX_INT8_BUNDLE_SUBDIR,) if normalize_model_version(model_version) == "v1" else (DEFAULT_BUNDLE_SUBDIR,)
 
 
 def download_litert_bundle(
@@ -73,22 +70,39 @@ def download_litert_bundle(
     snapshot_download = _require_snapshot_download()
     model_version = normalize_model_version(model_version)
     repo_id = str(repo_id or MODEL_VERSION_REPO_IDS[model_version])
+    measured_release = model_version == "v2" and repo_id == V2_INFERENCE_REPO_ID and revision in (None, DELIVERY_RELEASE)
+    if measured_release and bundle_subdir not in ("onnx", "onnx-int8"):
+        raise ValueError("Measured v2 currently ships onnx and onnx-int8. Use --model-version v1 for legacy LiteRT/Core AI bundles.")
     target = (Path(models_dir) / model_version / bundle_subdir).resolve()
-    if force and target.exists():
-        shutil.rmtree(target)
-    with tempfile.TemporaryDirectory(prefix="scyllasband_bundle_") as tmp_dir:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".scyllasband_bundle_", dir=target.parent) as tmp_dir:
         snapshot_download(
             repo_id=repo_id,
             repo_type="model",
             allow_patterns=[f"{bundle_subdir}/**"],
             local_dir=tmp_dir,
+            force_download=force,
             token=token,
-            revision=revision,
+            revision=revision or (DELIVERY_RELEASE if model_version == "v2" and repo_id == V2_INFERENCE_REPO_ID else None),
         )
         source = Path(tmp_dir) / bundle_subdir
-        _copy_tree_contents(source, target)
-    if validate:
-        validate_bundle_layout(target)
+        # Validate the complete candidate before touching any installed bundle.
+        if validate:
+            validate_bundle_layout(source)
+        if not source.is_dir():
+            raise FileNotFoundError(f"Downloaded bundle is missing: {source}")
+        backup = target.with_name(target.name + ".previous-" + uuid.uuid4().hex)
+        had_target = target.exists()
+        if had_target:
+            target.rename(backup)
+        try:
+            source.rename(target)
+        except BaseException:
+            if had_target:
+                backup.rename(target)
+            raise
+        if had_target:
+            shutil.rmtree(backup)
     return target
 
 
@@ -109,25 +123,29 @@ def download_voice_packs(
     model_version = normalize_model_version(model_version)
     repo_id = str(repo_id or MODEL_VERSION_REPO_IDS[model_version])
     target = Path(voices_dir or (Path(models_dir) / model_version / DEFAULT_VOICES_SUBDIR)).resolve()
-    if force and target.exists():
-        shutil.rmtree(target)
-    with tempfile.TemporaryDirectory(prefix="scyllasband_voices_") as tmp_dir:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".scyllasband_voices_", dir=target.parent) as tmp_dir:
         snapshot_download(
-            repo_id=repo_id,
-            repo_type="model",
-            allow_patterns=[
-                f"{DEFAULT_VOICES_SUBDIR}/**",
-                f"{bundle_subdir}/assets/voice_packs/**",
-            ],
-            local_dir=tmp_dir,
-            token=token,
-            revision=revision,
+            repo_id=repo_id, repo_type="model",
+            allow_patterns=[f"{DEFAULT_VOICES_SUBDIR}/**", f"{bundle_subdir}/assets/voice_packs/**"],
+            local_dir=tmp_dir, token=token, force_download=force,
+            revision=revision or (DELIVERY_RELEASE if model_version == "v2" and repo_id == V2_INFERENCE_REPO_ID else None),
         )
         source = _downloaded_voice_source(Path(tmp_dir), bundle_subdir)
-        if source is not None:
-            _copy_tree_contents(source, target)
-        else:
-            target.mkdir(parents=True, exist_ok=True)
+        if source is None:
+            raise FileNotFoundError("Downloaded release has no separate voice packs")
+        backup = target.with_name(target.name + ".previous-" + uuid.uuid4().hex)
+        had_target = target.exists()
+        if had_target:
+            target.rename(backup)
+        try:
+            source.rename(target)
+        except BaseException:
+            if had_target:
+                backup.rename(target)
+            raise
+        if had_target:
+            shutil.rmtree(backup)
     return target
 
 
@@ -146,7 +164,7 @@ def download_base_resources(
 ) -> tuple[Path, Path | None]:
     model_version = normalize_model_version(model_version)
     repo_id = str(repo_id or MODEL_VERSION_REPO_IDS[model_version])
-    requested_subdirs = _normalize_bundle_subdirs(bundle_subdirs or (bundle_subdir,))
+    requested_subdirs = _normalize_bundle_subdirs(bundle_subdirs or (bundle_subdir,), model_version=model_version)
     bundle_dirs = []
     for subdir in requested_subdirs:
         bundle_dirs.append(
@@ -162,7 +180,9 @@ def download_base_resources(
             )
         )
     voices_dir = None
-    if include_voices:
+    installed = json.loads((bundle_dirs[0] / "manifest.json").read_text(encoding="utf-8"))
+    embedded_voices = installed.get("controls", {}).get("graph_input_contract") == DELIVERY_SCHEMA
+    if include_voices and not embedded_voices:
         voices_dir = download_voice_packs(
             models_dir=models_dir,
             repo_id=repo_id,
@@ -184,7 +204,7 @@ def bundle_dirs_for_subdirs(
     version = normalize_model_version(model_version)
     return {
         subdir: (Path(models_dir) / version / subdir).resolve()
-        for subdir in _normalize_bundle_subdirs(subdirs)
+        for subdir in _normalize_bundle_subdirs(subdirs, model_version=version)
     }
 
 
@@ -256,16 +276,17 @@ def _bundle_model_major(bundle_dir: Path) -> int | None:
         return None
 
 
-def _normalize_bundle_subdirs(values: Iterable[str]) -> tuple[str, ...]:
+def _normalize_bundle_subdirs(values: Iterable[str], *, model_version: str = DEFAULT_MODEL_VERSION) -> tuple[str, ...]:
     output: list[str] = []
     for value in values:
         item = str(value).strip().lower()
         if not item:
             continue
         if item == "default":
-            candidates = default_bundle_subdirs()
+            candidates = default_bundle_subdirs(model_version)
         else:
-            candidates = BUNDLE_SUBDIR_GROUPS.get(item, (item,))
+            candidates = (("onnx", "onnx-int8") if item in ("both", "all") and normalize_model_version(model_version) == "v2"
+                          else BUNDLE_SUBDIR_GROUPS.get(item, (item,)))
         for candidate in candidates:
             if candidate not in SUPPORTED_BUNDLE_SUBDIRS:
                 options = ", ".join(
@@ -274,7 +295,7 @@ def _normalize_bundle_subdirs(values: Iterable[str]) -> tuple[str, ...]:
                 raise ValueError(f"Unsupported runtime bundle {candidate!r}; expected one of: {options}")
             if candidate not in output:
                 output.append(candidate)
-    return tuple(output or default_bundle_subdirs())
+    return tuple(output or default_bundle_subdirs(model_version))
 
 
 def _downloaded_voice_source(root: Path, bundle_subdir: str) -> Path | None:
@@ -308,3 +329,24 @@ def _copy_tree_contents(source: Path, target: Path) -> None:
         destination = target / rel_path
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source / rel_path, destination)
+
+
+def superseded_v2_bundle(bundle_dir: str | Path) -> bool:
+    path = Path(bundle_dir)
+    try:
+        raw = json.loads((path / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return False
+    major = str(raw.get("model_version", "")).split(".")[0]
+    is_v2 = major == "2" or (not major and path.parent.name == "v2")
+    contract = raw.get("controls", {}).get("graph_input_contract", "")
+    return is_v2 and contract != DELIVERY_SCHEMA
+
+
+def replacement_notice(bundle_dir: str | Path) -> str | None:
+    if not superseded_v2_bundle(bundle_dir):
+        return None
+    return ("This is the superseded emotion-based v2 development model. "
+            "The replacement v2 uses energy, tension, valence, assertiveness and binary whisper. "
+            "Install it with: python -m scyllasband download --model-version v2. "
+            "Your v1 installation is retained unless you explicitly request --delete-v1.")

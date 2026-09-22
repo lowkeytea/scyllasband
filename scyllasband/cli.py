@@ -32,6 +32,8 @@ from .download import (
     download_base_resources,
     model_release_installed,
     normalize_model_version,
+    replacement_notice,
+    superseded_v2_bundle,
 )
 from .g2p_phrases import DEFAULT_G2P_PHRASE_MAX_CHARS
 from .metadata_compare import DEFAULT_CHUNK_FIELDS, compare_metadata_files
@@ -73,7 +75,7 @@ def _default_bundle_path(backend: str | None = None) -> Path:
         # Match the runtime's auto policy: Core AI first on macOS 27+ hosts,
         # then int8 ONNX, then the fp32 ONNX bundle if that is all that is
         # available locally.
-        subdir_preference = (*default_bundle_subdirs(), DEFAULT_BUNDLE_SUBDIR)
+        subdir_preference = (*default_bundle_subdirs(), DEFAULT_ONNX_INT8_BUNDLE_SUBDIR)
     elif backend == "onnx":
         # The int8 bundle is the default ONNX artifact; fp32 is opt-in via an
         # explicit bundle path.
@@ -85,7 +87,15 @@ def _default_bundle_path(backend: str | None = None) -> Path:
         Path(__file__).resolve().parent / "models",
         Path(__file__).resolve().parents[1] / "models",
     )
-    for bundle_subdir in subdir_preference:
+    measured_preference = (DEFAULT_BUNDLE_SUBDIR, DEFAULT_ONNX_INT8_BUNDLE_SUBDIR) if backend in ("auto", "onnx") else subdir_preference
+    for bundle_subdir in measured_preference:
+        for root in roots:
+            current = root / "v2" / bundle_subdir
+            if (current / "manifest.json").is_file() and not superseded_v2_bundle(current):
+                return current
+    from .contract import coreai_host_supported
+    legacy_preference = ("coreai", DEFAULT_ONNX_INT8_BUNDLE_SUBDIR, DEFAULT_BUNDLE_SUBDIR) if backend == "auto" and coreai_host_supported() else ((DEFAULT_ONNX_INT8_BUNDLE_SUBDIR, DEFAULT_BUNDLE_SUBDIR) if backend in ("auto", "onnx") else subdir_preference)
+    for bundle_subdir in legacy_preference:
         for root in roots:
             for release in ("v2", "v1", None):
                 bundle = root / release / bundle_subdir if release else root / bundle_subdir
@@ -129,6 +139,9 @@ def _parse_onnx_thread_candidates(value: str | None) -> list[int] | None:
 
 
 def _runtime_from_args(args: argparse.Namespace) -> ScyllasBandRuntime:
+    notice = replacement_notice(args.bundle)
+    if notice:
+        print(notice, file=sys.stderr)
     return ScyllasBandRuntime.from_bundle(
         args.bundle,
         backends=[args.backend],
@@ -212,12 +225,12 @@ def _prompt_model_version(default_version: str = DEFAULT_MODEL_VERSION) -> str |
         print("Choose v1 or v2, press Enter for v2, or q to quit.")
 
 
-def _prompt_bundle_selection(default_subdirs: tuple[str, ...]) -> tuple[str, ...] | None:
+def _prompt_bundle_selection(default_subdirs: tuple[str, ...], *, model_version: str = DEFAULT_MODEL_VERSION) -> tuple[str, ...] | None:
     """Checkbox-style bundle picker; returns the selection or None if cancelled."""
 
     from .download import BUNDLE_SUBDIR_DESCRIPTIONS
 
-    entries = list(BUNDLE_SUBDIR_DESCRIPTIONS)
+    entries = list(BUNDLE_SUBDIR_DESCRIPTIONS) if model_version == "v1" else ["onnx-int8", "onnx"]
     selected = {name for name in default_subdirs if name in entries}
     while True:
         print("\nScylla's Band model download — select bundles:\n")
@@ -227,7 +240,7 @@ def _prompt_bundle_selection(default_subdirs: tuple[str, ...]) -> tuple[str, ...
             default_tag = "  (default)" if name in default_subdirs else ""
             size_tag = f"  {size}" if size else ""
             print(f"  [{mark}] {index}. {name:12s} {description}{size_tag}{default_tag}")
-        print("\nVoice packs are always included.")
+        print("\nVoice assets are included; measured v2 embeds them in its graphs.")
         try:
             answer = input(
                 "Toggle with numbers (e.g. \"2\" or \"2 4\"), Enter to download, q to quit: "
@@ -294,17 +307,24 @@ def _download(args: argparse.Namespace) -> int:
     if delete_v1 and model_version != "v2":
         raise ValueError("--delete-v1 is valid only when downloading --model-version v2")
 
+    if model_version == "v2":
+        for subdir in SUPPORTED_BUNDLE_SUBDIRS:
+            notice = replacement_notice(Path(args.models_dir) / "v2" / subdir)
+            if notice:
+                print(notice, file=sys.stderr)
+                break
+    args.model_version = model_version
     bundle_subdirs = _download_bundle_subdirs(args)
     explicit_request = bool(
         str(getattr(args, "bundle_subdir", "") or "").strip()
         or (getattr(args, "runtime_bundles", None) or "default") != "default"
     )
     if not explicit_request and interactive:
-        chosen = _prompt_bundle_selection(bundle_subdirs)
+        chosen = _prompt_bundle_selection(bundle_subdirs, model_version=model_version)
         if chosen is None:
             print("Download cancelled.")
             return 1
-        bundle_subdirs = _normalize_requested_bundle_subdirs(chosen)
+        bundle_subdirs = _normalize_requested_bundle_subdirs(chosen, model_version=model_version)
     if (
         model_version == "v2"
         and not delete_v1
@@ -352,30 +372,15 @@ def _download(args: argparse.Namespace) -> int:
 
 def _download_bundle_subdirs(args: argparse.Namespace) -> tuple[str, ...]:
     override = str(getattr(args, "bundle_subdir", "") or "").strip()
-    if override:
-        return _normalize_requested_bundle_subdirs((override,))
-    return _normalize_requested_bundle_subdirs((getattr(args, "runtime_bundles", None) or "default",))
+    return _normalize_requested_bundle_subdirs(
+        (override or getattr(args, "runtime_bundles", None) or "default",),
+        model_version=getattr(args, "model_version", None) or DEFAULT_MODEL_VERSION,
+    )
 
 
-def _normalize_requested_bundle_subdirs(values: tuple[str, ...]) -> tuple[str, ...]:
-    output: list[str] = []
-    for value in values:
-        item = str(value).strip().lower()
-        if not item:
-            continue
-        if item == "default":
-            candidates = default_bundle_subdirs()
-        else:
-            candidates = BUNDLE_SUBDIR_GROUPS.get(item, (item,))
-        for candidate in candidates:
-            if candidate not in (*SUPPORTED_BUNDLE_SUBDIRS,):
-                options = ", ".join(
-                    (*SUPPORTED_BUNDLE_SUBDIRS, *BUNDLE_SUBDIR_GROUPS)
-                )
-                raise ValueError(f"Unsupported runtime bundle {candidate!r}; expected one of: {options}")
-            if candidate not in output:
-                output.append(candidate)
-    return tuple(output or default_bundle_subdirs())
+def _normalize_requested_bundle_subdirs(values: tuple[str, ...], *, model_version: str = DEFAULT_MODEL_VERSION) -> tuple[str, ...]:
+    from .download import _normalize_bundle_subdirs
+    return _normalize_bundle_subdirs(values, model_version=model_version)
 
 
 def _compare_metadata(args: argparse.Namespace) -> int:
@@ -455,6 +460,7 @@ def _speak(args: argparse.Namespace) -> int:
                     "voice": args.voice,
                     "language": args.language,
                     "emotion": args.emotion,
+                    "delivery": getattr(args, "delivery", None),
                     "affect": args.affect,
                     "affect_guidance_scale": args.affect_guidance_scale,
                     "emotion_guidance": args.emotion_guidance,
@@ -475,6 +481,7 @@ def _speak(args: argparse.Namespace) -> int:
                     "voice": args.voice,
                     "language": args.language,
                     "emotion": args.emotion,
+                    "delivery": getattr(args, "delivery", None),
                     "affect": args.affect,
                     "affect_guidance_scale": args.affect_guidance_scale,
                     "emotion_guidance": args.emotion_guidance,
@@ -495,6 +502,7 @@ def _speak(args: argparse.Namespace) -> int:
             voice_id=args.voice,
             language=args.language,
             emotion=args.emotion,
+            delivery=getattr(args, "delivery", None),
             affect=args.affect,
             affect_guidance_scale=float(args.affect_guidance_scale),
             emotion_guidance=args.emotion_guidance,
@@ -743,13 +751,14 @@ def _add_synthesis_args(
         parser.add_argument("--metadata", type=Path, help="Optional JSON metadata output path")
     parser.add_argument("--voice", required=require_voice, help="Voice ID")
     parser.add_argument("--language", default=None, help="Language code")
+    parser.add_argument("--delivery", help="Measured v2 controls: energy=2,tension=2,valence=2,assertiveness=2,whisper=off; also neutral or auto")
     emotion_group = parser.add_mutually_exclusive_group()
     emotion_group.add_argument(
         "--emotion",
         dest="emotion_spec",
         metavar="EMOTION",
         help=(
-            "Emotion preset or comma-separated axis values, for example "
+            "Legacy-model emotion preset or comma-separated axis values, for example "
             "joy or calm=0.5,joy=0.8,whisper=0.3"
         ),
     )
@@ -765,7 +774,7 @@ def _add_synthesis_args(
         type=float,
         default=1.0,
         metavar="SCALE",
-        help="Emotion CFG strength (1=direct conditioning, 0=learned null branch)",
+        help="Legacy-model emotion CFG strength (1=direct, 0=null); unsupported by measured v2",
     )
     emotion_scale_group.add_argument(
         "--affect-guidance-scale",
@@ -931,6 +940,7 @@ def _records_from_text_args(
             "voice": args.voice,
             "language": args.language,
             "emotion": args.emotion,
+            "delivery": getattr(args, "delivery", None),
             "affect": args.affect,
             "affect_guidance_scale": args.affect_guidance_scale,
             "emotion_guidance": args.emotion_guidance,
@@ -963,6 +973,11 @@ def _optional_text(value: object) -> str | None:
 
 
 def _parse_group_affect_spec(value: str) -> str:
+    from .delivery import DELIVERY_AXES, delivery_spec
+    terms = [part.strip().partition("=") for part in str(value).split(",")]
+    if any(key in DELIVERY_AXES or (key == "whisper" and raw in ("on", "off", "auto"))
+           for key, _, raw in terms):
+        return "delivery:" + delivery_spec(value)
     terms: list[str] = []
     seen: set[str] = set()
     for raw_term in str(value).split(","):
@@ -1055,12 +1070,14 @@ def _append_group_row(
         raise ValueError(
             f"Group-speak line {line_number} needs a [voice] label or --voice default"
         )
+    measured = isinstance(affect, str) and affect.startswith("delivery:")
     rows.append(
         {
+            **({"delivery": affect[9:]} if measured else {}),
             "voice": voice,
             "language": language,
             "emotion": emotion,
-            "affect": affect,
+            "affect": None if measured else affect,
             "emotion_guidance": emotion_guidance,
             "text": line,
         }

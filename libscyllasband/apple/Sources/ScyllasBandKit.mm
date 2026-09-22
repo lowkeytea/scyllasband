@@ -85,7 +85,10 @@ void configure_long_form_request(
     request.has_seed = 1;
     request.speed = 1.0f;
     request.temperature = 1.0f;
-    if (settings.emotion.length > 0) {
+    if (settings.deliverySpec.length > 0) {
+        affect = "delivery:" + std::string(settings.deliverySpec.UTF8String);
+        request.affect = affect.c_str();
+    } else if (settings.emotion.length > 0) {
         affect = std::string(settings.emotion.UTF8String) + "=" +
             std::to_string(std::clamp(settings.emotionStrength, 0.0f, 1.0f));
         request.affect = affect.c_str();
@@ -135,7 +138,8 @@ void configure_long_form_request(
 - (instancetype)initWithModelName:(NSString *)modelName
                         sampleRate:(NSInteger)sampleRate
                             voices:(NSArray<SBScyllasBandVoice *> *)voices
-                        affectAxes:(NSArray<NSString *> *)affectAxes;
+                        affectAxes:(NSArray<NSString *> *)affectAxes
+                   deliveryEnabled:(BOOL)deliveryEnabled;
 @end
 
 @implementation SBScyllasBandBundleInfo
@@ -143,13 +147,15 @@ void configure_long_form_request(
 - (instancetype)initWithModelName:(NSString *)modelName
                         sampleRate:(NSInteger)sampleRate
                             voices:(NSArray<SBScyllasBandVoice *> *)voices
-                        affectAxes:(NSArray<NSString *> *)affectAxes {
+                        affectAxes:(NSArray<NSString *> *)affectAxes
+                   deliveryEnabled:(BOOL)deliveryEnabled {
     self = [super init];
     if (self) {
         _modelName = modelName.copy;
         _sampleRate = sampleRate;
         _voices = voices.copy;
         _affectAxes = affectAxes.copy;
+        _deliveryEnabled = deliveryEnabled;
     }
     return self;
 }
@@ -176,12 +182,14 @@ void configure_long_form_request(
 }
 
 - (id)copyWithZone:(NSZone *)zone {
-    return [[SBScyllasBandSegmentSettings allocWithZone:zone]
+    SBScyllasBandSegmentSettings *result = [[SBScyllasBandSegmentSettings allocWithZone:zone]
         initWithVoiceIdentifier:self.voiceIdentifier
                        language:self.language
                         emotion:self.emotion
                  emotionStrength:self.emotionStrength
                      emotionCFG:self.emotionCFG];
+    result.deliverySpec = self.deliverySpec;
+    return result;
 }
 
 @end
@@ -305,7 +313,8 @@ static int32_t forward_stream_event(const ScyllasBandStreamingEvent *event, void
     NSString *modelName = manifest[@"model_name"];
     NSNumber *sampleRate = audio[@"sample_rate"];
     NSArray *voiceValues = manifest[@"voices"];
-    NSArray *axisValues = affectControls[@"axes"];
+    BOOL measured = [controls[@"graph_input_contract"] isEqual:@"scyllasband_measured_delivery_v1"];
+    NSArray *axisValues = measured ? @[] : affectControls[@"axes"];
     if (![modelName isKindOfClass:NSString.class] || ![sampleRate isKindOfClass:NSNumber.class] ||
         ![voiceValues isKindOfClass:NSArray.class] || ![axisValues isKindOfClass:NSArray.class]) {
         fail(error, SBScyllasBandErrorInvalidBundle,
@@ -343,7 +352,8 @@ static int32_t forward_stream_event(const ScyllasBandStreamingEvent *event, void
         initWithModelName:modelName
                sampleRate:sampleRate.integerValue
                    voices:voices
-               affectAxes:string_array(axisValues)];
+               affectAxes:string_array(axisValues)
+          deliveryEnabled:measured];
     _cancelRequested.store(false, std::memory_order_relaxed);
 
     // Pick the runtime from the bundle itself: Core AI bundles declare
@@ -461,6 +471,10 @@ static int32_t forward_stream_event(const ScyllasBandStreamingEvent *event, void
     if (voice == nil || ![voice.languages containsObject:settings.language]) {
         return fail(error, SBScyllasBandErrorInvalidArgument,
                     @"The requested voice or language is not declared by the bundle.");
+    }
+    if ((settings.deliverySpec != nil && !self.bundleInfo.deliveryEnabled) ||
+        (self.bundleInfo.deliveryEnabled && (settings.emotion != nil || settings.emotionCFG != 1.0f))) {
+        return fail(error, SBScyllasBandErrorInvalidArgument, @"Use measured delivery without emotion CFG for this bundle.");
     }
     if (settings.emotion != nil && ![self.bundleInfo.affectAxes containsObject:settings.emotion]) {
         return fail(error, SBScyllasBandErrorInvalidArgument,

@@ -60,6 +60,7 @@ def synthesize_text_stream(
     voice: str,
     language: str | None = None,
     emotion: str | None = None,
+    delivery: Mapping[str, Any] | str | None = None,
     affect: Mapping[str, float] | str | None = None,
     affect_guidance_scale: float | None = None,
     emotion_guidance: str | None = None,
@@ -73,6 +74,7 @@ def synthesize_text_stream(
                 "voice": voice,
                 "language": language,
                 "emotion": emotion,
+                "delivery": delivery,
                 "affect": affect,
                 "affect_guidance_scale": affect_guidance_scale,
                 "emotion_guidance": emotion_guidance,
@@ -207,6 +209,7 @@ def synthesize_records_stream(
             seed = None if opts.seed is None else int(opts.seed) + index
             text_value = str(chunk["text"])
             emotion = _optional_text(chunk.get("emotion")) or opts.emotion
+            delivery = chunk.get("delivery") if chunk.get("delivery") is not None else opts.delivery
             affect = chunk.get("affect") if chunk.get("affect") is not None else opts.affect
             emotion_guidance = _optional_text(chunk.get("emotion_guidance")) or opts.emotion_guidance
             prefix_latents = previous_latents if previous_chain_id == chunk_plan.chain_id else None
@@ -226,6 +229,7 @@ def synthesize_records_stream(
                         voice_id=str(chunk["voice"]),
                         language=str(chunk["language"]),
                         emotion=emotion,
+                        delivery=delivery,
                         affect=affect,
                         affect_guidance_scale=float(
                             chunk.get("affect_guidance_scale")
@@ -486,6 +490,7 @@ def _chunk_metadata(
         "voice": chunk["voice"],
         "language": chunk["language"],
         "emotion": emotion,
+        "delivery": chunk.get("delivery"),
         "affect": chunk.get("affect"),
         "affect_guidance_scale": chunk.get("affect_guidance_scale"),
         "emotion_guidance": emotion_guidance,
@@ -556,6 +561,7 @@ def _render_metadata(
         "steps": int(opts.steps),
         "speed": float(opts.speed),
         "emotion": opts.emotion,
+        "delivery": opts.delivery,
         "affect": opts.affect,
         "affect_guidance_scale": float(opts.affect_guidance_scale),
         "emotion_guidance": opts.emotion_guidance,
@@ -866,6 +872,8 @@ def _can_adaptively_merge_chunks(left: dict[str, Any], right: dict[str, Any]) ->
         "language",
         "emotion",
         "emotion_guidance",
+        "delivery",
+        "affect",
         "paragraph_index",
         "pre_normalized",
         "normalize_text",

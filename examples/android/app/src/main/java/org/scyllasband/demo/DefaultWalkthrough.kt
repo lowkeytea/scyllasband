@@ -50,6 +50,10 @@ object DefaultWalkthrough {
         defaults: ScyllasBandSegmentSettings,
         bundleInfo: ScyllasBandBundleInfo,
     ): SpeakerDocumentSnapshot {
+        if (bundleInfo.deliveryEnabled) return GroupSpeakPresetParser.parse(
+            "[ariadne:en_us:energy=2.3,valence=2.5]It is a pleasure to meet you.\n" +
+            "[rex:es:tension=2.5,assertiveness=2.5]Tenemos que salir ahora.\n" +
+            "[ink:en_gb:whisper=on]Keep this between us.", defaults, bundleInfo)
         val parsed = GroupSpeakPresetParser.parse(taggedSource, defaults, bundleInfo)
         check(parsed.points.size == emotionCfgByPoint.size) {
             "Default walkthrough tags and CFG settings are out of sync"

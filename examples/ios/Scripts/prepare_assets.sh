@@ -80,6 +80,19 @@ else
         fi
     done
     if [[ -n "${selected_models_dir}" ]]; then
+        measured_bundle=""
+        for onnx_name in onnx onnx-int8; do
+            manifest="${selected_models_dir}/${onnx_name}/manifest.json"
+            if [[ -f "${manifest}" ]] && /usr/bin/grep -q 'scyllasband_measured_delivery_v1' "${manifest}"; then
+                measured_bundle="${selected_models_dir}/${onnx_name}"
+                break
+            fi
+        done
+        if [[ -n "${measured_bundle}" ]]; then
+            verify_onnx_bundle "${measured_bundle}"
+            embed_sources+=("${measured_bundle}")
+            embed_names+=("onnx")
+        else
         if [[ -f "${selected_models_dir}/coreai/manifest.json" ]]; then
             verify_coreai_bundle "${selected_models_dir}/coreai"
             embed_sources+=("${selected_models_dir}/coreai")
@@ -93,6 +106,7 @@ else
                 break
             fi
         done
+        fi
     fi
 fi
 

@@ -35,28 +35,28 @@ class BackendDefaultsTest(unittest.TestCase):
         self.assertEqual(args.runtime_bundles, "onnx-int8")
         self.assertEqual(
             _normalize_requested_bundle_subdirs(("both",)),
-            ("onnx", "litert"),
+            ("onnx", "onnx-int8"),
         )
         self.assertEqual(
             _normalize_requested_bundle_subdirs(("all",)),
-            ("onnx", "onnx-int8", "litert", "coreai", "coreai-fp32"),
+            ("onnx", "onnx-int8"),
         )
 
-    def test_download_default_group_is_platform_aware_and_int8_first(self) -> None:
+    def test_measured_download_default_is_fp32_on_all_hosts(self) -> None:
         with mock.patch("scyllasband.download.coreai_host_supported", return_value=True):
             self.assertEqual(
                 _normalize_requested_bundle_subdirs(("default",)),
-                ("coreai", "onnx-int8"),
+                ("onnx",),
             )
         with mock.patch("scyllasband.download.coreai_host_supported", return_value=False):
             self.assertEqual(
                 _normalize_requested_bundle_subdirs(("default",)),
-                ("onnx-int8",),
+                ("onnx",),
             )
-        # fp32 onnx stays available but only when explicitly requested.
+        # FP32 also remains explicitly selectable.
         self.assertEqual(_normalize_requested_bundle_subdirs(("onnx",)), ("onnx",))
 
-    def test_android_sample_defaults_to_int8_assets(self) -> None:
+    def test_android_sample_preserves_asset_layout_and_prefers_measured_fp32(self) -> None:
         repository_root = Path(__file__).resolve().parents[1]
         gradle = (repository_root / "examples/android/app/build.gradle.kts").read_text(
             encoding="utf-8"
@@ -68,6 +68,7 @@ class BackendDefaultsTest(unittest.TestCase):
         self.assertIn("scyllasband/models", gradle)
         self.assertIn('"v2/onnx-int8"', gradle)
         self.assertIn('"v2/onnx"', gradle)
+        self.assertLess(gradle.index('"v2/onnx"'), gradle.index('"v2/onnx-int8"'))
         self.assertIn('"v1/onnx-int8"', gradle)
         self.assertLess(gradle.index('"v2/onnx-int8"'), gradle.index('"v1/onnx-int8"'))
         self.assertLess(gradle.index('"v1/onnx-int8"'), gradle.index('"onnx-int8",'))
