@@ -111,6 +111,21 @@ python -m scyllasband speak --voice ariadne --file story.txt \
 python -m scyllasband group-speak --file dialogue.txt -o dialogue.wav
 ```
 
+The Python long-form planner targets **at most eight predicted seconds per
+chunk for measured v2**, using the requested voice, speed and delivery. It splits
+at sentence or clause boundaries first, rechecking each piece before dividing a
+single overlong sentence. This reduces the long-chunk corruption observed with
+slow deliveries. The existing character limit also applies. V1 keeps its
+previous chunking behavior.
+
+Use `--max-chunk-seconds N` to override the target, or `--max-chunk-seconds 0` to
+disable it. The setting requires duration preflight and automatic splitting;
+`--no-preflight-chunks` or `--no-auto-split-overlong` disables it. It is a predicted
+quality target rather than an exact audio-length guarantee; unsplittable text is
+retained and flagged in metadata. The controls remain at the requested values.
+This policy applies to the Python planner, including streaming and adaptive
+chunking; the native host planner is unchanged.
+
 A measured dialogue file can set controls per tagged span:
 
 ```text
@@ -132,7 +147,9 @@ The host chunks long text and assembles waveforms. **Each generated chunk curren
 
 All ten also support `es`, `it`, `fr`, `de`, and `vi`: 60 trained voice/locale pairs. `en` selects the voice's own English dialect. The runtime rejects unsupported voice/dialect combinations.
 
-The trained Scylla's Band G2P is the production text frontend. Duration training used alignment/eSpeak phone representations. Export validation distinguishes exact-phone acoustic parity from raw-text frontend behavior; a successful graph export does not rule out pronunciation mistakes.
+Raw-text synthesis uses only the trained Scylla's Band G2P shipped with the selected bundle, in both Python and native runtimes. There is no eSpeak backend or fallback; missing or failed G2P assets produce an error. eSpeak is not an inference dependency. Explicit-phone replay is available for diagnostics.
+
+Duration training used alignment/eSpeak phone representations. Pronunciation audit tooling belongs to the trainer and is not included in this runtime package. Export validation distinguishes exact-phone acoustic parity from raw-text frontend behavior; a successful graph export does not rule out pronunciation mistakes.
 
 ## Native and mobile integration
 

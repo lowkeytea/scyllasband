@@ -851,6 +851,7 @@ def _add_synthesis_args(
         help="Synthesize text as one request for debugging",
     )
     parser.add_argument("--max-chunk-chars", type=int, default=DEFAULT_LONG_FORM_CHUNK_MAX_CHARS, help="Maximum characters per long-form synthesis chunk")
+    parser.add_argument("--max-chunk-seconds", type=float, default=None, help="Predicted-duration target for long-form chunks (default: 8 seconds for measured v2, disabled for v1); preserves sentence boundaries first, requires preflight and auto-splitting; 0 disables it")
     parser.add_argument("--min-chunk-chars", type=int, default=DEFAULT_LONG_FORM_CHUNK_MIN_CHARS, help="Merge or rebalance adjacent chunks when possible to avoid very short chunks")
     parser.add_argument("--no-auto-split-overlong", action="store_true", help="Do not retry by splitting chunks that exceed the fixed LiteRT latent-frame budget")
     parser.add_argument("--no-preflight-chunks", action="store_true", help="Skip G2P+duration preflight splitting before synthesis")
@@ -1171,7 +1172,7 @@ def _render_streaming_speak(
     chunks: list[dict[str, str | None]],
     args: argparse.Namespace,
 ) -> tuple[list[float], int, dict[str, object]]:
-    from .planner import planner_options_from
+    from .planner import planner_options_for_runtime
     from .streaming import (
         _append_rendered_audio,
         _fade_sample_count,
@@ -1180,7 +1181,7 @@ def _render_streaming_speak(
         synthesize_records_stream,
     )
 
-    opts = planner_options_from(args)
+    opts = planner_options_for_runtime(runtime, args)
     rendered: list[float] = []
     metadata_chunks: list[dict[str, object]] = []
     sample_rate = int(getattr(runtime.manifest.audio, "sample_rate", 0) or 0)

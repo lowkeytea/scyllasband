@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import json
+import math
 import re
 from typing import Any, Mapping
 
+from .delivery import delivery_enabled
 from .runtime import (
     DEFAULT_MIN_CLAUSE_PUNCTUATION_PAUSE_MS,
     DEFAULT_MIN_SENTENCE_PUNCTUATION_PAUSE_MS,
@@ -16,6 +18,7 @@ from .runtime import (
 
 DEFAULT_LONG_FORM_CHUNK_MAX_CHARS = 220
 DEFAULT_LONG_FORM_CHUNK_MIN_CHARS = 48
+DEFAULT_MEASURED_CHUNK_MAX_SECONDS = 8.0
 DEFAULT_LONG_FORM_BOUNDARY_FADE_MS = 8.0
 DEFAULT_ADAPTIVE_CHUNK_SCHEDULE = (120, 160, 220)
 DEFAULT_ADAPTIVE_CHUNK_MIN_CHARS = 32
@@ -74,6 +77,7 @@ class PlannerOptions:
     lookahead_chunks: int = DEFAULT_LOOKAHEAD_CHUNKS
     lazy_preflight: bool = True
     pipeline_preflight: bool = True
+    max_chunk_seconds: float | None = None
 
 
 @dataclass(frozen=True)
@@ -214,7 +218,26 @@ def planner_options_from(options: object | None = None, **overrides: Any) -> Pla
     values["adaptive_realtime_factor"] = max(0.0, float(values.get("adaptive_realtime_factor") or 0.0))
     values["adaptive_min_chunks_per_stage"] = max(1, int(values.get("adaptive_min_chunks_per_stage") or 1))
     values["lookahead_chunks"] = max(0, int(values.get("lookahead_chunks") or 0))
+    if values["max_chunk_seconds"] is not None:
+        values["max_chunk_seconds"] = float(values["max_chunk_seconds"])
+        if not math.isfinite(values["max_chunk_seconds"]) or values["max_chunk_seconds"] < 0:
+            raise ValueError("--max-chunk-seconds must be finite and nonnegative (0 disables it)")
     return PlannerOptions(**values)
+
+
+def planner_options_for_runtime(
+    runtime: Any, options: object | None = None, **overrides: Any,
+) -> PlannerOptions:
+    """Resolve bundle-specific defaults while preserving an explicit zero."""
+    opts = planner_options_from(options, **overrides)
+    if opts.max_chunk_seconds is None:
+        seconds = (
+            DEFAULT_MEASURED_CHUNK_MAX_SECONDS
+            if delivery_enabled(getattr(runtime, "manifest", None))
+            else 0.0
+        )
+        opts = replace(opts, max_chunk_seconds=seconds)
+    return opts
 
 
 def _coerce_positive_int_tuple(value: object, *, fallback: tuple[int, ...]) -> tuple[int, ...]:
@@ -284,7 +307,7 @@ def plan_records(
     source_kind: str = "records",
     **overrides: Any,
 ) -> SynthesisPlan:
-    opts = planner_options_from(options, **overrides)
+    opts = planner_options_for_runtime(runtime, options, **overrides)
     prepared = prepare_render_chunks(runtime, records, opts)
     return synthesis_plan_from_prepared(
         runtime,
@@ -303,7 +326,7 @@ def synthesis_plan_from_prepared(
     *,
     source_kind: str = "records",
 ) -> SynthesisPlan:
-    opts = planner_options_from(options)
+    opts = planner_options_for_runtime(runtime, options)
     plan_records_out = _plan_records_from_input(runtime, records, opts)
     chunks = plan_chunks_from_prepared(runtime, prepared, opts)
     return SynthesisPlan(
@@ -328,7 +351,7 @@ def plan_chunks_from_prepared(
     chunks: list[dict[str, Any]],
     options: object | None = None,
 ) -> list[PlanChunk]:
-    opts = planner_options_from(options)
+    opts = planner_options_for_runtime(runtime, options)
     out: list[PlanChunk] = []
     chain_keys = [_chain_key(chunk, opts) for chunk in chunks]
     last_chain_key: tuple[Any, ...] | None = None
@@ -414,7 +437,7 @@ def prepare_render_chunks(
     records: list[dict[str, Any]],
     options: object | None,
 ) -> list[dict[str, Any]]:
-    opts = planner_options_from(options)
+    opts = planner_options_for_runtime(runtime, options)
     prepared: list[dict[str, Any]] = []
     for record_index, record in enumerate(records):
         voice = str(record["voice"])
@@ -493,7 +516,7 @@ def preflight_split_overlong_chunks(
     chunks: list[dict[str, Any]],
     options: object | None,
 ) -> list[dict[str, Any]]:
-    opts = planner_options_from(options)
+    opts = planner_options_for_runtime(runtime, options)
     output: list[dict[str, Any]] = []
     queue = [dict(chunk) for chunk in chunks]
     split_budget = max(1, len(queue) * 16)
@@ -521,17 +544,42 @@ def preflight_split_overlong_chunks(
         chunk["preflight_fixed_latent_frames"] = int(metadata.get("fixed_latent_frames", 0))
         predicted = int(metadata.get("predicted_latent_frames", 0))
         fixed = int(metadata.get("fixed_latent_frames", 0))
-        if fixed <= 0 or predicted <= fixed:
+        predicted_seconds = _target_duration_seconds(runtime, predicted)
+        duration_over_budget = (
+            opts.max_chunk_seconds > 0
+            and not opts.no_auto_split_overlong
+            and predicted_seconds is not None
+            and predicted_seconds > opts.max_chunk_seconds
+        )
+        if duration_over_budget:
+            chunk["preflight_max_chunk_seconds"] = opts.max_chunk_seconds
+            seconds_frames = max(1, int(predicted * opts.max_chunk_seconds / predicted_seconds))
+            replacements = _split_chunk_for_budget_retry(
+                chunk,
+                max_chars=opts.max_chunk_chars,
+                min_chars=opts.min_chunk_chars,
+                predicted_count=predicted,
+                fixed_count=seconds_frames,
+                reason_prefix="duration_budget",
+                predicted_key="duration_retry_predicted_frames",
+                fixed_key="duration_retry_budget_frames",
+                preserve_sentence_units=True,
+            )
+        elif fixed > 0 and predicted > fixed:
+            replacements = split_chunk_for_latent_retry(
+                chunk,
+                max_chars=opts.max_chunk_chars,
+                min_chars=opts.min_chunk_chars,
+                predicted_latent_frames=predicted,
+                fixed_latent_frames=fixed,
+            )
+        else:
             output.append(chunk)
             continue
-        replacements = split_chunk_for_latent_retry(
-            chunk,
-            max_chars=opts.max_chunk_chars,
-            min_chars=opts.min_chunk_chars,
-            predicted_latent_frames=predicted,
-            fixed_latent_frames=fixed,
-        )
         if not replacements or split_budget <= 0:
+            if duration_over_budget:
+                # A soft quality target must not discard unsplittable text.
+                chunk["duration_budget_unresolved"] = True
             output.append(chunk)
             continue
         split_budget -= 1
@@ -544,7 +592,7 @@ def estimate_chunk_duration_metadata(
     chunk: dict[str, Any],
     options: object | None,
 ) -> dict[str, Any]:
-    opts = planner_options_from(options)
+    opts = planner_options_for_runtime(runtime, options)
     return runtime.estimate_latent_frames(
         SynthesisRequest(
             text=str(chunk["text"]),
@@ -1038,6 +1086,7 @@ def _split_chunk_for_budget_retry(
     reason_prefix: str,
     predicted_key: str,
     fixed_key: str,
+    preserve_sentence_units: bool = False,
 ) -> list[dict[str, Any]]:
     text = str(chunk.get("text") or "").strip()
     if not text:
@@ -1049,46 +1098,58 @@ def _split_chunk_for_budget_retry(
         predicted_latent_frames=predicted_count,
         fixed_latent_frames=fixed_count,
     )
-    pieces = _split_units_min_max(
-        text,
-        max_chars=retry_max_chars,
-        min_chars=min_chars,
-    )
-    if not pieces and min_chars > 0:
-        # Preserve sentence boundaries even when that leaves a short tail.
+    pieces: list[str] = []
+    units = _sentence_units(text) if preserve_sentence_units else []
+    if len(units) > 1:
+        # Split whole sentences/clauses first, then re-estimate each child with
+        # its own G2P and duration prediction. Character scaling alone can cut a
+        # sentence that would already fit the requested speaking-time budget.
+        split_at = min(
+            range(1, len(units)),
+            key=lambda index: abs(len(" ".join(units[:index])) - len(text) / 2),
+        )
+        pieces = [" ".join(units[:split_at]), " ".join(units[split_at:])]
+    else:
         pieces = _split_units_min_max(
             text,
             max_chars=retry_max_chars,
+            min_chars=min_chars,
+        )
+        if not pieces and min_chars > 0:
+            # Preserve sentence boundaries even when that leaves a short tail.
+            pieces = _split_units_min_max(
+                text,
+                max_chars=retry_max_chars,
+                min_chars=0,
+            )
+        if not pieces:
+            pieces = _split_words_min_max(
+                text,
+                max_chars=retry_max_chars,
+                min_chars=min_chars,
+            )
+        if not pieces:
+            pieces = _split_oversized_unit(
+                text,
+                max_chars=retry_max_chars,
+                min_chars=min_chars,
+            )
+        if not _retry_pieces_are_usable(
+            pieces,
+            max_chars=retry_max_chars,
             min_chars=0,
-        )
-    if not pieces:
-        pieces = _split_words_min_max(
-            text,
+        ):
+            pieces = _split_words_near_half(
+                text,
+                max_chars=retry_max_chars,
+                min_chars=min_chars,
+            )
+        if not _retry_pieces_are_usable(
+            pieces,
             max_chars=retry_max_chars,
-            min_chars=min_chars,
-        )
-    if not pieces:
-        pieces = _split_oversized_unit(
-            text,
-            max_chars=retry_max_chars,
-            min_chars=min_chars,
-        )
-    if not _retry_pieces_are_usable(
-        pieces,
-        max_chars=retry_max_chars,
-        min_chars=0,
-    ):
-        pieces = _split_words_near_half(
-            text,
-            max_chars=retry_max_chars,
-            min_chars=min_chars,
-        )
-    if not _retry_pieces_are_usable(
-        pieces,
-        max_chars=retry_max_chars,
-        min_chars=0,
-    ):
-        return []
+            min_chars=0,
+        ):
+            return []
 
     source_dot_counts = tuple(
         int(value) for value in chunk.get("ellipsis_dot_counts", ())

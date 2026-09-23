@@ -15,7 +15,7 @@ from .planner import (
     pause_after_ms,
     plan_chunks_from_prepared,
     preflight_split_overlong_chunks,
-    planner_options_from,
+    planner_options_for_runtime,
     prepare_render_chunks,
     split_chunk_for_overlong_retry,
     synthesis_plan_from_prepared,
@@ -96,7 +96,7 @@ def synthesize_records_stream(
     progress_stream: Any | None = None,
     **overrides: Any,
 ) -> Iterator[StreamingEvent]:
-    opts = planner_options_from(options, **overrides)
+    opts = planner_options_for_runtime(runtime, options, **overrides)
     stream_started_at = time.perf_counter()
     first_audio_ms: int | None = None
     adaptive_schedule = _adaptive_schedule(opts)
@@ -368,6 +368,16 @@ def synthesize_records_stream(
                         start_index=index + 1,
                         max_chars=next_opts.max_chunk_chars,
                     )
+                    if (
+                        updated_chunks is not render_chunks
+                        and not next_opts.no_preflight_chunks
+                        and not use_lazy_preflight
+                    ):
+                        # Eager mode has no later per-chunk check. Merging can
+                        # exceed either the quality target or graph capacity.
+                        updated_chunks = updated_chunks[: index + 1] + preflight_split_overlong_chunks(
+                            runtime, updated_chunks[index + 1 :], next_opts,
+                        )
                     opts = next_opts
                     adaptive_stage = next_stage
                     adaptive_chunks_completed_at_stage = 0
@@ -419,7 +429,7 @@ def render_text_records(
     progress_stream: Any | None = sys.stderr,
     **overrides: Any,
 ) -> tuple[list[float], int, dict[str, Any]]:
-    opts = planner_options_from(options, **overrides)
+    opts = planner_options_for_runtime(runtime, options, **overrides)
     rendered: list[float] = []
     metadata_chunks: list[dict[str, Any]] = []
     sample_rate = int(_runtime_sample_rate(runtime) or 0)
@@ -528,6 +538,10 @@ def _chunk_metadata(
     for key in (
         "preflight_predicted_latent_frames",
         "preflight_fixed_latent_frames",
+        "preflight_max_chunk_seconds",
+        "duration_retry_predicted_frames",
+        "duration_retry_budget_frames",
+        "duration_budget_unresolved",
         "lazy_preflight_ms",
         "lazy_preflight_total_ms",
         "lazy_preflight_replacement_count",
@@ -575,6 +589,7 @@ def _render_metadata(
         "min_clause_pause_ms": float(opts.min_clause_pause_ms),
         "chunk_max_chars": int(opts.max_chunk_chars),
         "chunk_min_chars": int(opts.min_chunk_chars),
+        "chunk_max_seconds": float(opts.max_chunk_seconds),
         "preflight_chunks": not bool(opts.no_preflight_chunks),
         "auto_split_overlong": not bool(opts.no_auto_split_overlong),
         "adaptive_chunking": bool(opts.adaptive_chunking),
@@ -793,6 +808,10 @@ _ADAPTIVE_INVALIDATED_METADATA_KEYS = frozenset(
     {
         "preflight_predicted_latent_frames",
         "preflight_fixed_latent_frames",
+        "preflight_max_chunk_seconds",
+        "duration_retry_predicted_frames",
+        "duration_retry_budget_frames",
+        "duration_budget_unresolved",
         "_lazy_preflight_done",
         "lazy_preflight_ms",
         "lazy_preflight_total_ms",
@@ -833,7 +852,10 @@ def _adaptive_options_for_stage(opts: PlannerOptions, max_chars: int) -> Planner
         opts,
         max_chunk_chars=stage_max,
         min_chunk_chars=stage_min,
-        no_preflight_chunks=bool(opts.no_preflight_chunks or not opts.adaptive_preflight_chunks),
+        no_preflight_chunks=bool(
+            opts.no_preflight_chunks
+            or (not opts.adaptive_preflight_chunks and opts.max_chunk_seconds <= 0)
+        ),
     )
 
 
