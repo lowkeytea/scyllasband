@@ -12,8 +12,6 @@ import json
 import re
 import unicodedata
 
-from .spoken_text_trace import NormalizationOperations, note_provider
-
 
 SPOKEN_TEXT_NORMALIZER_CONTRACT = {
     "version": "scyllasband_spoken_text_v2_2026_08_05",
@@ -537,8 +535,7 @@ class SpokenTextNormalizer:
     _TITLE_ABBREVIATION_RE = re.compile(
         r"(?<![A-Za-zÀ-ÖØ-öø-ÿÑñ])([A-Za-z]{2,4})\.?\s+(?=[A-ZÀ-ÖØ-Þ])"
     )
-    # Candidates use the supported letter-name inventory; callbacks validate
-    # Unicode word boundaries, including combining marks that survive NFC.
+    # Callbacks check Unicode word boundaries, including combining marks.
     _DASH_LEFT_SINGLE_LETTER_RE = re.compile(r"([A-Za-zÑñ])\s*-\s*")
     _DASH_RIGHT_SINGLE_LETTER_RE = re.compile(r"\s*-\s*([A-Za-zÑñ])")
     _LETTER_NAMES = {
@@ -591,95 +588,75 @@ class SpokenTextNormalizer:
         self._inflect = inflect.engine() if inflect is not None else None
 
     def normalize(self, text: str, *, language: str) -> str:
-        return self._normalize_impl(text, language=language, operations=NormalizationOperations())
-
-    def normalize_with_trace(self, text: str, *, language: str, **kwargs):
-        """Emit transform provenance; atomic verbalizations have group precision."""
-        from .spoken_text_trace import trace_spoken_text
-        return trace_spoken_text(self, text, language=language, **kwargs)
-
-    def _normalize_impl(self, text: str, *, language: str, operations: NormalizationOperations) -> str:
-        ops = operations
         lang = self._normalizer_language(language)
-        value = ops.nfc(str(text or ""))
+        value = unicodedata.normalize("NFC", str(text or ""))
         if self.config.normalize_punctuation:
-            value = self._normalize_punctuation(value, lang, operations=ops)
+            value = self._normalize_punctuation(value, lang)
         if lang == "en":
             # eSpeak and the distilled G2P read bare ``ok`` as /oʊk/ ("oak").
             # The spoken lexical form is "okay"; keep following punctuation
             # untouched so ``Ok...`` retains its ellipsis boundary.
-            value = ops.sub(self._EN_OK_RE, "okay", value, rule_id="lexical.english_ok")
+            value = self._EN_OK_RE.sub("okay", value)
         if self.config.normalize_at_sign:
-            value = self._normalize_at_symbols(value, lang, operations=ops)
-        value = self._expand_dotted_initialisms(value, lang, operations=ops)
-        value = self._expand_title_abbreviations(value, lang, operations=ops)
+            value = self._normalize_at_symbols(value, lang)
+        value = self._expand_dotted_initialisms(value, lang)
+        value = self._expand_title_abbreviations(value, lang)
         if self.config.expand_currency:
-            value = ops.sub(
+            value = re.sub(
                 r"([$£€])\s*([0-9](?:[0-9.,]*[0-9])?)",
                 lambda m: self._expand_currency_prefix(m, lang),
-                value, rule_id="number.currency_prefix",
+                value,
             )
-            # The euro glyph is not a word character; guard both token edges
-            # explicitly and avoid matching a fragment after a decimal separator.
-            value = ops.sub(
+            value = re.sub(
                 r"(?<![\w.,])([0-9](?:[0-9.,]*[0-9])?)\s*(€|EUR)(?!\w)",
                 lambda m: self._expand_currency_suffix(m, lang),
                 value,
-                flags=re.IGNORECASE, rule_id="number.currency_suffix",
+                flags=re.IGNORECASE,
             )
         if self.config.expand_times:
-            value = ops.sub(r"\b(\d{1,2}):(\d{2})(?:\s*([AaPp][Mm]))?\b", lambda m: self._expand_time(m, lang), value, rule_id="number.time")
+            value = re.sub(r"\b(\d{1,2}):(\d{2})(?:\s*([AaPp][Mm]))?\b", lambda m: self._expand_time(m, lang), value)
         if self.config.expand_percentages:
-            value = ops.sub(r"(?<![\d.,])(\d[\d.,]*)%", lambda m: f"{self._decimal_to_words(m.group(1), lang)} {self._percent_word(lang)}", value, rule_id="number.percent")
+            value = re.sub(r"(?<![\d.,])(\d[\d.,]*)%", lambda m: f"{self._decimal_to_words(m.group(1), lang)} {self._percent_word(lang)}", value)
         if self.config.expand_ordinals:
-            value = ops.sub(r"\b(\d+)(st|nd|rd|th|o|a)\b", lambda m: self._to_words(int(m.group(1)), lang, ordinal=True), value, flags=re.IGNORECASE, rule_id="number.ordinal_suffix")
-            value = ops.sub(r"\b(\d+)(?:º|ª)\b", lambda m: self._to_words(int(m.group(1)), lang, ordinal=True), value, rule_id="number.ordinal_glyph")
+            value = re.sub(r"\b(\d+)(st|nd|rd|th|o|a)\b", lambda m: self._to_words(int(m.group(1)), lang, ordinal=True), value, flags=re.IGNORECASE)
+            value = re.sub(r"\b(\d+)(?:º|ª)\b", lambda m: self._to_words(int(m.group(1)), lang, ordinal=True), value)
         if self.config.expand_numbers:
             if self.config.expand_dates:
-                value = ops.sub(self._EN_MONTH_DATE_RE, lambda m: self._expand_named_month_date(m, lang), value, rule_id="number.named_date")
-                value = ops.sub(r"\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b", lambda m: self._expand_slash_date(m, lang), value, rule_id="number.slash_date")
-                value = ops.sub(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b", lambda m: self._expand_date(m.group(2), m.group(3), m.group(1), lang), value, rule_id="number.iso_date")
-            value = ops.sub(self._MIXED_FRACTION_RE, lambda m: ops.mapped(m, [(m.end(1), m.start(2), f" {self._and_word(lang)} ")]), value, rule_id="number.mixed_fraction")
-            value = ops.sub(self._SIMPLE_FRACTION_RE, lambda m: self._expand_fraction(m, lang), value, rule_id="number.fraction")
+                value = self._EN_MONTH_DATE_RE.sub(lambda m: self._expand_named_month_date(m, lang), value)
+                value = re.sub(r"\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b", lambda m: self._expand_slash_date(m, lang), value)
+                value = re.sub(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b", lambda m: self._expand_date(m.group(2), m.group(3), m.group(1), lang), value)
+            value = self._MIXED_FRACTION_RE.sub(lambda m: f"{m.group(1)} {self._and_word(lang)} {m.group(2)}", value)
+            value = self._SIMPLE_FRACTION_RE.sub(lambda m: self._expand_fraction(m, lang), value)
             if lang in {"es", "it", "fr", "de", "vi"}:
-                value = ops.sub(r"\b\d[\d.]*,\d+\b", lambda m: self._decimal_to_words(m.group(0), lang), value, rule_id="number.locale_decimal")
-                value = ops.sub(r"\b\d{1,3}(?:\.\d{3})+\b", lambda m: self._to_words(int(self._whole_number_digits(m.group(0))), lang), value, rule_id="number.locale_grouped")
-            value = ops.sub(r"\b\d[\d,]*\.\d+\b(?!\.\d)", lambda m: self._decimal_to_words(m.group(0), lang), value, rule_id="number.decimal")
-            value = ops.sub(r"\b\d{1,3}(?:,\d{3})+\b", lambda m: self._to_words(int(self._whole_number_digits(m.group(0))), lang), value, rule_id="number.grouped")
-            value = ops.sub(r"\b\d+\b", lambda m: self._to_words(int(m.group(0)), lang), value, rule_id="number.integer")
-        value = self._expand_dash_letter_names(value, lang, operations=ops)
+                value = re.sub(r"\b\d[\d.]*,\d+\b", lambda m: self._decimal_to_words(m.group(0), lang), value)
+                value = re.sub(r"\b\d{1,3}(?:\.\d{3})+\b", lambda m: self._to_words(int(self._whole_number_digits(m.group(0))), lang), value)
+            value = re.sub(r"\b\d[\d,]*\.\d+\b(?!\.\d)", lambda m: self._decimal_to_words(m.group(0), lang), value)
+            value = re.sub(r"\b\d{1,3}(?:,\d{3})+\b", lambda m: self._to_words(int(self._whole_number_digits(m.group(0))), lang), value)
+            value = re.sub(r"\b\d+\b", lambda m: self._to_words(int(m.group(0)), lang), value)
+        value = self._expand_dash_letter_names(value, lang)
         # The target backend is dictionary-based, so hyphenated compounds and
         # number words are safer as separate lookup tokens. Inference uses the
         # same normalizer, preserving the train/runtime contract.
-        value = ops.replace(value, "-", " ", rule_id="lexical.hyphen_to_space")
-        return ops.strip(ops.sub(self._WHITESPACE_RE, " ", value, rule_id="final.whitespace"), rule_id="final.strip")
+        value = value.replace("-", " ")
+        return self._WHITESPACE_RE.sub(" ", value).strip()
 
-    def _expand_dotted_initialisms(self, text: str, lang: str, *, operations=None) -> str:
-        ops = operations or NormalizationOperations()
-        def replace(match: re.Match[str]):
-            letters = list(re.finditer(r"[A-Za-zÑñ]", match.group(0)))
-            edits = []
-            for index, letter in enumerate(letters):
-                start = match.start() + letter.start()
-                edits.append((start, start + 1, self._letter_name(letter.group(0), lang)))
-                edits.append((start + 1, start + 2, " " if index + 1 < len(letters) else ""))
-            return ops.mapped(match, edits)
-        return ops.sub(self._DOTTED_INITIALISM_RE, replace, text, rule_id="lexical.dotted_initialism")
+    def _expand_dotted_initialisms(self, text: str, lang: str) -> str:
+        def replace(match: re.Match[str]) -> str:
+            letters = re.findall(r"[A-Za-zÑñ]", match.group(0))
+            return " ".join(self._letter_name(letter, lang) for letter in letters)
 
-    def _expand_title_abbreviations(self, text: str, lang: str, *, operations=None) -> str:
-        ops = operations or NormalizationOperations()
+        return self._DOTTED_INITIALISM_RE.sub(replace, text)
+
+    def _expand_title_abbreviations(self, text: str, lang: str) -> str:
         table = self._TITLE_ABBREVIATIONS.get(lang)
         if not table:
             return text
-        def replace(match: re.Match[str]):
+
+        def replace(match: re.Match[str]) -> str:
             expansion = table.get(match.group(1).lower())
-            if not expansion:
-                return match.group(0)
-            # The following uppercase name is only lookahead, never a contributor.
-            whitespace_start = match.end() - (len(match.group(0)) - len(match.group(0).rstrip()))
-            return ops.mapped(match, [(match.start(), whitespace_start, expansion),
-                                      (whitespace_start, match.end(), " ")])
-        return ops.sub(self._TITLE_ABBREVIATION_RE, replace, text, rule_id="lexical.title")
+            return f"{expansion} " if expansion else match.group(0)
+
+        return self._TITLE_ABBREVIATION_RE.sub(replace, text)
 
     @staticmethod
     def _is_dash_word_char(char: str) -> bool:
@@ -687,24 +664,23 @@ class SpokenTextNormalizer:
             char.isalnum() or unicodedata.category(char).startswith("M")
         )
 
-    def _expand_dash_letter_names(self, text: str, lang: str, *, operations=None) -> str:
-        ops = operations or NormalizationOperations()
-        def left(match: re.Match[str]):
+    def _expand_dash_letter_names(self, text: str, lang: str) -> str:
+        def left(match: re.Match[str]) -> str:
             before = match.string[match.start() - 1] if match.start() else ""
             after = match.string[match.end()] if match.end() < len(match.string) else ""
             if before == "_" or self._is_dash_word_char(before) or not self._is_dash_word_char(after):
                 return match.group(0)
-            return ops.mapped(match, [(match.start(1), match.end(1), self._letter_name(match.group(1), lang)),
-                                      (match.end(1), match.end(), " ")])
-        def right(match: re.Match[str]):
+            return f"{self._letter_name(match.group(1), lang)} "
+
+        def right(match: re.Match[str]) -> str:
             before = match.string[match.start() - 1] if match.start() else ""
             after = match.string[match.end()] if match.end() < len(match.string) else ""
             if not self._is_dash_word_char(before) or after == "_" or self._is_dash_word_char(after):
                 return match.group(0)
-            return ops.mapped(match, [(match.start(), match.start(1), " "),
-                                      (match.start(1), match.end(1), self._letter_name(match.group(1), lang))])
-        value = ops.sub(self._DASH_LEFT_SINGLE_LETTER_RE, left, text, rule_id="lexical.dash_left_letter")
-        return ops.sub(self._DASH_RIGHT_SINGLE_LETTER_RE, right, value, rule_id="lexical.dash_right_letter")
+            return f" {self._letter_name(match.group(1), lang)}"
+
+        value = self._DASH_LEFT_SINGLE_LETTER_RE.sub(left, text)
+        return self._DASH_RIGHT_SINGLE_LETTER_RE.sub(right, value)
 
     def _letter_name(self, letter: str, lang: str) -> str:
         key = str(letter or "").upper()
@@ -717,30 +693,28 @@ class SpokenTextNormalizer:
         return cls._LANG_BY_MODEL_LANGUAGE.get(key, key if key in {"en", "es", "it", "fr", "de", "vi"} else "en")
 
     @classmethod
-    def _normalize_punctuation(cls, text: str, lang: str, *, operations=None) -> str:
-        ops = operations or NormalizationOperations()
-        value = ops.sub(cls._ZERO_WIDTH_RE, "", str(text or ""), rule_id="punctuation.zero_width")
-        value = cls._normalize_dash_contract(value, operations=ops)
-        value = ops.translate(value, cls._UNICODE_TRANSLATION, rule_id="punctuation.unicode_translation")
-        value = ops.sub(cls._DOT_RUN_RE, "...", value, rule_id="punctuation.dot_run")
-        value = ops.sub(cls._MIXED_TERMINAL_PUNCTUATION_RE, lambda m: ops.mapped(m, [(m.end(1), m.end(), "")]), value, rule_id="punctuation.leading_terminal")
+    def _normalize_punctuation(cls, text: str, lang: str) -> str:
+        value = cls._ZERO_WIDTH_RE.sub("", str(text or ""))
+        value = cls._normalize_dash_contract(value)
+        value = value.translate(cls._UNICODE_TRANSLATION)
+        value = cls._DOT_RUN_RE.sub("...", value)
+        value = cls._MIXED_TERMINAL_PUNCTUATION_RE.sub(lambda match: match.group(1), value)
         equals_word = {"en": "equals", "es": "igual", "it": "uguale", "fr": "égal", "de": "gleich", "vi": "bằng"}.get(lang, "equals")
         degrees_word = {"en": "degrees", "es": "grados", "it": "gradi", "fr": "degrés", "de": "Grad", "vi": "độ"}.get(lang, "degrees")
-        value = ops.replace(value, "=", f" {equals_word} ", rule_id="punctuation.equals")
-        value = ops.replace(value, "°", f" {degrees_word} ", rule_id="punctuation.degrees")
-        return ops.strip(ops.sub(cls._WHITESPACE_RE, " ", value, rule_id="punctuation.whitespace"), rule_id="punctuation.strip")
+        value = value.replace("=", f" {equals_word} ")
+        value = value.replace("°", f" {degrees_word} ")
+        return cls._WHITESPACE_RE.sub(" ", value).strip()
 
     @classmethod
-    def _normalize_dash_contract(cls, text: str, *, operations=None) -> str:
-        ops = operations or NormalizationOperations()
+    def _normalize_dash_contract(cls, text: str) -> str:
         value = str(text or "")
         for hyphen in cls._LEXICAL_HYPHENS:
-            value = ops.replace(value, hyphen, "-", rule_id=f"dash.lexical_{ord(hyphen):04x}")
+            value = value.replace(hyphen, "-")
         for dash in cls._SYNTACTIC_DASHES:
-            value = ops.replace(value, dash, " — ", rule_id=f"dash.syntactic_{ord(dash):04x}")
-        value = ops.sub(r"-{2,}", " — ", value, rule_id="dash.repeated_ascii")
-        value = ops.sub(r"(?:(?<=\s)-+|-+(?=\s))", " — ", value, rule_id="dash.spaced_ascii")
-        return ops.strip(ops.sub(cls._WHITESPACE_RE, " ", value, rule_id="dash.whitespace"), rule_id="dash.strip")
+            value = value.replace(dash, " — ")
+        value = re.sub(r"-{2,}", " — ", value)
+        value = re.sub(r"(?:(?<=\s)-+|-+(?=\s))", " — ", value)
+        return cls._WHITESPACE_RE.sub(" ", value).strip()
 
     @classmethod
     def _normalize_identifier_fragment(cls, fragment: str, lang: str) -> str:
@@ -753,48 +727,34 @@ class SpokenTextNormalizer:
         out = out.replace(".", f" {dot_word} ")
         return out
 
-    def _normalize_at_symbols(self, text: str, lang: str, *, operations=None) -> str:
-        ops = operations or NormalizationOperations()
+    def _normalize_at_symbols(self, text: str, lang: str) -> str:
         word = {
             "en": "at", "es": "arroba", "it": "chiocciola",
             "fr": "arobase", "de": "at", "vi": "a còng",
         }.get(lang, "at")
 
-        def replace_email(match: re.Match[str]):
-            edits = []
-            for index in range(match.start(), match.end()):
-                char = match.string[index]
-                if char == "@":
-                    edits.append((index, index + 1, f" {word} "))
-                elif char in "+_-.":
-                    edits.append((index, index + 1, self._normalize_identifier_fragment(char, lang)))
-            return ops.mapped(match, edits)
-        value = ops.sub(self._EMAIL_RE, replace_email, text, rule_id="identifier.email")
-        return ops.replace(value, "@", f" {word} ", rule_id="identifier.at_sign")
+        def replace_email(match: re.Match[str]) -> str:
+            local = self._normalize_identifier_fragment(match.group("local"), lang)
+            domain = self._normalize_identifier_fragment(match.group("domain"), lang)
+            return f"{local} {word} {domain}"
+
+        return self._EMAIL_RE.sub(replace_email, text).replace("@", f" {word} ")
 
     def _to_words(self, value: int, lang: str, *, ordinal: bool = False) -> str:
         if lang == "en" and not ordinal and self._inflect is not None:
             try:
-                result = self._inflect.number_to_words(str(value)).replace(",", "")
-            except Exception as exc:
-                note_provider("inflect", value, lang, ordinal, error=exc)
-            else:
-                note_provider("inflect", value, lang, ordinal, result=result)
-                return result
+                return self._inflect.number_to_words(str(value)).replace(",", "")
+            except Exception:
+                pass
         if _num2words_raw is not None:
             kwargs = {"lang": lang}
             if ordinal:
                 kwargs["to"] = "ordinal"
             try:
-                result = _num2words_raw(value, **kwargs).replace(",", "")
-            except (NotImplementedError, TypeError, ValueError) as exc:
-                note_provider("num2words", value, lang, ordinal, error=exc)
-            else:
-                note_provider("num2words", value, lang, ordinal, result=result)
-                return result
-        result = _fallback_number_to_words(int(value), lang, ordinal=ordinal)
-        note_provider("builtin_fallback", value, lang, ordinal, result=result)
-        return result
+                return _num2words_raw(value, **kwargs).replace(",", "")
+            except (NotImplementedError, TypeError, ValueError):
+                pass
+        return _fallback_number_to_words(int(value), lang, ordinal=ordinal)
 
     def _decimal_to_words(self, raw: str, lang: str) -> str:
         whole, frac = self._split_decimal(raw, lang)
