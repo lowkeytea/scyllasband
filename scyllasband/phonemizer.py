@@ -13,6 +13,7 @@ import numpy as np
 _MODEL_FILENAME = "model.onnx"
 _TOKENIZER_FILENAME = "tokenizer.json"
 _PHONEME_DICT_FILENAME = "phoneme_dict.json"
+_CTC_DECODER_VERSION = "ctc_collapse_before_blank_v1"
 _DEFAULT_PUNCTUATION = "().,:?!/–"
 _DEFAULT_PROVIDERS = ("CPUExecutionProvider",)
 _INITIALISMS = {
@@ -82,7 +83,7 @@ class ScyllasBandG2P:
         self._model_fingerprint = f"{model_stat.st_size:x}-{model_stat.st_mtime_ns:x}"
         self.cache_path = (
             self.cache_dir
-            / f"scyllasband_g2p_{self.language}_{self._model_fingerprint}.json"
+            / f"scyllasband_g2p_{self.language}_{self._model_fingerprint}_{_CTC_DECODER_VERSION}.json"
             if self.cache_dir is not None
             else None
         )
@@ -94,6 +95,7 @@ class ScyllasBandG2P:
                 if (
                     payload.get("language") == self.language
                     and payload.get("model_fingerprint") == self._model_fingerprint
+                    and payload.get("decoder_version") == _CTC_DECODER_VERSION
                 ):
                     self._prediction_cache = {
                         str(key): str(value)
@@ -158,7 +160,6 @@ class ScyllasBandG2P:
         else:
             logits = self._session.run(["logits"], {"text": input_ids})[0]
             token_ids = np.argmax(logits[0], axis=-1)
-            token_ids = token_ids[token_ids != self._blank_index]
 
             deduped: list[int] = []
             previous: Optional[int] = None
@@ -166,8 +167,11 @@ class ScyllasBandG2P:
                 token_id = int(token_id)
                 if previous == token_id:
                     continue
-                deduped.append(token_id)
+                # Blanks separate repeated phones in CTC. Collapse adjacent
+                # frame repeats before removing blanks from emitted symbols.
                 previous = token_id
+                if token_id != self._blank_index:
+                    deduped.append(token_id)
 
             out: list[str] = []
             for token_id in deduped:
@@ -251,6 +255,7 @@ class ScyllasBandG2P:
             "schema_version": 1,
             "language": self.language,
             "model_fingerprint": self._model_fingerprint,
+            "decoder_version": _CTC_DECODER_VERSION,
             "entries": dict(sorted(self._prediction_cache.items())),
         }
         temporary_path.write_text(
