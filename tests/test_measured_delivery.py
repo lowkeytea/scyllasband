@@ -79,6 +79,32 @@ class MeasuredDeliveryTest(unittest.TestCase):
         with self.assertRaises(BundleValidationError):
             validate_delivery_contract(m)
 
+    def test_continuity_requires_declared_training_inputs_and_passage_scope(self):
+        prefix_inputs = measured_manifest().components['vector_estimator'].inputs + ('prefix_latents', 'prefix_mask')
+
+        def continuity(trained='connected_context_v1', inputs=prefix_inputs, scope='passage'):
+            m = measured_manifest()
+            m.controls['prefix_conditioning'] = {'enabled': True, 'max_frames': 32, 'trained': trained}
+            m.controls['span_conditioning'] = {'scope': scope}
+            m.components['vector_estimator'] = SimpleNamespace(inputs=inputs)
+            return m
+
+        validate_delivery_contract(continuity())
+        cases = {
+            'undeclared training': continuity(trained=None),
+            'missing prefix inputs': continuity(inputs=measured_manifest().components['vector_estimator'].inputs),
+            'utterance scope': continuity(scope='utterance'),
+        }
+        for name, manifest in cases.items():
+            with self.subTest(name), self.assertRaises(BundleValidationError):
+                validate_delivery_contract(manifest)
+        plain = measured_manifest(); plain.controls['span_conditioning'] = {'scope': 'passage'}
+        with self.assertRaises(BundleValidationError):
+            validate_delivery_contract(plain)
+        prefixed = measured_manifest(); prefixed.components['vector_estimator'] = SimpleNamespace(inputs=prefix_inputs)
+        with self.assertRaises(BundleValidationError):
+            validate_delivery_contract(prefixed)
+
     def test_cli_and_group_planning_retain_delivery(self):
         class Runtime:
             manifest = SimpleNamespace(audio=SimpleNamespace(sample_rate=24000, latent_hop_length=512), controls={})

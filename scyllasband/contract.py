@@ -26,6 +26,7 @@ REQUIRED_COMPONENTS = (
     "vocoder",
 )
 SPLIT_VECTOR_COMPONENTS = ("vector_estimator_prefix", "vector_estimator_tail")
+CONTINUITY_TRAINING = "connected_context_v1"
 SHIPPING_BACKENDS = ("onnx", "litert", "coreml", "coreai")
 DEFAULT_PREFERRED_BACKENDS = ("onnx",)
 COREAI_MINIMUM_MACOS_MAJOR = 27
@@ -1017,14 +1018,19 @@ def validate_delivery_contract(manifest: ScyllasBandBundleManifest) -> None:
     vector_inputs = ("noise", "time", "expanded_phone_ids", "voice_id", "language_id", "delivery_values", "delivery_present", "latent_mask", "span_context_hidden")
     if manifest.components["duration_predictor"].inputs != duration_inputs:
         raise BundleValidationError("Measured duration graph inputs do not match the contract")
+    # Continuity bundles declare the training contract that taught previous-chunk
+    # latents and neighbouring-chunk span context; all others stay utterance-only.
+    prefix = controls.get("prefix_conditioning", {})
+    continuity = bool(prefix.get("enabled")) and prefix.get("trained") == CONTINUITY_TRAINING
+    expected_vector = vector_inputs + ("prefix_latents", "prefix_mask") if continuity else vector_inputs
     for component in _vector_timing_components(manifest):
-        if component.inputs != vector_inputs:
+        if tuple(component.inputs) != expected_vector:
             raise BundleValidationError("Measured vector graph inputs do not match the contract")
     if controls.get("reference_packs", {}).get("enabled") or controls.get("emotion_guidance", {}).get("enabled"):
         raise BundleValidationError("Measured delivery requires fixed graph references without emotion CFG")
-    if controls.get("prefix_conditioning", {}).get("enabled"):
+    if prefix.get("enabled") and not continuity:
         raise BundleValidationError("This measured release did not train prefix requests")
-    if controls.get("span_conditioning", {}).get("scope") != "utterance":
+    if controls.get("span_conditioning", {}).get("scope") != ("passage" if continuity else "utterance"):
         raise BundleValidationError("This measured release requires utterance-only span context")
 
 
