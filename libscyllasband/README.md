@@ -129,9 +129,11 @@ cmake -S . -B build/apple -G Ninja -DCMAKE_BUILD_TYPE=Release -DSCYLLASBAND_BACK
 cmake --build build/apple
 build/apple/scyllasband_speak --bundle ../scyllasband/models/coreai --voice scylla --text "Hello." --accelerator auto \
     --output hello.wav
+build/apple/scyllasband_speak --bundle ../scyllasband/models/coreai --voice scylla --text "Hello. Again." --timings 4
 ```
 
-For iOS apps, use the `ScyllasBandKit` pod (`ScyllasBandKit.podspec`, [apple/README.md](apple/README.md)).
+`--timings N` speaks the text N times in one process and prints load, first-audio and total times as JSON. For iOS apps,
+use the `ScyllasBandKit` pod (`ScyllasBandKit.podspec`, [apple/README.md](apple/README.md)).
 
 | CMake option | Default | |
 | --- | --- | --- |

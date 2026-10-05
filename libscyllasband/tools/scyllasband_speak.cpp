@@ -1,6 +1,7 @@
 // scyllasband_speak: synthesize text with libscyllasband and write a 16-bit PCM WAV.
 #include "scyllasband.h"
 
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -17,7 +18,13 @@ const char* kUsage =
     "usage: scyllasband_speak --bundle DIR --voice ID (--text TEXT | --file PATH) [--output OUT.wav]\n"
     "  [--language CODE] [--delivery SPEC] [--speed 1.0] [--steps N] [--sampler heun|euler] [--seed N]\n"
     "  [--temperature 1.0] [--threads N] [--accelerator cpu|gpu|auto|ane] [--no-normalize] [--metadata OUT.json]\n"
-    "  [--plan-only] [--stream]\n";
+    "  [--plan-only] [--stream] [--warmup] [--timings N]\n"
+    "  --timings N: speak the text N times in this process and print load, warm-up and per-request first-audio and total\n"
+    "  times as JSON (the first request includes opening its graphs; later ones show a warm runtime)\n";
+
+double milliseconds_since(std::chrono::steady_clock::time_point start) {
+    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+}
 
 void write_wav(const std::string& path, const float* samples, int64_t count, int32_t rate) {
     std::ofstream out(path, std::ios::binary);
@@ -54,8 +61,8 @@ int main(int argc, char** argv) {
     ScyllasBandRequest request;
     scyllasband_request_init(&request);
     std::string voice, language, delivery;
-    bool plan_only = false, stream = false;
-    int threads = 0;
+    bool plan_only = false, stream = false, warm = false;
+    int threads = 0, timings = 0;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         auto value = [&]() -> std::string {
@@ -87,6 +94,8 @@ int main(int argc, char** argv) {
         else if (arg == "--metadata") metadata_path = value();
         else if (arg == "--plan-only") plan_only = true;
         else if (arg == "--stream") stream = true;
+        else if (arg == "--warmup") warm = true;
+        else if (arg == "--timings") timings = std::stoi(value());
         else {
             std::fprintf(stderr, "unknown argument %s\n%s", arg.c_str(), kUsage);
             return 2;
@@ -110,10 +119,46 @@ int main(int argc, char** argv) {
                           : accelerator == "ane"  ? SCYLLASBAND_ACCELERATOR_NEURAL_ENGINE
                                                   : SCYLLASBAND_ACCELERATOR_CPU;
     ScyllasBandRuntime* runtime = nullptr;
+    const auto load_start = std::chrono::steady_clock::now();
     if (scyllasband_runtime_create(&options, &runtime) != SCYLLASBAND_OK) return fail("cannot load the bundle");
+    const double load_ms = milliseconds_since(load_start);
+    double warmup_ms = 0.0;
+    if (warm) {
+        const auto start = std::chrono::steady_clock::now();
+        if (scyllasband_warmup(runtime, voice.c_str()) != SCYLLASBAND_OK) return fail("warm-up failed");
+        warmup_ms = milliseconds_since(start);
+    }
 
     int status = 0;
-    if (plan_only) {
+    if (timings > 0) {
+        struct Timing {
+            std::chrono::steady_clock::time_point start;
+            double first_audio_ms = -1.0;
+            int64_t samples = 0;
+            int32_t rate = 24000;
+        };
+        std::printf("{\"load_ms\": %.1f, \"warmup_ms\": %.1f, \"requests\": [", load_ms, warmup_ms);
+        for (int run = 0; run < timings && status == 0; ++run) {
+            Timing timing{std::chrono::steady_clock::now()};
+            auto callback = [](const ScyllasBandEvent* event, void* user) -> int32_t {
+                auto* t = static_cast<Timing*>(user);
+                if (event->type == SCYLLASBAND_EVENT_AUDIO) {
+                    if (t->first_audio_ms < 0) t->first_audio_ms = milliseconds_since(t->start);
+                    t->samples += event->sample_count;
+                    t->rate = event->sample_rate;
+                }
+                return 0;
+            };
+            if (scyllasband_synthesize_stream(runtime, &request, callback, &timing) != SCYLLASBAND_OK) {
+                status = fail("synthesis failed");
+                break;
+            }
+            const double total_ms = milliseconds_since(timing.start);
+            std::printf("%s{\"first_audio_ms\": %.1f, \"total_ms\": %.1f, \"audio_s\": %.3f}", run ? ", " : "", timing.first_audio_ms, total_ms,
+                        static_cast<double>(timing.samples) / timing.rate);
+        }
+        std::printf("]}\n");
+    } else if (plan_only) {
         char* plan = nullptr;
         if (scyllasband_plan_json(runtime, &request, &plan) != SCYLLASBAND_OK) status = fail("planning failed");
         else std::printf("%s\n", plan);
