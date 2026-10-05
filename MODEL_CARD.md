@@ -3,12 +3,12 @@ license: apache-2.0
 language: [en, es, it, fr, de, vi]
 library_name: litert
 pipeline_tag: text-to-speech
-tags: [text-to-speech, tts, litert, onnx, pytorch, multilingual, expressive-tts, duration-flow, whisper]
+tags: [text-to-speech, tts, litert, onnx, coreml, coreai, pytorch, multilingual, expressive-tts, duration-flow, whisper]
 ---
 
 # Scylla's Band v2
 
-Release **`v2-20261005`**. The [Scylla's Band runtime](https://github.com/lowkeytea/scyllasband) supports this release.
+Release **`v2-20261005`**. The [Scylla's Band runtime](https://github.com/lowkeytea/scyllasband) supports this release. Tag `v2-20261005-apple` adds Core ML and Core AI bundles of the same model; the runtime downloads from that tag.
 
 The model exposes **energy, tension, valence and assertiveness** on **0–4 scales with neutral at 2**, plus **binary whisper**. Combining the controls changes the generated delivery; a request is not a guarantee of a particular perceived emotion or exact external scorer value.
 
@@ -23,7 +23,7 @@ python -m scyllasband speak --voice ariadne --language en_us \
     --sampler heun --steps 8 -o hello.wav "It is a pleasure to meet you."
 ```
 
-The default download is the LiteRT bundle, installed under `scyllasband/models/litert`. `--flavor onnx` downloads the ONNX Runtime bundle instead (`pip install onnxruntime`). Downloads pin this release tag. The manifest declares graph contract `scyllasband_measured_delivery_v2`; runtimes written for earlier releases cannot run these graphs.
+The default download is the Core ML bundle on an Apple silicon Mac and the LiteRT bundle elsewhere, installed under `scyllasband/models/<bundle>`. A Mac that can build apps for iOS, iPadOS or visionOS 27 is also offered the Core AI bundle those apps use. `--flavor coreml`, `--flavor coreai`, `--flavor litert` or `--flavor onnx` choose explicitly. Downloads pin a release tag. The manifest declares graph contract `scyllasband_measured_delivery_v2`; runtimes written for earlier releases cannot run these graphs.
 
 ## Controls
 
@@ -90,12 +90,14 @@ All ten have Spanish (`es`), Italian (`it`), French (`fr`), German (`de`) and Vi
 
 ## Artifacts
 
-- `litert/`: LiteRT bundle; default download. Transformer and vocoder weights are dynamic-range INT8; each size bucket is a signature of one model file, sharing weights.
+- `litert/` (164 MB): LiteRT bundle; default download. Transformer and vocoder weights are dynamic-range INT8; each size bucket is a signature of one model file, sharing weights.
+- `coreai/` (155 MB): Core AI bundle for apps on iOS, iPadOS and visionOS 27 (`.aimodel` assets); it also runs on macOS 27, where the runtime uses the Core ML bundle by default. INT8 weights per output channel with FP16 compute; size buckets are functions of one asset sharing weights. The flow also runs accurately on the Neural Engine (`controls.coreai.neural_engine_assets`), which is the placement for apps that speak in the background; the GPU is the default.
+- `coreml/` (142 MB): Core ML bundle for Apple silicon with iOS 18 / macOS 15 and later (compiled `.mlmodelc` assets), with INT8 weights and FP16 compute; GPU by default, CPU in background apps.
 - `onnx/`: ONNX Runtime bundle with dynamic INT8 transformer weights; the vocoder stays in full precision.
 - `pytorch/`: duration, vector, adapter/vocoder, autoencoder and G2P checkpoints, with the release configuration assets.
 - `SHA256SUMS.json`: published-file hashes.
 
-Both runtime bundles include the G2P model in a matching precision.
+Every runtime bundle includes the G2P model in a matching precision. The Apple bundles also give the G2P narrower input widths (64–512 tokens), so short phrases are converted faster.
 
 ## Validation and limitations
 
@@ -104,6 +106,7 @@ Release validation separates graph accuracy, frontend/timing behaviour and perce
 - Component comparisons against PyTorch during export, and end-to-end comparison of full passages against the PyTorch reference path.
 - Quantized bundles compared with full precision on real sentences: identical phonemes, phone durations and generated latents within small tolerances, followed by listening across all ten voices.
 - G2P conversions compared with the full-precision G2P on multilingual text.
+- Core ML and Core AI bundles compared with the PyTorch model on every graph and on real passages, on each compute unit they are used with (GPU, CPU, and for Core AI the Neural Engine): identical phonemes apart from two near-tie stress marks also seen in FP16, fewer changed phone durations than the LiteRT bundle, and smaller latent and spectral differences. The Apple exports rewrite three computations into equivalent forms that FP16 and the Neural Engine evaluate exactly (span pooling, the modifier bit decoding, the duration model's combined phone/segment index), and scale the flow's residual stream; in FP32 the rewritten graphs are bit-identical to the trained ones.
 
 Listening is decisive; external emotion-score agreement is approximate. Scorer measurements are imperfect supervision and do not establish emotional ground truth. Training audio is not distributed.
 

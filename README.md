@@ -15,7 +15,7 @@ Delivery is controlled with **energy, tension, valence and assertiveness**, each
 - Ten voices in seven locales: American and British English, Spanish, Italian, French, German and Vietnamese.
 - Delivery controls for energy, tension, valence and assertiveness on 0–4 scales, plus whisper, combinable into calm, assertive, joyful, angry or sad delivery.
 - Runs locally on CPU. The default LiteRT bundle synthesizes about 14× faster than real time on an 8-thread desktop CPU.
-- LiteRT and ONNX Runtime bundles with INT8 weights; every latent-length bucket shares one set of weights.
+- LiteRT, Core ML, Core AI and ONNX Runtime bundles with INT8 weights; every latent-length bucket shares one set of weights. On Apple devices, Core ML and Core AI run on the GPU or the Neural Engine.
 - Long text is spoken sentence by sentence, with neighbouring sentences as context and acoustic continuity from one sentence to the next, and can be streamed as it is generated.
 - Multi-voice, multilingual dialogue with inline `[voice:language:delivery]` tags.
 - A C++ runtime with a C API (`libscyllasband`) for the same bundles.
@@ -34,15 +34,17 @@ python3 -m scyllasband speak --voice scylla -o hello.wav "Hello from Scylla's Ba
 
 The first command offers to create a virtual environment in `.venv` and install the runtime into it, then carries on. Later commands run from the checkout use that environment automatically, with or without activating it; `python3 speak.py` and `python3 groupSpeak.py` behave the same way. `--backend onnx` adds ONNX Runtime to the environment the first time it is used.
 
+On an Apple silicon Mac, `download` fetches the Core ML bundle, which runs on the Mac's GPU, and offers the Core AI bundle as well when the Mac can build iOS, iPadOS or visionOS 27 apps. The first command that runs a Core ML or Core AI bundle adds `coremltools` or `coreai-core` to the environment.
+
 Requirements: Python 3.10–3.14 on macOS with Apple silicon, Linux (x86_64 or aarch64) or Windows (x86_64). To set the environment up yourself instead:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -e .                   # pip install -e ".[onnx]" for ONNX Runtime
+pip install -e .                   # ".[onnx]", ".[coreml]" or ".[coreai]" for the other backends
 ```
 
-The model is downloaded from [`spybyscript/scyllasband`](https://huggingface.co/spybyscript/scyllasband), pinned to release `v2-20261005`, into `scyllasband/models/litert`. Voice conditioning is embedded in the graphs; no separate voice files are needed.
+The model is downloaded from [`spybyscript/scyllasband`](https://huggingface.co/spybyscript/scyllasband), pinned to the tag `v2-20261005-apple` (release v2-20261005 with its Core ML and Core AI bundles), into `scyllasband/models/<bundle>` (`litert`, `coreai`, `coreml` or `onnx`). Voice conditioning is embedded in the graphs; no separate voice files are needed.
 
 ## Delivery controls
 
@@ -94,7 +96,7 @@ Unspecified controls use the neutral default of 2 (whisper off). `--delivery aut
 ## CLI
 
 ```bash
-python -m scyllasband download                  # LiteRT bundle; --flavor onnx or --flavor all for others
+python -m scyllasband download                  # Core ML on Apple silicon Macs, LiteRT elsewhere; --flavor <bundle> or all
 python -m scyllasband validate-bundle
 python -m scyllasband list-voices
 python -m scyllasband normalize-text --language es "Cuesta 12,50 € el 22/05/2026."
@@ -117,19 +119,39 @@ python -m scyllasband plan --voice scylla "Print the sentence plan as JSON."
 | `--steps`, `--sampler` | 8, `heun` | Flow sampling. Heun evaluates the model twice per step and Euler once, so `--sampler euler` is about twice as fast at the same step count; fewer steps are faster still. Listen when trading quality for speed |
 | `--seed`, `--temperature` | random, 1.0 | Repeatable output; scale of the sampling noise |
 | `--threads` | backend default | CPU threads per graph |
-| `--backend`, `--bundle` | installed LiteRT bundle | Choose another installed bundle |
+| `--backend`, `--bundle` | the installed bundle for this machine (Core ML on a Mac, LiteRT elsewhere) | Choose another installed bundle |
+| `--compute-units` | `auto` | Core ML / Core AI: `auto` (the bundle's recommendation), `gpu`, `cpu` or `ane`; see [Backends](#backends) |
 | `--pause-ms` | 0 | Extra silence where the voice, language or delivery changes |
 | `--metadata` | none | Write phones, durations and timings as JSON |
 | `--no-normalize-text` | off | Skip spoken-text normalization for text that is already normalized |
 
 ## Backends
 
-| Bundle | Download | Runtime package |
-| --- | --- | --- |
-| LiteRT (default) | `python -m scyllasband download` | `ai-edge-litert` (installed with this package) |
-| ONNX Runtime | `python -m scyllasband download --flavor onnx` | `onnxruntime`, installed the first time you use `--backend onnx` (or `pip install -e ".[onnx]"`) |
+| Bundle | Used on | Download | Runtime package |
+| --- | --- | --- | --- |
+| Core ML | Apple silicon Macs (macOS 15 and later); iOS and iPadOS 18 apps | 142 MB | `coremltools`, installed the first time a Core ML bundle runs (or `pip install -e ".[coreml]"`) |
+| Core AI | iOS, iPadOS and visionOS 27 apps; also runs on macOS 27 | 155 MB | `coreai-core`, installed the first time a Core AI bundle runs (or `pip install -e ".[coreai]"`) |
+| LiteRT | Linux, Windows, Android and Intel Macs | 164 MB | `ai-edge-litert` (installed with this package) |
+| ONNX Runtime | anywhere ONNX Runtime runs | 250 MB | `onnxruntime`, installed the first time you use `--backend onnx` (or `pip install -e ".[onnx]"`) |
 
-Both bundles hold INT8 transformer weights and the G2P model in a matching precision; the LiteRT bundle also quantizes the vocoder, which makes it the smaller and faster download. The backend follows the bundle; `--backend` and `--bundle` select another installed bundle. `--threads` sets the CPU threads per graph. Sampling uses Heun with 8 steps by default (`--sampler`, `--steps`).
+`python -m scyllasband download` fetches the Core ML bundle on an Apple silicon Mac and the LiteRT bundle elsewhere. A Mac that can build apps for iOS, iPadOS or visionOS 27 (macOS 27, or an Xcode with those SDKs) is also offered the Core AI bundle those apps use; the Mac itself keeps running Core ML. `--flavor` downloads a particular bundle. Commands use the installed bundle for the machine; `--backend` and `--bundle` select another, for example `--backend coreai` on macOS 27. Every bundle holds INT8 weights for the transformers and the G2P; LiteRT, Core ML and Core AI also quantize the vocoder. `--threads` sets the CPU threads per graph. Sampling uses Heun with 8 steps by default (`--sampler`, `--steps`).
+
+On Core ML and Core AI, `--compute-units` chooses where the graphs run: `auto` (the bundle's recommendation: the GPU), `gpu`, `cpu`, or `ane`, which runs the graphs the bundle marks as accurate on the Neural Engine there (Core AI's flow) and the rest on the CPU. iOS does not allow GPU work from background apps, so an app that keeps speaking in the background uses `ane` (Core AI) or `cpu`. The first load of a Core AI bundle specializes its graphs for the device (a few seconds on the GPU, about half a minute for the Neural Engine); the system caches that until the next OS update.
+
+Measured with the native runtime on a three-sentence passage (11.6 s of speech); first audio is the first sentence:
+
+| Device | Bundle (compute units) | Launch to first audio | Warm first audio | Real-time factor | Peak memory |
+| --- | --- | --- | --- | --- | --- |
+| iPhone 17 Pro Max | Core AI (GPU) | 0.96 s | 244 ms | 0.063 | 320 MB |
+| iPhone 17 Pro Max | Core AI (Neural Engine + CPU) | 0.86 s | 390 ms | 0.10 | 215 MB |
+| iPhone 17 Pro Max | Core ML (GPU) | 1.9 s | 210 ms | 0.06 | 220 MB |
+| iPhone 17 Pro Max | Core ML (CPU) | 1.05 s | 760 ms | 0.20 | 330 MB |
+| Galaxy Z Fold 8 | LiteRT (CPU) | 1.6 s | 450 ms | 0.12 | |
+| M5 Max Mac | Core AI (GPU) | 0.43 s | 73 ms | 0.019 | 444 MB |
+| M5 Max Mac | Core ML (GPU) | 1.3 s | 59 ms | 0.015 | 350 MB |
+| M5 Max Mac | LiteRT (CPU) | 1.0 s | 371 ms | 0.098 | 768 MB |
+
+Launch to first audio is a new process with the Core AI specialization already cached; warm is a later request on a loaded runtime.
 
 ## Python API
 
@@ -226,11 +248,11 @@ Latent-length buckets are 128, 256, 384, 512, 768 and 1024 frames (about 2.7 to 
 
 ## Native and mobile integration
 
-`libscyllasband/` is the C++ runtime for the same bundles, built against LiteRT or ONNX Runtime; see [its README](libscyllasband/README.md). [Android](examples/android/README.md) and [iOS](examples/ios/README.md) examples use it.
+`libscyllasband/` is the C++ runtime for the same bundles, built against LiteRT, ONNX Runtime, or Core ML and Core AI on Apple platforms; see [its README](libscyllasband/README.md). The [Android](examples/android/README.md) example runs the LiteRT bundle; the [iOS](examples/ios/README.md) example runs Core AI on iOS 27 and Core ML on iOS 18–26 through the `ScyllasBandKit` pod.
 
 ## Validation and limitations
 
-Release checks include export parity against PyTorch, end-to-end comparison of full passages with the PyTorch reference path, comparison of the quantized bundles with full precision on real sentences, and listening across all ten voices. Passing tests does not establish naturalness; listening decides quality.
+Release checks include export parity against PyTorch, end-to-end comparison of full passages with the PyTorch reference path, comparison of the quantized bundles with full precision on real sentences (for Core ML and Core AI on each compute unit they use), and listening across all ten voices. Passing tests does not establish naturalness; listening decides quality.
 
 Known limitations include occasional pronunciation errors, occasional roughness on fast, wide pitch movements in some voices, and limited strong anger or sadness. No arbitrary-speaker cloning is provided.
 
