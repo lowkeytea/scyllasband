@@ -32,18 +32,40 @@ The model is downloaded from [`spybyscript/scyllasband`](https://huggingface.co/
 | Assertiveness | 0–4 or `auto` | 2 |
 | Whisper | `on`, `off`, or `auto` | `off` |
 
+With every control at 2, the default, voices speak in a calm, conversational delivery with a neutral tone. Moving a control away from 2 changes the delivery:
+
+| Control | Toward 0 | Toward 4 |
+| --- | --- | --- |
+| Energy | Lower, darker voice with more pauses between phrases | Higher, brighter, more projected voice |
+| Tension | Slightly looser and steadier | Tighter, with wider pitch swings |
+| Valence | Flatter pitch, a little slower, longer pauses | Livelier pitch, a little quicker, shorter pauses |
+| Assertiveness | Hesitant, with longer pauses between phrases | Faster and clipped with few pauses; the strongest control over pace |
+
+`whisper=on` whispers: quieter and breathy.
+
+Combining the controls gives familiar deliveries:
+
+| Delivery | Settings |
+| --- | --- |
+| Calm and soft | `energy=1.2,tension=0.8,valence=2.6` |
+| Assertive and rapid-fire | `energy=2.6,tension=2.2,assertiveness=3.6` |
+| Joyful | `energy=3.2,valence=3.6` |
+| Angry | `energy=3.4,tension=3.4,valence=0.8,assertiveness=3.4` |
+| Sad | `energy=1,tension=1.6,valence=0.8,assertiveness=1.6` |
+| Whispered | `whisper=on` |
+
+The [voice gallery](https://lowkeytea.github.io/scyllasband/#delivery) plays each of these for all ten voices with the exact settings used. How far a control moves the delivery varies with voice, language and text, so start near 2 and listen as you move toward the extremes.
+
 ```bash
 python -m scyllasband speak --voice ariadne \
-    --delivery energy=1.2,tension=2.8,valence=1,assertiveness=3 \
-    -o mixed.wav "I thought you might come back."
+    --delivery energy=3.2,valence=3.6 \
+    -o joyful.wav "We actually did it! The whole street came out to watch!"
 
 python -m scyllasband speak --voice ink --language en_gb \
     --delivery whisper=on -o whisper.wav "Keep your voice down."
 ```
 
-Unspecified axes use neutral defaults. `--delivery auto` leaves every coordinate unspecified; `energy=auto` leaves only that coordinate unspecified. An unspecified coordinate has a separate presence mask and is distinct from requesting 2.
-
-The four axes interact. Requested values are learned conditioning, not guaranteed scorer outputs or named emotions. Their useful range varies with voice, language and text; start near 2 and listen when moving toward the extremes.
+Unspecified controls use the neutral default of 2 (whisper off). `--delivery auto` leaves every control unspecified, and `energy=auto` leaves only that one unspecified; an unspecified control is passed to the model as absent, which is different from requesting 2.
 
 ## Backends
 

@@ -32,6 +32,28 @@ The default download is the LiteRT bundle, installed under `scyllasband/models/l
 | Energy, tension, valence, assertiveness | 0–4 or unspecified | 2 each |
 | Whisper | on/off or unspecified | off |
 
+With every control at 2, the default, voices speak in a calm, conversational delivery with a neutral tone. Moving a control away from 2 changes the delivery:
+
+| Control | Toward 0 | Toward 4 |
+| --- | --- | --- |
+| Energy | Lower, darker voice with more pauses between phrases | Higher, brighter, more projected voice |
+| Tension | Slightly looser and steadier | Tighter, with wider pitch swings |
+| Valence | Flatter pitch, a little slower, longer pauses | Livelier pitch, a little quicker, shorter pauses |
+| Assertiveness | Hesitant, with longer pauses between phrases | Faster and clipped with few pauses; the strongest control over pace |
+
+Whisper on gives quieter, breathy speech. Combining the controls gives familiar deliveries:
+
+| Delivery | Settings |
+| --- | --- |
+| Calm and soft | `energy=1.2,tension=0.8,valence=2.6` |
+| Assertive and rapid-fire | `energy=2.6,tension=2.2,assertiveness=3.6` |
+| Joyful | `energy=3.2,valence=3.6` |
+| Angry | `energy=3.4,tension=3.4,valence=0.8,assertiveness=3.4` |
+| Sad | `energy=1,tension=1.6,valence=0.8,assertiveness=1.6` |
+| Whispered | `whisper=on` |
+
+The [voice gallery](https://lowkeytea.github.io/scyllasband/#delivery) plays each of these for all ten voices with the exact settings used. How far a control moves the delivery varies with voice, language and text, so start near 2 and listen as you move toward the extremes.
+
 `--delivery auto` omits all coordinates. A per-axis `auto` omits just that coordinate; other unspecified fields in a partial request use neutral defaults. Omission is represented by a separate mask, not by the value 2. It is not an automatic text-to-performance planner.
 
 The graph receives `(rating - 2) / 4` for the four continuous axes and 0/1 for whisper, plus five presence bits. The public interface accepts the original 0–4 values. Expressiveness is an auxiliary training target, not an inference axis.
