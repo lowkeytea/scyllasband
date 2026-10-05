@@ -11,7 +11,8 @@ import wave
 import numpy as np
 
 from .contract import validate_bundle_layout
-from .download import DEFAULT_FLAVOR, DEFAULT_MODELS_DIR, FLAVORS, RELEASE, REPO_ID, bundle_dir, download_bundle
+from .download import (DEFAULT_MODELS_DIR, FLAVORS, RELEASE, REPO_ID, bundle_dir, choose_flavors, default_installed_flavor, download_bundle,
+                       supported_flavors)
 from .planner import parse_group_lines, records_from_text
 from .runtime import SUPPORTED_BACKENDS, SUPPORTED_SAMPLERS, ScyllasBandRuntime
 from .text_normalizer import normalize_spoken_text
@@ -23,13 +24,15 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     download = sub.add_parser("download", help="download the model from Hugging Face", allow_abbrev=False)
-    download.add_argument("--flavor", choices=[*FLAVORS, "all"], default=DEFAULT_FLAVOR)
+    download.add_argument("--flavor", choices=[*FLAVORS, "all"],
+                          help="bundle to download (default: Core ML on Apple silicon Macs, which are offered Core AI too when they "
+                               "can build iOS/iPadOS/visionOS 27 apps; LiteRT elsewhere)")
     download.add_argument("--models-dir", type=Path, default=DEFAULT_MODELS_DIR)
     download.add_argument("--repo-id", default=REPO_ID)
     download.add_argument("--revision", default=RELEASE)
     download.add_argument("--token")
     download.add_argument("--force", action="store_true")
-    download.add_argument("-y", "--yes", action="store_true", help="no effect: downloads never ask for confirmation")
+    download.add_argument("-y", "--yes", action="store_true", help="download the default bundle without asking")
     download.add_argument("--no-validate-bundle", action="store_true")
     download.set_defaults(func=_download)
 
@@ -90,7 +93,10 @@ def _add_synthesis_args(parser: argparse.ArgumentParser, *, group: bool) -> None
 
 # --- commands --------------------------------------------------------------------------------------------------------
 def _download(args: argparse.Namespace) -> int:
-    flavors = list(FLAVORS) if args.flavor == "all" else [args.flavor]
+    if args.flavor == "all":
+        flavors = [flavor for flavor in FLAVORS if flavor in supported_flavors()]
+    else:
+        flavors = [args.flavor] if args.flavor else choose_flavors(interactive=not args.yes and sys.stdin.isatty())
     for flavor in flavors:
         path = download_bundle(flavor=flavor, models_dir=args.models_dir, repo_id=args.repo_id, revision=args.revision,
                                token=args.token, force=args.force, validate=not args.no_validate_bundle)
@@ -169,8 +175,12 @@ def _plan(args: argparse.Namespace) -> int:
 
 # --- helpers ---------------------------------------------------------------------------------------------------------
 def _default_bundle(args: argparse.Namespace) -> Path:
-    flavor = getattr(args, "backend", None) or DEFAULT_FLAVOR
-    path = bundle_dir(getattr(args, "models_dir", DEFAULT_MODELS_DIR), flavor)
+    """The --backend's bundle, else the best installed bundle this machine can run."""
+    models_dir = getattr(args, "models_dir", DEFAULT_MODELS_DIR)
+    flavor = getattr(args, "backend", None) or default_installed_flavor(models_dir)
+    if flavor is None:
+        raise FileNotFoundError(f"No model installed under {Path(models_dir).resolve()}. Run: python -m scyllasband download")
+    path = bundle_dir(models_dir, flavor)
     if not (path / "manifest.json").is_file():
         raise FileNotFoundError(f"No {flavor} model at {path}. Run: python -m scyllasband download --flavor {flavor}")
     return path

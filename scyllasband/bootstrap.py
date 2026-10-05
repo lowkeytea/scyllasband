@@ -21,7 +21,9 @@ import sys
 
 MIN_PYTHON = (3, 10)
 REQUIRED = {"numpy": "numpy", "huggingface_hub": "huggingface_hub", "ai_edge_litert": "ai-edge-litert"}
-ONNX = {"onnxruntime": "onnxruntime"}
+# Optional extras (pyproject) by graph backend: module -> package.
+EXTRAS = {"onnx": {"onnxruntime": "onnxruntime"}, "coreml": {"coremltools": "coremltools"}, "coreai": {"coreai": "coreai-core"}}
+MODEL_COMMANDS = ("speak", "group-speak", "stream", "plan", "list-voices", "validate-bundle")
 REPO_ROOT = Path(__file__).resolve().parents[1]
 VENV_DIR = REPO_ROOT / ".venv"
 _RELAUNCHED = "SCYLLASBAND_BOOTSTRAPPED"
@@ -43,7 +45,7 @@ def ensure_environment(argv, relaunch=None):
     missing = missing_packages(argv)
     if not missing:
         return
-    onnx = wants_onnx(argv)
+    extra = _extra(argv)
     action = plan_setup(missing, checkout=is_checkout(), venv_ready=venv_python().is_file(), in_venv=in_virtualenv(),
                         in_repo_venv=in_repo_venv(), python_ok=sys.version_info[:2] >= MIN_PYTHON,
                         previous=os.environ.get(_RELAUNCHED))
@@ -51,18 +53,18 @@ def ensure_environment(argv, relaunch=None):
         if action == "use-venv":
             _run_again(venv_python(), relaunch, "use-venv")
         if action.startswith("fail-"):
-            raise SetupError(_failure(action, missing, onnx))
+            raise SetupError(_failure(action, missing, extra))
         target = sys.executable if action == "install-here" else str(venv_python())
         where = f"the active environment ({sys.prefix})" if action == "install-here" else f"a new virtual environment at {VENV_DIR}"
         print(f"Scylla's Band needs {_names(missing)}, which {sys.executable} does not have.", file=sys.stderr)
         if not _confirm(f"Install {'them' if len(missing) > 1 else 'it'} into {where}? [Y/n] "):
             reason = ("setup needs confirmation; run the command in a terminal or set SCYLLASBAND_ASSUME_YES=1"
                       if not _interactive() else "setup skipped")
-            raise SetupError(f"{reason}.\n{_manual_steps(onnx)}")
+            raise SetupError(f"{reason}.\n{_manual_steps(extra)}")
         if action == "create-venv":
             print(f"Creating {VENV_DIR} ...", file=sys.stderr)
             subprocess.run([sys.executable, "-m", "venv", str(VENV_DIR)], check=True)
-        _install(target, onnx)
+        _install(target, extra)
         if action == "create-venv":
             print(f"Ready. Commands run from {REPO_ROOT} use {VENV_DIR} from now on.", file=sys.stderr)
         _run_again(Path(target), relaunch, "installed")
@@ -71,7 +73,7 @@ def ensure_environment(argv, relaunch=None):
         raise SystemExit(2)
     except subprocess.CalledProcessError as exc:
         print(f"error: setup failed ({' '.join(map(str, exc.cmd))} exited with {exc.returncode}).\n{_platform_note()}\n"
-              f"{_manual_steps(onnx)}", file=sys.stderr)
+              f"{_manual_steps(extra)}", file=sys.stderr)
         raise SystemExit(2)
 
 
@@ -95,33 +97,48 @@ def plan_setup(missing, *, checkout, venv_ready, in_venv, in_repo_venv, python_o
 
 def missing_packages(argv):
     needed = dict(REQUIRED)
-    if wants_onnx(argv):
-        needed.update(ONNX)
+    needed.update(EXTRAS.get(wanted_backend(argv), {}))
     return {module: package for module, package in needed.items() if importlib.util.find_spec(module) is None}
 
 
 def wants_onnx(argv):
-    """True when the command will run the ONNX backend: ``--backend onnx`` or a ``--bundle`` whose manifest prefers it."""
+    return wanted_backend(argv) == "onnx"
+
+
+def wanted_backend(argv):
+    """The graph runtime the command will run: ``--backend``; else the ``--bundle``'s preferred backend; else, for a
+    command that loads a model, the installed bundle the CLI picks on this machine (Core AI or Core ML on a Mac)."""
     args = list(argv)
+    backend, bundle = _option(args, "--backend"), _option(args, "--bundle")
+    if backend:
+        return backend
+    if bundle:
+        try:
+            manifest = json.loads((Path(bundle) / "manifest.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        return (manifest.get("preferred_backends") or [None])[0]
+    if args and args[0] in MODEL_COMMANDS:
+        try:
+            from scyllasband.download import DEFAULT_MODELS_DIR, default_installed_flavor
+            return default_installed_flavor(_option(args, "--models-dir") or DEFAULT_MODELS_DIR)
+        except (ImportError, SyntaxError):
+            return None
+    return None
+
+
+def _option(args, flag):
     for index, arg in enumerate(args):
-        value = None
-        if arg in ("--backend", "--bundle") and index + 1 < len(args):
-            value = args[index + 1]
-        elif arg.startswith(("--backend=", "--bundle=")):
-            value = arg.split("=", 1)[1]
-        if value is None:
-            continue
-        if arg.startswith("--backend"):
-            if value == "onnx":
-                return True
-        else:
-            try:
-                manifest = json.loads((Path(value) / "manifest.json").read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                continue
-            if "--backend" not in " ".join(args) and (manifest.get("preferred_backends") or [None])[0] == "onnx":
-                return True
-    return False
+        if arg == flag and index + 1 < len(args):
+            return args[index + 1]
+        if arg.startswith(flag + "="):
+            return arg.split("=", 1)[1]
+    return None
+
+
+def _extra(argv):
+    backend = wanted_backend(argv)
+    return backend if backend in EXTRAS else None
 
 
 def is_checkout():
@@ -143,9 +160,10 @@ def in_repo_venv():
         return False
 
 
-def _install(python, onnx):
-    target = f"{REPO_ROOT}[onnx]" if onnx else str(REPO_ROOT)
-    print(f"Installing the Scylla's Band runtime{' with ONNX Runtime' if onnx else ''} ...", file=sys.stderr)
+def _install(python, extra):
+    target = f"{REPO_ROOT}[{extra}]" if extra else str(REPO_ROOT)
+    names = {"onnx": "ONNX Runtime", "coreml": "Core ML Tools", "coreai": "Core AI"}
+    print(f"Installing the Scylla's Band runtime{' with ' + names[extra] if extra else ''} ...", file=sys.stderr)
     subprocess.run([str(python), "-m", "pip", "install", "--disable-pip-version-check", "-e", target], check=True)
 
 
@@ -180,10 +198,10 @@ def _names(missing):
     return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
 
 
-def _manual_steps(onnx):
+def _manual_steps(extra):
     python = "python3" if os.name != "nt" else "py -3"
     activate = ".venv\\Scripts\\activate" if os.name == "nt" else "source .venv/bin/activate"
-    extra = '".[onnx]"' if onnx else "."
+    extra = f'".[{extra}]"' if extra else "."
     return (f"To set up by hand, from {REPO_ROOT}:\n"
             f"    {python} -m venv .venv\n    {activate}\n    pip install -e {extra}")
 
@@ -193,7 +211,7 @@ def _platform_note():
             "and Windows (x86_64).")
 
 
-def _failure(action, missing, onnx):
+def _failure(action, missing, extra):
     version = ".".join(map(str, sys.version_info[:3]))
     if action == "fail-python":
         return (f"Scylla's Band needs Python 3.10 or newer; {sys.executable} is {version}. Install a newer Python "
@@ -201,4 +219,4 @@ def _failure(action, missing, onnx):
                 "`python3.12 -m scyllasband ...`.")
     if action == "fail-installed":
         return f"Missing {_names(missing)}. Install with: {sys.executable} -m pip install {' '.join(sorted(set(missing.values())))}"
-    return f"{_names(missing)} still cannot be imported after setup.\n{_platform_note()}\n{_manual_steps(onnx)}"
+    return f"{_names(missing)} still cannot be imported after setup.\n{_platform_note()}\n{_manual_steps(extra)}"
