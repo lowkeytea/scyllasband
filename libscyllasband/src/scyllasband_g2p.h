@@ -49,6 +49,7 @@ private:
 
     Phonemized run(const Text& text, const std::string& language);
     Prediction predict_segment(const Text& text, const std::string& language);
+    Prediction predict_repaired(const Text& text, const std::string& language);
     Prediction predict_raw(const Text& text, const std::string& language);
     void apply_overrides(Prediction& prediction, const Text& text, const std::string& language) const;
     std::vector<int64_t> encode_text(const Text& text, const std::string& language) const;
@@ -69,6 +70,8 @@ private:
     std::mutex mutex_;
     std::list<std::pair<std::string, Phonemized>> cache_;  // most recent first
     std::list<std::pair<std::string, std::vector<std::string>>> word_cache_;
+    // Segments are predicted independently, so a text that joins already spoken sentences reuses their predictions.
+    std::list<std::pair<std::string, Prediction>> segment_cache_;
 };
 
 }  // namespace scyllasband

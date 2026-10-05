@@ -68,6 +68,8 @@ class G2PFrontend:
         self._phonemes = {int(k): str(v) for k, v in dict(self.tokenizer["phoneme_symbols"]).items()}
         self._cache: OrderedDict[tuple[str, str], dict[str, Any]] = OrderedDict()
         self._word_cache: OrderedDict[tuple[str, str], tuple[str, ...]] = OrderedDict()
+        # Segments are predicted independently, so a text that joins already spoken sentences reuses their predictions.
+        self._segment_cache: OrderedDict[tuple[str, str], dict[str, Any]] = OrderedDict()
         self._lock = threading.RLock()
 
     def model_language(self, language: str) -> str:
@@ -141,9 +143,20 @@ class G2PFrontend:
 
     # --- graph prediction -------------------------------------------------------------------------------------------
     def _predict_segment(self, text: str, *, language: str) -> dict[str, Any]:
+        key = (text, language)
+        with self._lock:
+            cached = self._segment_cache.get(key)
+            if cached is not None:
+                self._segment_cache.move_to_end(key)
+                return copy.deepcopy(cached)
         prediction = self._predict_raw(text, language=language)
         prediction = self._apply_overrides(prediction, text=text, language=language)
-        return self._repair_terminal_tail(prediction, text=text, language=language)
+        prediction = self._repair_terminal_tail(prediction, text=text, language=language)
+        with self._lock:
+            self._segment_cache[key] = copy.deepcopy(prediction)
+            while len(self._segment_cache) > CACHE_SIZE:
+                self._segment_cache.popitem(last=False)
+        return prediction
 
     def _predict_raw(self, text: str, *, language: str) -> dict[str, Any]:
         logits = np.asarray(self.infer(self._encode(text, language=language)[np.newaxis, :]), dtype=np.float32)

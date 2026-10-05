@@ -219,6 +219,20 @@ Phonemized G2P::run(const Text& text, const std::string& language) {
 }
 
 G2P::Prediction G2P::predict_segment(const Text& text, const std::string& language) {
+    const std::string key = language + '\x1f' + encode(text);
+    for (auto it = segment_cache_.begin(); it != segment_cache_.end(); ++it) {
+        if (it->first == key) {
+            segment_cache_.splice(segment_cache_.begin(), segment_cache_, it);
+            return segment_cache_.front().second;
+        }
+    }
+    Prediction prediction = predict_repaired(text, language);
+    segment_cache_.emplace_front(key, prediction);
+    if (segment_cache_.size() > kCacheSize) segment_cache_.pop_back();
+    return prediction;
+}
+
+G2P::Prediction G2P::predict_repaired(const Text& text, const std::string& language) {
     Prediction prediction = predict_raw(text, language);
     apply_overrides(prediction, text, language);
     // Trim a short CTC tail hallucination after a correctly decoded final word.
