@@ -11,114 +11,124 @@ typedef NS_ERROR_ENUM(ScyllasBandErrorDomain, SBScyllasBandErrorCode) {
     SBScyllasBandErrorCancelled = 4,
 };
 
-@interface SBScyllasBandVoice : NSObject
+/** Where the graphs run. Automatic uses the bundle's recommendation for each graph. */
+typedef NS_ENUM(NSInteger, SBScyllasBandComputeUnit) {
+    SBScyllasBandComputeUnitCPU = 0,
+    SBScyllasBandComputeUnitGPU = 1,
+    SBScyllasBandComputeUnitAutomatic = 2,
+    SBScyllasBandComputeUnitNeuralEngine = 3,
+};
 
+@interface SBScyllasBandVoice : NSObject
 @property(nonatomic, copy, readonly) NSString *identifier;
-@property(nonatomic, copy, readonly) NSString *displayName;
 @property(nonatomic, copy, readonly) NSArray<NSString *> *languages;
 @property(nonatomic, copy, readonly) NSString *defaultLanguage;
-
 - (instancetype)init NS_UNAVAILABLE;
-
 @end
 
 @interface SBScyllasBandBundleInfo : NSObject
-
-@property(nonatomic, copy, readonly) NSString *modelName;
+/** "coreml" or "coreai". */
+@property(nonatomic, copy, readonly) NSString *backend;
+@property(nonatomic, copy, readonly) NSString *releaseIdentifier;
 @property(nonatomic, readonly) NSInteger sampleRate;
 @property(nonatomic, copy, readonly) NSArray<SBScyllasBandVoice *> *voices;
-@property(nonatomic, copy, readonly) NSArray<NSString *> *affectAxes;
-@property(nonatomic, readonly) BOOL deliveryEnabled;
-
+@property(nonatomic, copy, readonly) NSString *defaultVoice;
+- (nullable SBScyllasBandVoice *)voiceWithIdentifier:(NSString *)identifier;
 - (instancetype)init NS_UNAVAILABLE;
-
-@end
-
-@interface SBScyllasBandSegmentSettings : NSObject <NSCopying>
-
-@property(nonatomic, copy, readonly) NSString *voiceIdentifier;
-@property(nonatomic, copy, readonly) NSString *language;
-@property(nonatomic, copy, readonly, nullable) NSString *emotion;
-@property(nonatomic, readonly) float emotionStrength;
-@property(nonatomic, readonly) float emotionCFG;
-/** Measured v2 axis=value specification without the delivery: prefix. */
-@property(nonatomic, copy, nullable) NSString *deliverySpec;
-
-- (instancetype)initWithVoiceIdentifier:(NSString *)voiceIdentifier
-                               language:(NSString *)language
-                                emotion:(nullable NSString *)emotion
-                         emotionStrength:(float)emotionStrength
-                             emotionCFG:(float)emotionCFG NS_DESIGNATED_INITIALIZER;
-- (instancetype)init NS_UNAVAILABLE;
-
 @end
 
 /**
- A copied block of mono, native-endian Float32 PCM. The bytes remain valid
- after the native streaming callback returns.
+ Delivery controls, each 0–4 with 2 neutral, plus whisper. Combinations give familiar deliveries, e.g. joyful
+ energy 3.2 valence 3.6; angry energy 3.4 tension 3.4 valence 0.8 assertiveness 3.4.
  */
-@interface SBScyllasBandAudioChunk : NSObject
+@interface SBScyllasBandDelivery : NSObject <NSCopying>
+@property(nonatomic, readonly) float energy;
+@property(nonatomic, readonly) float tension;
+@property(nonatomic, readonly) float valence;
+@property(nonatomic, readonly) float assertiveness;
+@property(nonatomic, readonly) BOOL whisper;
+@property(class, nonatomic, readonly) SBScyllasBandDelivery *neutral;
+/** Values outside 0–4 are clamped. */
+- (instancetype)initWithEnergy:(float)energy
+                       tension:(float)tension
+                       valence:(float)valence
+                 assertiveness:(float)assertiveness
+                       whisper:(BOOL)whisper NS_DESIGNATED_INITIALIZER;
+/** The runtime's delivery string, e.g. "energy=2.5,tension=2,valence=2,assertiveness=2,whisper=off". */
+@property(nonatomic, copy, readonly) NSString *specification;
+- (instancetype)init NS_UNAVAILABLE;
+@end
 
+@interface SBScyllasBandRequest : NSObject <NSCopying>
+@property(nonatomic, copy) NSString *text;
+@property(nonatomic, copy) NSString *voiceIdentifier;
+/** nil: the voice's default language. */
+@property(nonatomic, copy, nullable) NSString *language;
+@property(nonatomic, copy) SBScyllasBandDelivery *delivery;
+/** nil: fresh noise for every request. Sentence i of the plan uses seed + i. */
+@property(nonatomic, copy, nullable) NSNumber *seed;
+/** Flow steps; 0 uses the bundle default (8). */
+@property(nonatomic) NSInteger steps;
+/** Duration scale; 1 is the model's own pace. */
+@property(nonatomic) float speed;
+@property(nonatomic) BOOL normalizeText;
+- (instancetype)initWithText:(NSString *)text voiceIdentifier:(NSString *)voiceIdentifier NS_DESIGNATED_INITIALIZER;
+- (instancetype)init NS_UNAVAILABLE;
+@end
+
+/** A copy of one sentence's mono Float32 PCM; it stays valid after the callback returns. */
+@interface SBScyllasBandAudioChunk : NSObject
 @property(nonatomic, copy, readonly) NSData *pcmFloat32Data;
 @property(nonatomic, readonly) NSInteger sampleCount;
 @property(nonatomic, readonly) NSInteger sampleRate;
 @property(nonatomic, readonly) NSInteger chunkIndex;
 @property(nonatomic, readonly) NSInteger chunkCount;
-
 - (instancetype)init NS_UNAVAILABLE;
-
 @end
 
-
-typedef BOOL (^SBScyllasBandChunkStartedBlock)(
-    NSInteger chunkIndex,
-    NSInteger chunkCount,
-    NSString * _Nullable chunkText
-);
-
+/** Return NO to stop the request. `text` is the sentence about to be spoken. */
+typedef BOOL (^SBScyllasBandChunkStartedBlock)(NSInteger chunkIndex, NSInteger chunkCount, NSString *_Nullable text);
 typedef BOOL (^SBScyllasBandAudioChunkBlock)(SBScyllasBandAudioChunk *chunk);
 
 /**
- A long-lived wrapper around one libscyllasband runtime.
+ One libscyllasband runtime over a Core ML (iOS 18+) or Core AI (iOS 27+) bundle.
 
- Create and use this object from one serial worker queue. It keeps the shared
- G2P/duration sessions warm and applies libscyllasband's target-bucket LRU.
- `requestCancellation` is thread-safe and may be called from the main thread.
+ Create it, warm it and synthesize from one serial worker queue, never the main thread: the first load of a Core AI
+ bundle specializes its graphs for the device, which the system caches across launches until the next OS update.
+ `requestCancellation` is safe from any thread.
  */
 @interface SBScyllasBand : NSObject
 
 @property(nonatomic, copy, readonly) NSURL *bundleURL;
 @property(nonatomic, strong, readonly) SBScyllasBandBundleInfo *bundleInfo;
-@property(nonatomic, readonly, getter=isCancellationRequested) BOOL cancellationRequested;
 
-/** The memory-first profile used by the sample applications. */
-@property(class, nonatomic, readonly) NSInteger defaultMobileTargetBucketCacheCapacity;
+/**
+ The bundle this device should run from a directory holding `coreai/` and/or `coreml/` bundle folders (each with
+ its manifest.json): Core AI on iOS 27 and later (devices only), Core ML otherwise. nil when neither usable bundle is
+ present. In the Simulator, Core ML runs on the CPU whatever compute unit is requested.
+ */
++ (nullable NSURL *)preferredBundleURLInDirectory:(NSURL *)directory;
 
 - (nullable instancetype)initWithBundleURL:(NSURL *)bundleURL
-                               threadCount:(NSInteger)threadCount
-                 targetBucketCacheCapacity:(NSInteger)targetBucketCacheCapacity
+                               computeUnit:(SBScyllasBandComputeUnit)computeUnit
                                      error:(NSError **)error NS_DESIGNATED_INITIALIZER;
 - (instancetype)init NS_UNAVAILABLE;
 
-/** Performs one discarded, one-step render so first playback is predictable. */
-- (BOOL)warmUpWithError:(NSError **)error;
+/** Loads the graphs a short sentence needs, so the first request starts quickly. */
+- (BOOL)warmUpWithVoice:(nullable NSString *)voiceIdentifier error:(NSError **)error;
 
 /**
- Synchronously renders one logical speaker segment using native long-form
- planning. Call this off the main thread. Return NO from either callback, or
- call `requestCancellation`, to stop at the next streaming event.
+ Speaks the request sentence by sentence; each sentence's audio joins the previous one directly. Callbacks run on
+ the calling thread. Returns NO with SBScyllasBandErrorCancelled when a callback returned NO or
+ `requestCancellation` was called.
  */
-- (BOOL)synthesizeText:(NSString *)text
-              settings:(SBScyllasBandSegmentSettings *)settings
-                  seed:(uint64_t)seed
-          chunkStarted:(nullable SBScyllasBandChunkStartedBlock)chunkStarted
-             audioChunk:(SBScyllasBandAudioChunkBlock)audioChunk
-                  error:(NSError **)error;
+- (BOOL)synthesizeRequest:(SBScyllasBandRequest *)request
+             chunkStarted:(nullable SBScyllasBandChunkStartedBlock)chunkStarted
+               audioChunk:(SBScyllasBandAudioChunkBlock)audioChunk
+                    error:(NSError **)error;
 
+/** Stops requests already issued (running or waiting) at their next graph call; later requests are unaffected. */
 - (void)requestCancellation;
-
-/** Clear a previous cancellation before enqueueing a new synthesis run. */
-- (void)resetCancellation;
 
 @end
 
