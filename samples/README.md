@@ -14,7 +14,7 @@ The script reads `samples/gallery_script.json` and writes `docs/index.html`, `do
 ## Long form
 
 - [Single-voice narration](https://lowkeytea.github.io/scyllasband/#narration) (5:08), from `data/test_document.txt`
-- [Multi-voice multilingual dialogue](https://lowkeytea.github.io/scyllasband/#dialogue) (1:37), from `data/walkthrough_demo.txt`
+- [Multi-voice multilingual dialogue](https://lowkeytea.github.io/scyllasband/#dialogue) (1:44), from `data/walkthrough_demo.txt`
 
 ## Languages
 
