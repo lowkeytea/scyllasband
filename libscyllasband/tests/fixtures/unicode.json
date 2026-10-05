@@ -1,0 +1,1 @@
+{"cases":[{"text":"ÀÉÎÕÜ Ñ İstanbul ΣΑΣ Москва ẞ","lower":"àéîõü ñ i̇stanbul σας москва ß","nfc":"ÀÉÎÕÜ Ñ İstanbul ΣΑΣ Москва ẞ"},{"text":"é Å Å ẛ̣ q̣̇ 각","lower":"é å å ẛ̣ q̣̇ 각","nfc":"é Å Å ẛ̣ q̣̇ 각"},{"text":"Việt Nam","lower":"việt nam","nfc":"Việt Nam"}]}

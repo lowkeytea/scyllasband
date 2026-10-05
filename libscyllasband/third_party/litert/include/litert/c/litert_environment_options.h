@@ -15,6 +15,7 @@
 #ifndef ODML_LITERT_LITERT_C_LITERT_ENVIRONMENT_OPTIONS_H_
 #define ODML_LITERT_LITERT_C_LITERT_ENVIRONMENT_OPTIONS_H_
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include "litert/c/litert_any.h"
@@ -25,6 +26,7 @@
 extern "C" {
 #endif  // __cplusplus
 
+// LINT.IfChange(LiteRtEnvOptionTag)
 typedef enum {
   kLiteRtEnvOptionTagCompilerPluginLibraryDir = 0,
   kLiteRtEnvOptionTagDispatchLibraryDir = 1,
@@ -51,15 +53,45 @@ typedef enum {
   kLiteRtEnvOptionTagWebGpuInstance = 19,
   // Dawn procedure table pointer for shared libraries to populate their tables
   // with the shared procedures instead of their own procedures.
-  kLiteRtEnvOptionTagWebGpuProcs = 20,
-  kLiteRtEnvOptionTagCustomTensorBufferHandlers = 21,
+  kLiteRtEnvOptionTagWebGpuProcs = 20,                            // Deprecated.
+  kLiteRtEnvOptionTagCustomTensorBufferHandlers_deprecated = 21,  // Deprecated.
   kLiteRtEnvOptionTagRuntimeLibraryDir = 22,
+  /// \internal This is for internal use only, for a custom runtime.
+  kLiteRtEnvOptionTagSystemRuntimeHandle = 23,
+  // Bitmask of LiteRtHwAccelerators to auto-register when the environment is
+  // created. If unset, LiteRT auto-registers all supported accelerators.
+  kLiteRtEnvOptionTagAutoRegisterAccelerators = 24,
+  // Minimum logger severity for the environment.
+  kLiteRtEnvOptionTagMinLoggerSeverity = 25,
+  // Maximum number of configurations to store per model in the compiler cache.
+  kLiteRtEnvOptionTagCompilerCacheMaxConfigsPerModel = 26,
+  kLiteRtEnvOptionTagCompilerCacheMaxTotalSize = 27,
+  /// \internal This is for internal use only. Reserved for use by LiteRT in
+  /// Play services.
+  kLiteRtEnvOptionTagContext = 28,
+  // An optional custom callback (`void (*)()`) invoked during synchronous
+  // WebGPU buffer readback (e.g., with Dawn Wire handler) to flush outbound
+  // wire commands and pump inbound events on the thread message loop.
+  kLiteRtEnvOptionTagWebGpuFlushCallback = 29,
+  // Internal use only. Virtual null tag for option that is not defined.
+  kLiteRtEnvOptionTagNull = 255,
 } LiteRtEnvOptionTag;
+// LINT.ThenChange(../kotlin/src/main/kotlin/com/google/ai/edge/litert/Environment.kt)
 
+/// An object that holds option data for the LiteRtEnvironment.
+///
+/// @note This concrete type is part of the public API and is ABI stable.
 typedef struct {
   LiteRtEnvOptionTag tag;
   LiteRtAny value;
 } LiteRtEnvOption;
+
+#if defined(__cplusplus) && defined(__SIZEOF_POINTER__) && \
+    __SIZEOF_POINTER__ == 8
+static_assert(sizeof(LiteRtEnvOption) == 24, "LiteRtEnvOption size mismatch");
+static_assert(offsetof(LiteRtEnvOption, value) == 8,
+              "LiteRtEnvOption value offset mismatch");
+#endif  // __cplusplus
 
 // Arbitrary size of array following the pattern in TfLiteIntArray.
 #if defined(_MSC_VER)
@@ -114,15 +146,6 @@ typedef struct {
   LiteRtMagicNumberVerification verifications[_LITERT_ARBITRARY_ARRAY_SIZE];
 } LiteRtMagicNumberVerifications;
 
-typedef struct {
-  CreateCustomTensorBuffer create_func;
-  DestroyCustomTensorBuffer destroy_func;
-  LockCustomTensorBuffer lock_func;
-  UnlockCustomTensorBuffer unlock_func;
-  ClearCustomTensorBuffer clear_func;
-  ImportCustomTensorBuffer import_func;
-} LiteRtCustomTensorBufferHandlers;
-
 // Retrieves the value corresponding to the given tag.
 //
 // Returns kLiteRtStatusErrorNotFound if the option tag is not found.
@@ -130,8 +153,6 @@ LiteRtStatus LiteRtGetEnvironmentOptionsValue(LiteRtEnvironmentOptions options,
                                               LiteRtEnvOptionTag tag,
                                               LiteRtAny* value);
 
-LiteRtStatus LiteRtSetEnvironmentOptionsValue(LiteRtEnvironmentOptions options,
-                                              LiteRtEnvOption env_option);
 #ifdef __cplusplus
 }
 #endif  // __cplusplus

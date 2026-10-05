@@ -24,6 +24,18 @@
 #include "litert/c/litert_op_code.h"
 
 #ifdef __cplusplus
+namespace tflite {
+class Allocation;
+}
+using LiteRtAllocationT = tflite::Allocation;
+typedef LiteRtAllocationT* LiteRtAllocation;
+typedef const LiteRtAllocationT* LiteRtAllocationConst;
+#else
+typedef struct LiteRtAllocationT* LiteRtAllocation;
+typedef const struct LiteRtAllocationT* LiteRtAllocationConst;
+#endif
+
+#ifdef __cplusplus
 extern "C" {
 #endif  // __cplusplus
 
@@ -66,6 +78,10 @@ LiteRtStatus LiteRtGetPerTensorQuantization(
 LiteRtStatus LiteRtGetPerChannelQuantization(
     LiteRtTensor tensor,
     LiteRtQuantizationPerChannel* per_channel_quantization);
+
+// Get the block-wise quantization information for a given tensor if it has it.
+LiteRtStatus LiteRtGetBlockWiseQuantization(
+    LiteRtTensor tensor, LiteRtQuantizationBlockWise* block_wise_quantization);
 
 // EDGES
 
@@ -114,6 +130,10 @@ LiteRtStatus LiteRtGetOpCode(LiteRtOp op, LiteRtOpCode* code);
 // Get custom code for given op, returns error if op is not a custom op.
 LiteRtStatus LiteRtGetCustomCode(LiteRtOp op, const char** code);
 
+// Get custom options for given op.
+LiteRtStatus LiteRtGetCustomOptions(LiteRtOp op, const uint8_t** custom_options,
+                                    int32_t* size);
+
 // Get input tensors of given op.
 LiteRtStatus LiteRtGetNumOpInputs(LiteRtOp op, LiteRtParamIndex* num_inputs);
 LiteRtStatus LiteRtGetOpInput(LiteRtOp op, LiteRtParamIndex input_index,
@@ -127,6 +147,10 @@ LiteRtStatus LiteRtGetOpOutput(LiteRtOp op, LiteRtParamIndex output_index,
 //
 // LiteRtSubgraph
 //
+
+// Get the string name associated with this subgraph. This is an optional
+// attribute and if not set will return a zero-length string.
+LiteRtStatus LiteRtGetSubgraphName(LiteRtSubgraph subgraph, const char** name);
 
 // Get input tensors for given subgraph.
 //
@@ -157,10 +181,6 @@ LiteRtStatus LiteRtGetSubgraphOp(LiteRtSubgraph subgraph,
 //
 // LiteRtSignature
 //
-
-// Default signature key. This is the key that is used if models don't
-// define any signatures.
-LiteRtStatus LiteRtGetDefaultSignatureKey(const char** signature_key);
 
 // Get the signature key string defined in the model.
 // The returned string pointer is owned by the LiteRtModel to which the given
@@ -224,13 +244,20 @@ LiteRtStatus LiteRtGetSignatureOutputTensorByIndex(LiteRtSignature signature,
 // LiteRtModel
 //
 
-LiteRtStatus LiteRtCreateModelFromFile(const char* filename,
+LiteRtStatus LiteRtCreateModelFromFile(LiteRtEnvironment environment,
+                                       const char* filename,
                                        LiteRtModel* model);
 // The caller must ensure that the buffer remains valid for the lifetime of
 // the model.
-LiteRtStatus LiteRtCreateModelFromBuffer(const void* buffer_addr,
+LiteRtStatus LiteRtCreateModelFromBuffer(LiteRtEnvironment environment,
+                                         const void* buffer_addr,
                                          size_t buffer_size,
                                          LiteRtModel* model);
+// Creates a model from the given file descriptor region. LiteRT duplicates the
+// file descriptor internally; the caller retains ownership of `fd`.
+LiteRtStatus LiteRtCreateModelFromFd(LiteRtEnvironment environment, int fd,
+                                     size_t offset, size_t size,
+                                     LiteRtModel* model);
 
 // Get the metadata buffer associated with given key if it exists.
 LiteRtStatus LiteRtGetModelMetadata(LiteRtModel model, const char* metadata_key,
@@ -310,8 +337,20 @@ LiteRtStatus LiteRtSerializeModel(LiteRtModel model, uint8_t** buf,
                                   bool destroy_model,
                                   LiteRtModelSerializationOptions options);
 
+// Loading a model from an owned TFLite allocation.
+// This is an internal experimetal API which is not available through
+// libLiteRt.so. It's not part of the official LiteRT public C API.
+//
+// This function takes ownership of the `allocation` object. The caller must
+// not use or attempt to delete the `allocation` after calling this function.
+// The allocation will be automatically freed by this function even in case
+// of failure.
+LiteRtStatus LiteRtCreateModelFromAllocation(LiteRtEnvironment environment,
+                                             LiteRtAllocation allocation,
+                                             LiteRtModel* model);
+
 #ifdef __cplusplus
-}
+}  // extern "C"
 #endif  // __cplusplus
 
 #endif  // ODML_LITERT_LITERT_C_LITERT_MODEL_H_

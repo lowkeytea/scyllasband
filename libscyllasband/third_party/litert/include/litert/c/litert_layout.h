@@ -28,10 +28,21 @@ extern "C" {
 // Max number of dimensions in any ranked tensor type.
 #define LITERT_TENSOR_MAX_RANK 8
 
-// The shape information for tensor types of fixed rank.
+/// The shape information for tensor types of fixed rank.
+///
+/// @note This concrete type is part of the public API and is ABI stable.
 typedef struct {
   unsigned int rank : 7;  // The number of dimensions.
-  bool has_strides : 1;   // Whether the layout has strides.
+  // Whether the layout has strides.
+  //
+  // NOTE: This bit-field uses `unsigned int` (matching `rank` above) rather
+  // than `bool` on purpose. MSVC does not coalesce adjacent bit-fields with
+  // different underlying types into the same storage unit, so a `bool` field
+  // here would open a fresh 4-byte unit and shift `dimensions`/`strides`,
+  // making this public struct binary-incompatible between MSVC and GCC/Clang
+  // builds. Keeping the underlying type identical packs both fields together
+  // on every compiler. See https://github.com/google-ai-edge/LiteRT/issues/7459
+  unsigned int has_strides : 1;
 
   // Dimension sizes, array of length `rank`. Dynamic dimensions are anything
   // less than 0. Everything from [rank, LITERT_MAX_RANK) is undefined.
@@ -41,8 +52,26 @@ typedef struct {
   uint32_t strides[LITERT_TENSOR_MAX_RANK];
 } LiteRtLayout;
 
+// The layout below is now identical across MSVC and GCC/Clang because `rank`
+// and `has_strides` share an underlying type and pack into a single storage
+// unit on every compiler. These asserts intentionally have no `_MSC_VER`
+// branch so any future change that reintroduces cross-compiler divergence
+// fails the build.
+#if defined(__cplusplus) && defined(__SIZEOF_POINTER__) && \
+    __SIZEOF_POINTER__ == 8
+static_assert(sizeof(LiteRtLayout) == 68, "LiteRtLayout size mismatch");
+static_assert(offsetof(LiteRtLayout, dimensions) == 4,
+              "LiteRtLayout dimensions offset mismatch");
+static_assert(offsetof(LiteRtLayout, strides) == 36,
+              "LiteRtLayout strides offset mismatch");
+#endif  // __cplusplus
+
 // Return the number of scalar elements in the provided tensor layout. Return an
 // error if the layout includes dynamic dimensions.
+//
+// Note: LiteRtLayout is a non-opaque type (struct is defined in this header).
+// Therefore, its access methods do not need to and should NOT be exported
+// from the dynamic C API library (e.g. libLiteRt.so).
 LiteRtStatus LiteRtGetNumLayoutElements(const LiteRtLayout* layout,
                                         size_t* num_elements);
 

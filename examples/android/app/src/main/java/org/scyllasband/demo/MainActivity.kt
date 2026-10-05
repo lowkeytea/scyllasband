@@ -11,6 +11,9 @@ import android.util.Log
 import android.view.View
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
+import android.widget.CheckBox
+import android.widget.LinearLayout
+import org.scyllasband.android.ScyllasBandDelivery
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ProgressBar
@@ -264,6 +267,30 @@ class MainActivity : AppCompatActivity() {
         strengthSeek.max = 100
         strengthSeek.progress = (initial.emotionStrength * 100).toInt().coerceIn(0, 100)
 
+        val deliverySliders = mutableMapOf<String, SeekBar>()
+        val whisperToggle = CheckBox(this).apply { text = "Whisper"; isChecked = initial.delivery?.whisper ?: false }
+        if (info.deliveryEnabled) {
+            val panel = dialogView as LinearLayout
+            val firstLegacy = panel.indexOfChild(emotionSpinner) - 1
+            for (i in firstLegacy until panel.childCount) panel.getChildAt(i).visibility = View.GONE
+            val initialDelivery = initial.delivery ?: ScyllasBandDelivery()
+            val values = mapOf("energy" to initialDelivery.energy, "tension" to initialDelivery.tension,
+                "valence" to initialDelivery.valence, "assertiveness" to initialDelivery.assertiveness)
+            for ((axis, value) in values) {
+                val label = TextView(this)
+                val slider = SeekBar(this).apply { max = 400; progress = (value * 100).toInt() }
+                fun updateLabel() { label.text = "${axis.replaceFirstChar(Char::uppercase)} · ${formatFloat(slider.progress / 100f)}" }
+                updateLabel()
+                slider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                    override fun onProgressChanged(bar: SeekBar?, value: Int, user: Boolean) = updateLabel()
+                    override fun onStartTrackingTouch(bar: SeekBar?) = Unit
+                    override fun onStopTrackingTouch(bar: SeekBar?) = Unit
+                })
+                panel.addView(label); panel.addView(slider); deliverySliders[axis] = slider
+            }
+            panel.addView(whisperToggle)
+        }
+
         var displayedLanguages: List<String> = emptyList()
 
         fun selectedVoice(): ScyllasBandVoice = voices[voiceSpinner.selectedItemPosition]
@@ -330,20 +357,27 @@ class MainActivity : AppCompatActivity() {
         val dialog = builder.create()
         dialog.setOnShowListener {
             dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val cfg = cfgInput.text?.toString()?.trim()?.toFloatOrNull()
+                val cfg = if (info.deliveryEnabled) 1f else cfgInput.text?.toString()?.trim()?.toFloatOrNull()
                 if (cfg == null || !cfg.isFinite() || cfg < 0f) {
                     cfgInput.error = getString(R.string.cfg_validation)
                     return@setOnClickListener
                 }
                 val voice = selectedVoice()
                 val language = voice.languages[languageSpinner.selectedItemPosition]
-                val emotion = emotions[emotionSpinner.selectedItemPosition]
+                val emotion = if (info.deliveryEnabled) null else emotions[emotionSpinner.selectedItemPosition]
                 val settings = ScyllasBandSegmentSettings(
                     voiceId = voice.id,
                     language = language,
                     emotion = emotion,
                     emotionStrength = if (emotion == null) 0f else strengthSeek.progress / 100f,
                     emotionCfg = cfg,
+                    delivery = if (info.deliveryEnabled) ScyllasBandDelivery(
+                        energy = deliverySliders.getValue("energy").progress / 100f,
+                        tension = deliverySliders.getValue("tension").progress / 100f,
+                        valence = deliverySliders.getValue("valence").progress / 100f,
+                        assertiveness = deliverySliders.getValue("assertiveness").progress / 100f,
+                        whisper = whisperToggle.isChecked,
+                    ) else null,
                 )
                 onSave(settings)
                 dialog.dismiss()
@@ -634,7 +668,9 @@ class MainActivity : AppCompatActivity() {
         val voice = info.voices.firstOrNull { it.id == settings.voiceId } ?: info.voices.first()
         val language = settings.language.takeIf { it in voice.languages } ?: voice.defaultLanguage
         val emotion = settings.emotion?.takeIf { it in info.affectAxes }
-        return settings.copy(voiceId = voice.id, language = language, emotion = emotion)
+        return settings.copy(voiceId = voice.id, language = language, emotion = emotion,
+            emotionCfg = if (info.deliveryEnabled) 1f else settings.emotionCfg,
+            delivery = if (info.deliveryEnabled) settings.delivery else null)
     }
 
     private fun simpleAdapter(values: List<String>): ArrayAdapter<String> =
@@ -672,6 +708,9 @@ class MainActivity : AppCompatActivity() {
         .put("emotion", settings.emotion ?: JSONObject.NULL)
         .put("strength", settings.emotionStrength.toDouble())
         .put("cfg", settings.emotionCfg.toDouble())
+        .put("delivery", settings.delivery?.let { JSONObject().put("energy", it.energy.toDouble())
+            .put("tension", it.tension.toDouble()).put("valence", it.valence.toDouble())
+            .put("assertiveness", it.assertiveness.toDouble()).put("whisper", it.whisper) })
 
     private fun settingsFromJson(value: JSONObject) = ScyllasBandSegmentSettings(
         voiceId = value.getString("voice"),
@@ -679,6 +718,10 @@ class MainActivity : AppCompatActivity() {
         emotion = value.optString("emotion").takeIf { !value.isNull("emotion") && it.isNotBlank() },
         emotionStrength = value.optDouble("strength", 0.0).toFloat(),
         emotionCfg = value.optDouble("cfg", 1.0).toFloat(),
+        delivery = value.optJSONObject("delivery")?.let { ScyllasBandDelivery(
+            it.optDouble("energy", 2.0).toFloat(), it.optDouble("tension", 2.0).toFloat(),
+            it.optDouble("valence", 2.0).toFloat(), it.optDouble("assertiveness", 2.0).toFloat(),
+            it.optBoolean("whisper", false)) },
     )
 
     private fun snapshotToJson(snapshot: SpeakerDocumentSnapshot): JSONObject {

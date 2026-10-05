@@ -1,0 +1,100 @@
+{
+  "seed": 2027,
+  "steps": 8,
+  "sampler": "heun",
+  "languages": [
+    {
+      "id": "en",
+      "name": "English",
+      "line": "The last train leaves at midnight, so pack light, bring a warm coat, and don't forget the map."
+    },
+    {
+      "id": "es",
+      "name": "Spanish",
+      "line": "El último tren sale a medianoche, así que viaja ligero, lleva un abrigo y no olvides el mapa."
+    },
+    {
+      "id": "it",
+      "name": "Italian",
+      "line": "L'ultimo treno parte a mezzanotte, quindi viaggia leggero, porta un cappotto caldo e non dimenticare la mappa."
+    },
+    {
+      "id": "fr",
+      "name": "French",
+      "line": "Le dernier train part à minuit, alors voyage léger, prends un manteau chaud et n'oublie pas la carte."
+    },
+    {
+      "id": "de",
+      "name": "German",
+      "line": "Der letzte Zug fährt um Mitternacht, also reise mit leichtem Gepäck, nimm einen warmen Mantel mit und vergiss die Karte nicht."
+    },
+    {
+      "id": "vi",
+      "name": "Vietnamese",
+      "line": "Chuyến tàu cuối cùng rời ga lúc nửa đêm, nên hãy mang hành lý gọn nhẹ, một chiếc áo khoác ấm, và đừng quên bản đồ."
+    }
+  ],
+  "deliveries": [
+    {
+      "id": "neutral",
+      "title": "Neutral (default)",
+      "delivery": "energy=2,tension=2,valence=2,assertiveness=2,whisper=off",
+      "line": "Please put the small blue box beside the kitchen window, then close the door behind you."
+    },
+    {
+      "id": "calm",
+      "title": "Calm and soft",
+      "delivery": "energy=1.2,tension=0.8,valence=2.6,assertiveness=2,whisper=off",
+      "line": "Take a slow breath. There's no rush tonight; the rain will keep the city quiet for a while."
+    },
+    {
+      "id": "assertive",
+      "title": "Assertive and rapid-fire",
+      "delivery": "energy=2.6,tension=2.2,valence=2,assertiveness=3.6,whisper=off",
+      "line": "Listen carefully. We leave at six, we stay together, and nobody goes back for the bags."
+    },
+    {
+      "id": "joyful",
+      "title": "Joyful",
+      "delivery": "energy=3.2,tension=2,valence=3.6,assertiveness=2,whisper=off",
+      "line": "We actually did it! The whole street came out to watch, and nobody wanted the night to end!"
+    },
+    {
+      "id": "angry",
+      "title": "Angry",
+      "delivery": "energy=3.4,tension=3.4,valence=0.8,assertiveness=3.4,whisper=off",
+      "line": "No. You don't get to walk in here and change the rules again. Not after everything."
+    },
+    {
+      "id": "sad",
+      "title": "Sad",
+      "delivery": "energy=1,tension=1.6,valence=0.8,assertiveness=1.6,whisper=off",
+      "line": "I kept the letter for years... I never opened it. Maybe I was afraid of what it would say."
+    },
+    {
+      "id": "whisper",
+      "title": "Whisper",
+      "delivery": "energy=2,tension=2,valence=2,assertiveness=2,whisper=on",
+      "line": "Keep your voice down. The guard changes at four, and the side door is still unlocked."
+    }
+  ],
+  "long_form": [
+    {
+      "id": "narration",
+      "title": "Single-voice narration",
+      "voice": "scylla",
+      "language": "en_us",
+      "delivery": "energy=2.3,tension=2,valence=2.6,assertiveness=2,whisper=off",
+      "file": "data/test_document.txt",
+      "summary": "Scratchwick the squirrel faces Shelley the racing snail in a woodland dance battle, with dates, prices, counts and tongue twisters carried through one continuous narration."
+    },
+    {
+      "id": "dialogue",
+      "title": "Multi-voice multilingual dialogue",
+      "file": "data/walkthrough_demo.txt",
+      "group": true,
+      "pause_ms": 250,
+      "summary": "All ten voices introduce the release, moving between English, German, French, Vietnamese, Spanish and Italian while the delivery changes line by line."
+    }
+  ]
+}

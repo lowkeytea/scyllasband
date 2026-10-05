@@ -218,6 +218,7 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 scyllasband/models_experimental
+validation_runs/
 scyllasband/models_mixed
 scyllasband/models_release
 

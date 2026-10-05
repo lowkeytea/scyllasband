@@ -16,10 +16,9 @@
 #define ODML_LITERT_LITERT_C_LITERT_COMMON_H_
 
 #include <stddef.h>
+#include <stdint.h>
 
 #include "litert/build_common/build_config.h"  // IWYU pragma: keep
-
-
 
 // Define LITERT_WINDOWS_OS if the current OS is Windows.
 #if defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || \
@@ -34,14 +33,23 @@ extern "C" {
 // Define LITERT_CAPI_EXPORT macro to export a function properly with a shared
 // library.
 #if defined(LITERT_WINDOWS_OS)
-#ifdef LITERT_COMPILE_LIBRARY
+#if defined(LITERT_STATIC)
+#define LITERT_CAPI_EXPORT
+#elif defined(LITERT_COMPILE_LIBRARY)
 #define LITERT_CAPI_EXPORT __declspec(dllexport)
 #else
 #define LITERT_CAPI_EXPORT __declspec(dllimport)
-#endif  // LITERT_COMPILE_LIBRARY
+#endif  // LITERT_STATIC
 #else
 #define LITERT_CAPI_EXPORT __attribute__((visibility("default")))
 #endif  // LITERT_WINDOWS_OS
+
+#if defined(__linux__)
+// Disable CFI check for calling shared library functions.
+#define LITERT_NO_CFI_CHECK __attribute__((no_sanitize("cfi-icall")))
+#else
+#define LITERT_NO_CFI_CHECK
+#endif  // __linux__
 
 // Declares canonical opaque type.
 
@@ -66,6 +74,9 @@ LITERT_DEFINE_HANDLE(LiteRtAccelerator);
 LITERT_DEFINE_HANDLE(LiteRtDelegateWrapper);
 // LiteRT CompiledModel object. (litert_compiled_model.h)
 LITERT_DEFINE_HANDLE(LiteRtCompiledModel);
+// Opaque handle to a JIT compiled executable. (LiteRtJitExecutableT is
+// intentionally left out as an opaque type)
+LITERT_DEFINE_HANDLE(LiteRtJitExecutable);
 // LiteRT Environment object. (litert_environment.h)
 LITERT_DEFINE_HANDLE(LiteRtEnvironment);
 // LiteRT EnvironmentOptions object. (litert_environment_options.h)
@@ -122,13 +133,19 @@ LITERT_DEFINE_HANDLE(LiteRtExternalLiteRtBufferContext);
 #define LITERT_HAS_ION_SUPPORT_DEFAULT 1
 #define LITERT_HAS_DMABUF_SUPPORT_DEFAULT 1
 #define LITERT_HAS_FASTRPC_SUPPORT_DEFAULT 1
-// copybara:comment_begin(google-only)
-#elif defined(GOOGLE_UNSUPPORTED_OS_LOONIX)
+#elif defined(__linux__) && defined(__aarch64__)
+#define LITERT_HAS_AHWB_SUPPORT_DEFAULT 0
 #define LITERT_HAS_OPENGL_SUPPORT_DEFAULT 0
-#define LITERT_HAS_ION_SUPPORT_DEFAULT 0
-#define LITERT_HAS_DMABUF_SUPPORT_DEFAULT 1
-#define LITERT_HAS_FASTRPC_SUPPORT_DEFAULT 0
-// copybara:comment_end
+#define LITERT_HAS_ION_SUPPORT_DEFAULT 1
+#define LITERT_HAS_DMABUF_SUPPORT_DEFAULT 0
+#define LITERT_HAS_FASTRPC_SUPPORT_DEFAULT 1
+// copybara:uncomment_begin(google-only)
+// #elif defined(GOOGLE_UNSUPPORTED_OS_LOONIX)
+// #define LITERT_HAS_OPENGL_SUPPORT_DEFAULT 0
+// #define LITERT_HAS_ION_SUPPORT_DEFAULT 0
+// #define LITERT_HAS_DMABUF_SUPPORT_DEFAULT 1
+// #define LITERT_HAS_FASTRPC_SUPPORT_DEFAULT 0
+// copybara:uncomment_end
 #else
 #define LITERT_HAS_AHWB_SUPPORT_DEFAULT 0
 #define LITERT_HAS_OPENGL_SUPPORT_DEFAULT 0
@@ -141,6 +158,10 @@ LITERT_DEFINE_HANDLE(LiteRtExternalLiteRtBufferContext);
 #define LITERT_HAS_METAL_SUPPORT_DEFAULT 1
 #define LITERT_HAS_OPENCL_SUPPORT_DEFAULT 0
 #define LITERT_HAS_VULKAN_SUPPORT_DEFAULT 0
+#elif defined(LITERT_WINDOWS_OS)
+#define LITERT_HAS_METAL_SUPPORT_DEFAULT 0
+#define LITERT_HAS_OPENCL_SUPPORT_DEFAULT 0
+#define LITERT_HAS_VULKAN_SUPPORT_DEFAULT 1
 #else
 #define LITERT_HAS_METAL_SUPPORT_DEFAULT 0
 #define LITERT_HAS_OPENCL_SUPPORT_DEFAULT 1
@@ -282,6 +303,10 @@ typedef enum {
   kLiteRtStatusErrorUnsupportedRuntimeVersion = 4000,
   kLiteRtStatusErrorUnsupportedCompilerVersion = 4001,
   kLiteRtStatusErrorIncompatibleByteCodeVersion = 4002,
+
+  // Shape inference related errors.
+  kLiteRtStatusErrorUnsupportedOpShapeInferer = 5000,
+  kLiteRtStatusErrorShapeInferenceFailed = 5001,
 } LiteRtStatus;
 // LINT.ThenChange(
 //   ../kotlin/src/main/kotlin/com/google/ai/edge/litert/LiteRtException.kt:status_codes,
@@ -291,7 +316,7 @@ typedef enum {
 // Returns a string describing the status value.
 const char* LiteRtGetStatusString(LiteRtStatus status);
 
-typedef enum : int {
+typedef enum LiteRtHwAccelerators {
   kLiteRtHwAcceleratorNone = 0,
   kLiteRtHwAcceleratorCpu = 1 << 0,
   kLiteRtHwAcceleratorGpu = 1 << 1,
@@ -299,12 +324,20 @@ typedef enum : int {
 #if defined(__EMSCRIPTEN__)
   kLiteRtHwAcceleratorWebNn = 1 << 3,
 #endif  // __EMSCRIPTEN__
+  // Force standard C compilers to use a signed 32-bit integer
+  // as the underlying type for Rust `bindgen` compatibility.
+  _kLiteRtHwAcceleratorNegativeDummy = -1,
 } LiteRtHwAccelerators;
 
 typedef enum {
   kLiteRtDelegatePrecisionDefault = 0,
   kLiteRtDelegatePrecisionFp16 = 1,
   kLiteRtDelegatePrecisionFp32 = 2,
+  // FP16 storage and arithmetic with FP32 accumulation where supported.
+  // Currently the option is only for the GPU backend and only impacts the
+  // CONV_2D, DEPTHWISE_CONV_2D, FULLY_CONNECTED, TRANSPOSE_CONV and
+  // BATCH_MAT_MUL operators and any stablehlo composite op that uses them.
+  kLiteRtDelegatePrecisionFp16WithFp32Accum = 3,
 } LiteRtDelegatePrecision;
 
 typedef enum {
@@ -382,7 +415,7 @@ typedef size_t LiteRtParamIndex;
 // allocated by posix_memalign() for cross-platform compatibility.
 // https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/aligned-malloc?view=msvc-170
 // litert_ prefix is added to avoid name conflicts with one defined in
-// base/port.h, for example, included in unittests.
+// base/port.h, for example, included in unit tests.
 #define litert_aligned_free _aligned_free
 
 #else  // _WIN32

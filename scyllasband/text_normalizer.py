@@ -1,15 +1,40 @@
 """Spoken-form text normalization for Scylla's Band.
 
-The Scylla's Band G2P model is trained on spoken-form text. Runtime inference must apply
-the same normalization before G2P so numbers, dates, currencies, times, and
-common symbols arrive in the form the model is most likely to handle.
+The G2P model is trained on spoken-form text. Runtime inference applies the same
+normalization before G2P for every language declared by the selected bundle.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import json
 import re
 import unicodedata
+
+
+SPOKEN_TEXT_NORMALIZER_CONTRACT = {
+    "version": "scyllasband_spoken_text_v2_2026_08_05",
+    "training_phone_source": "espeak",
+    "ok_spoken_form": "okay",
+    "mixed_question_exclamation": "leading_mark",
+    "homogeneous_terminal_runs": "single_mark",
+    "dot_runs_two_or_more": "ellipsis_three_dots",
+    "colon_semicolon_classes": "preserved",
+    "lexical_hyphen": "space_no_pause",
+    "syntactic_dash": "em_dash_pause",
+    "punctuation_silence_target": "explicit_silence",
+    "non_acoustic_modifiers": ["stress", "length", "unicode_combining"],
+}
+SPOKEN_TEXT_NORMALIZER_VERSION = str(SPOKEN_TEXT_NORMALIZER_CONTRACT["version"])
+SPOKEN_TEXT_NORMALIZER_SHA256 = hashlib.sha256(
+    json.dumps(
+        SPOKEN_TEXT_NORMALIZER_CONTRACT,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+).hexdigest()
 
 try:
     import inflect
@@ -58,15 +83,37 @@ _IT_UNDER_20 = (
 )
 _IT_TENS = {20: "venti", 30: "trenta", 40: "quaranta", 50: "cinquanta", 60: "sessanta", 70: "settanta", 80: "ottanta", 90: "novanta"}
 
+_FR_UNDER_20 = (
+    "zéro", "un", "deux", "trois", "quatre", "cinq", "six", "sept", "huit", "neuf",
+    "dix", "onze", "douze", "treize", "quatorze", "quinze", "seize", "dix-sept",
+    "dix-huit", "dix-neuf",
+)
+_FR_TENS = {20: "vingt", 30: "trente", 40: "quarante", 50: "cinquante", 60: "soixante"}
+_DE_UNDER_20 = (
+    "null", "eins", "zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht", "neun",
+    "zehn", "elf", "zwölf", "dreizehn", "vierzehn", "fünfzehn", "sechzehn",
+    "siebzehn", "achtzehn", "neunzehn",
+)
+_DE_TENS = {20: "zwanzig", 30: "dreißig", 40: "vierzig", 50: "fünfzig", 60: "sechzig", 70: "siebzig", 80: "achtzig", 90: "neunzig"}
+_VI_DIGITS = ("không", "một", "hai", "ba", "bốn", "năm", "sáu", "bảy", "tám", "chín")
+
 
 def _fallback_number_to_words(value: int, lang: str, *, ordinal: bool = False) -> str:
     n = int(value)
     if ordinal and lang == "en" and n in _EN_ORDINALS:
         return _EN_ORDINALS[n]
+    if ordinal and lang in {"fr", "de", "vi"}:
+        return _fallback_ordinal_number(n, lang)
     if lang == "es":
         return _fallback_spanish_number(n)
     if lang == "it":
         return _fallback_italian_number(n)
+    if lang == "fr":
+        return _fallback_french_number(n)
+    if lang == "de":
+        return _fallback_german_number(n)
+    if lang == "vi":
+        return _fallback_vietnamese_number(n)
     return _fallback_english_number(n)
 
 
@@ -135,6 +182,153 @@ def _fallback_italian_number(n: int) -> str:
     return head if rest == 0 else f"{head} {_fallback_italian_number(rest)}"
 
 
+def _fallback_french_number(n: int) -> str:
+    if n < 0:
+        return "moins " + _fallback_french_number(-n)
+    if n < 20:
+        return _FR_UNDER_20[n]
+    if n < 70:
+        tens = (n // 10) * 10
+        rest = n % 10
+        if rest == 0:
+            return _FR_TENS[tens]
+        joiner = " et " if rest == 1 else "-"
+        return f"{_FR_TENS[tens]}{joiner}{_fallback_french_number(rest)}"
+    if n < 80:
+        rest = n - 60
+        joiner = " et " if rest == 11 else "-"
+        return f"soixante{joiner}{_fallback_french_number(rest)}"
+    if n < 100:
+        rest = n - 80
+        if rest == 0:
+            return "quatre-vingts"
+        return f"quatre-vingt-{_fallback_french_number(rest)}"
+    if n < 1000:
+        hundreds, rest = divmod(n, 100)
+        head = "cent" if hundreds == 1 else f"{_fallback_french_number(hundreds)} cent"
+        if rest == 0:
+            return head if hundreds == 1 else head + "s"
+        return f"{head} {_fallback_french_number(rest)}"
+    for scale, singular, plural in (
+        (1_000_000_000, "milliard", "milliards"),
+        (1_000_000, "million", "millions"),
+        (1000, "mille", "mille"),
+    ):
+        if n >= scale:
+            count, rest = divmod(n, scale)
+            if scale == 1000 and count == 1:
+                head = singular
+            else:
+                unit = singular if count == 1 else plural
+                head = f"{_fallback_french_number(count)} {unit}"
+            return head if rest == 0 else f"{head} {_fallback_french_number(rest)}"
+    return str(n)
+
+
+def _fallback_german_number(n: int) -> str:
+    if n < 0:
+        return "minus " + _fallback_german_number(-n)
+    if n < 20:
+        return _DE_UNDER_20[n]
+    if n < 100:
+        tens = (n // 10) * 10
+        rest = n % 10
+        if rest == 0:
+            return _DE_TENS[tens]
+        unit = "ein" if rest == 1 else _fallback_german_number(rest)
+        return f"{unit}und{_DE_TENS[tens]}"
+    if n < 1000:
+        hundreds, rest = divmod(n, 100)
+        head = "einhundert" if hundreds == 1 else f"{_fallback_german_number(hundreds)}hundert"
+        return head if rest == 0 else f"{head}{_fallback_german_number(rest)}"
+    if n < 1_000_000:
+        thousands, rest = divmod(n, 1000)
+        head = "eintausend" if thousands == 1 else f"{_fallback_german_number(thousands)}tausend"
+        return head if rest == 0 else f"{head}{_fallback_german_number(rest)}"
+    for scale, singular, plural in (
+        (1_000_000_000, "Milliarde", "Milliarden"),
+        (1_000_000, "Million", "Millionen"),
+    ):
+        if n >= scale:
+            count, rest = divmod(n, scale)
+            head = f"eine {singular}" if count == 1 else f"{_fallback_german_number(count)} {plural}"
+            return head if rest == 0 else f"{head} {_fallback_german_number(rest)}"
+    return str(n)
+
+
+def _fallback_vietnamese_below_thousand(n: int, *, force_hundreds: bool = False) -> str:
+    hundreds, rest = divmod(n, 100)
+    words: list[str] = []
+    if hundreds or force_hundreds:
+        words.extend((_VI_DIGITS[hundreds], "trăm"))
+        if 0 < rest < 10:
+            words.append("linh")
+    if rest >= 10:
+        tens, unit = divmod(rest, 10)
+        words.append("mười" if tens == 1 else f"{_VI_DIGITS[tens]} mươi")
+        if unit:
+            if unit == 1 and tens > 1:
+                words.append("mốt")
+            elif unit == 4 and tens > 1:
+                words.append("tư")
+            elif unit == 5:
+                words.append("lăm")
+            else:
+                words.append(_VI_DIGITS[unit])
+    elif rest:
+        words.append(_VI_DIGITS[rest])
+    return " ".join(words) if words else _VI_DIGITS[0]
+
+
+def _fallback_vietnamese_number(n: int) -> str:
+    if n < 0:
+        return "âm " + _fallback_vietnamese_number(-n)
+    if n < 1000:
+        return _fallback_vietnamese_below_thousand(n)
+    for scale, name in (
+        (1_000_000_000, "tỷ"),
+        (1_000_000, "triệu"),
+        (1000, "nghìn"),
+    ):
+        if n >= scale:
+            count, rest = divmod(n, scale)
+            head = f"{_fallback_vietnamese_number(count)} {name}"
+            if rest == 0:
+                return head
+            tail = (
+                _fallback_vietnamese_below_thousand(rest, force_hundreds=True)
+                if rest < 100
+                else _fallback_vietnamese_number(rest)
+            )
+            return f"{head} {tail}"
+    return str(n)
+
+
+def _fallback_ordinal_number(n: int, lang: str) -> str:
+    if lang == "fr":
+        special = {1: "premier", 2: "deuxième", 5: "cinquième", 9: "neuvième"}
+        if n in special:
+            return special[n]
+        cardinal = _fallback_french_number(n)
+        if cardinal.endswith("e"):
+            cardinal = cardinal[:-1]
+        elif cardinal.endswith(("vingts", "cents", "millions", "milliards")):
+            # Only plural scale words drop the "s" (quatre-vingtième); words
+            # like "trois" keep it (troisième).
+            cardinal = cardinal[:-1]
+        return cardinal + "ième"
+    if lang == "de":
+        special = {1: "erste", 2: "zweite", 3: "dritte", 7: "siebte", 8: "achte"}
+        if n in special:
+            return special[n]
+        suffix = "te" if n < 20 else "ste"
+        return _fallback_german_number(n) + suffix
+    if lang == "vi":
+        special = {1: "thứ nhất", 4: "thứ tư"}
+        return special.get(n, f"thứ {_fallback_vietnamese_number(n)}")
+    return _fallback_number_to_words(n, lang)
+
+
 @dataclass(frozen=True)
 class SpokenTextNormalizerConfig:
     expand_currency: bool = True
@@ -150,7 +344,23 @@ class SpokenTextNormalizerConfig:
 class SpokenTextNormalizer:
     """Normalize raw text into the form the G2P model should consume."""
 
-    _LANG_BY_MODEL_LANGUAGE = {"en": "en", "en_us": "en", "en_gb": "en", "es": "es", "it": "it"}
+    _LANG_BY_MODEL_LANGUAGE = {
+        "en": "en",
+        "en_us": "en",
+        "en_gb": "en",
+        "es": "es",
+        "es_mx": "es",
+        "es_es": "es",
+        "it": "it",
+        "it_it": "it",
+        "fr": "fr",
+        "fr_fr": "fr",
+        "de": "de",
+        "de_de": "de",
+        "vi": "vi",
+        "vi_vn": "vi",
+        "vi_hn": "vi",
+    }
     _MONTHS = {
         "en": (
             "January",
@@ -194,6 +404,18 @@ class SpokenTextNormalizer:
             "novembre",
             "dicembre",
         ),
+        "fr": (
+            "janvier", "février", "mars", "avril", "mai", "juin",
+            "juillet", "août", "septembre", "octobre", "novembre", "décembre",
+        ),
+        "de": (
+            "Januar", "Februar", "März", "April", "Mai", "Juni",
+            "Juli", "August", "September", "Oktober", "November", "Dezember",
+        ),
+        "vi": (
+            "tháng một", "tháng hai", "tháng ba", "tháng tư", "tháng năm", "tháng sáu",
+            "tháng bảy", "tháng tám", "tháng chín", "tháng mười", "tháng mười một", "tháng mười hai",
+        ),
     }
     _CURRENCY_UNITS = {
         "en": {
@@ -210,6 +432,21 @@ class SpokenTextNormalizer:
             "$": ("dollaro", "dollari", "cent", "cent"),
             "£": ("sterlina", "sterline", "penny", "pence"),
             "€": ("euro", "euro", "centesimo", "centesimi"),
+        },
+        "fr": {
+            "$": ("dollar", "dollars", "centime", "centimes"),
+            "£": ("livre", "livres", "penny", "pence"),
+            "€": ("euro", "euros", "centime", "centimes"),
+        },
+        "de": {
+            "$": ("Dollar", "Dollar", "Cent", "Cent"),
+            "£": ("Pfund", "Pfund", "Penny", "Pence"),
+            "€": ("Euro", "Euro", "Cent", "Cent"),
+        },
+        "vi": {
+            "$": ("đô la", "đô la", "xu", "xu"),
+            "£": ("bảng Anh", "bảng Anh", "xu", "xu"),
+            "€": ("euro", "euro", "xu", "xu"),
         },
     }
 
@@ -246,13 +483,6 @@ class SpokenTextNormalizer:
             "\u201f": '"',
             "\u2033": '"',
             "\uff02": '"',
-            "\u2010": "-",
-            "\u2011": "-",
-            "\u2012": "-",
-            "\u2013": "-",
-            "\u2014": "-",
-            "\u2015": "-",
-            "\u2212": "-",
             "\u2026": "...",
             "\u2044": "/",
             "\u2215": "/",
@@ -267,6 +497,11 @@ class SpokenTextNormalizer:
     _MIXED_FRACTION_RE = re.compile(r"\b(\d+)\s+(\d+/\d+)\b")
     _SIMPLE_FRACTION_RE = re.compile(r"\b(\d+)\s*/\s*(\d+)\b")
     _DOTTED_INITIALISM_RE = re.compile(r"(?<![A-Za-zÀ-ÖØ-öø-ÿÑñ])(?:[A-Za-zÑñ]\.){2,}")
+    _EN_OK_RE = re.compile(r"(?<![A-Za-z0-9])ok(?![A-Za-z0-9])", re.IGNORECASE)
+    _MIXED_TERMINAL_PUNCTUATION_RE = re.compile(r"([!?])[!?]+")
+    _DOT_RUN_RE = re.compile(r"\.{2,}")
+    _LEXICAL_HYPHENS = ("\u2010", "\u2011")
+    _SYNTACTIC_DASHES = ("\u2012", "\u2013", "\u2014", "\u2015", "\u2212", "\ufe58", "\ufe63", "\uff0d")
     _EN_MONTH_DATE_RE = re.compile(
         r"\b("
         r"Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
@@ -274,12 +509,35 @@ class SpokenTextNormalizer:
         r")\.?\s+(\d{1,2})(?:,\s*(\d{2,4}))?\b",
         re.IGNORECASE,
     )
-    _DASH_LEFT_SINGLE_LETTER_RE = re.compile(
-        r"(?<![A-Za-zÀ-ÖØ-öø-ÿÑñ])([A-Za-zÑñ])\s*-\s*(?=[A-Za-zÀ-ÖØ-öø-ÿÑñ0-9])"
+    # Honorific abbreviations the G2P mispronounces. Each spelling here was
+    # chosen by matching the model's output for the expansion against espeak's
+    # output for the *abbreviation*, which is the target the model was distilled
+    # toward -- so "Mrs." expands to "misses" (espeak: mˈɪsɪz) rather than the
+    # etymological "missus", which the model renders mˈɪʃəs.
+    #
+    # Deliberately minimal. "Mr." is NOT listed: the model already handles it
+    # correctly before a name (7/8 across a name sample, matching the ceiling set
+    # by the names themselves), so expanding it would add risk for no gain.
+    # "Prof." and "vs" are likewise already correct. Titles whose expansion does
+    # not reproduce espeak's reading of the abbreviation (Ms., Jr., Sr., etc.,
+    # Ave., Rd.) are omitted rather than guessed at.
+    #
+    # This cannot help bare initialisms (FBI, USA, BBC). Spelling them as
+    # separate words gives each its own primary stress -- "bee bee see" becomes
+    # bˈiːbˈiːsˈiː where espeak has bˌiːbˌiːsˈiː -- so that class needs a G2P-side
+    # fix, not a normalizer one.
+    _TITLE_ABBREVIATIONS = {
+        "en": {"mrs": "misses", "dr": "doctor"},
+    }
+    # Only expand when a capitalised word follows, i.e. the honorific use
+    # ("Dr. Smith"). This leaves the street sense alone, where the abbreviation
+    # trails the name ("Main Dr.") and is not followed by a capitalised token.
+    _TITLE_ABBREVIATION_RE = re.compile(
+        r"(?<![A-Za-zÀ-ÖØ-öø-ÿÑñ])([A-Za-z]{2,4})\.?\s+(?=[A-ZÀ-ÖØ-Þ])"
     )
-    _DASH_RIGHT_SINGLE_LETTER_RE = re.compile(
-        r"(?<=[A-Za-zÀ-ÖØ-öø-ÿÑñ0-9])\s*-\s*([A-Za-zÑñ])(?![A-Za-zÀ-ÖØ-öø-ÿÑñ])"
-    )
+    # Callbacks check Unicode word boundaries, including combining marks.
+    _DASH_LEFT_SINGLE_LETTER_RE = re.compile(r"([A-Za-zÑñ])\s*-\s*")
+    _DASH_RIGHT_SINGLE_LETTER_RE = re.compile(r"\s*-\s*([A-Za-zÑñ])")
     _LETTER_NAMES = {
         "en": {
             "A": "ay", "B": "bee", "C": "see", "D": "dee", "E": "ee", "F": "eff",
@@ -302,6 +560,27 @@ class SpokenTextNormalizer:
             "S": "esse", "T": "ti", "U": "u", "V": "vu", "W": "doppia vu",
             "X": "ics", "Y": "ipsilon", "Z": "zeta",
         },
+        "fr": {
+            "A": "a", "B": "bé", "C": "cé", "D": "dé", "E": "e", "F": "effe",
+            "G": "gé", "H": "ache", "I": "i", "J": "ji", "K": "ka", "L": "elle",
+            "M": "emme", "N": "enne", "O": "o", "P": "pé", "Q": "ku", "R": "erre",
+            "S": "esse", "T": "té", "U": "u", "V": "vé", "W": "double vé",
+            "X": "iks", "Y": "i grec", "Z": "zède",
+        },
+        "de": {
+            "A": "a", "B": "be", "C": "tse", "D": "de", "E": "e", "F": "eff",
+            "G": "ge", "H": "ha", "I": "i", "J": "jot", "K": "ka", "L": "ell",
+            "M": "emm", "N": "enn", "O": "o", "P": "pe", "Q": "ku", "R": "err",
+            "S": "ess", "T": "te", "U": "u", "V": "fau", "W": "we",
+            "X": "iks", "Y": "ypsilon", "Z": "tset",
+        },
+        "vi": {
+            "A": "a", "B": "bê", "C": "xê", "D": "dê", "E": "e", "F": "ép",
+            "G": "giê", "H": "hát", "I": "i", "J": "giây", "K": "ca", "L": "e lờ",
+            "M": "e mờ", "N": "e nờ", "O": "o", "P": "pê", "Q": "quy", "R": "e rờ",
+            "S": "ét", "T": "tê", "U": "u", "V": "vê", "W": "vê kép",
+            "X": "ích", "Y": "i dài", "Z": "dét",
+        },
     }
 
     def __init__(self, config: SpokenTextNormalizerConfig | None = None) -> None:
@@ -312,10 +591,16 @@ class SpokenTextNormalizer:
         lang = self._normalizer_language(language)
         value = unicodedata.normalize("NFC", str(text or ""))
         if self.config.normalize_punctuation:
-            value = self._normalize_punctuation(value)
+            value = self._normalize_punctuation(value, lang)
+        if lang == "en":
+            # eSpeak and the distilled G2P read bare ``ok`` as /oʊk/ ("oak").
+            # The spoken lexical form is "okay"; keep following punctuation
+            # untouched so ``Ok...`` retains its ellipsis boundary.
+            value = self._EN_OK_RE.sub("okay", value)
         if self.config.normalize_at_sign:
             value = self._normalize_at_symbols(value, lang)
         value = self._expand_dotted_initialisms(value, lang)
+        value = self._expand_title_abbreviations(value, lang)
         if self.config.expand_currency:
             value = re.sub(
                 r"([$£€])\s*([0-9](?:[0-9.,]*[0-9])?)",
@@ -323,7 +608,7 @@ class SpokenTextNormalizer:
                 value,
             )
             value = re.sub(
-                r"\b([0-9](?:[0-9.,]*[0-9])?)\s*(€|EUR)\b",
+                r"(?<![\w.,])([0-9](?:[0-9.,]*[0-9])?)\s*(€|EUR)(?!\w)",
                 lambda m: self._expand_currency_suffix(m, lang),
                 value,
                 flags=re.IGNORECASE,
@@ -342,7 +627,7 @@ class SpokenTextNormalizer:
                 value = re.sub(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b", lambda m: self._expand_date(m.group(2), m.group(3), m.group(1), lang), value)
             value = self._MIXED_FRACTION_RE.sub(lambda m: f"{m.group(1)} {self._and_word(lang)} {m.group(2)}", value)
             value = self._SIMPLE_FRACTION_RE.sub(lambda m: self._expand_fraction(m, lang), value)
-            if lang in {"es", "it"}:
+            if lang in {"es", "it", "fr", "de", "vi"}:
                 value = re.sub(r"\b\d[\d.]*,\d+\b", lambda m: self._decimal_to_words(m.group(0), lang), value)
                 value = re.sub(r"\b\d{1,3}(?:\.\d{3})+\b", lambda m: self._to_words(int(self._whole_number_digits(m.group(0))), lang), value)
             value = re.sub(r"\b\d[\d,]*\.\d+\b(?!\.\d)", lambda m: self._decimal_to_words(m.group(0), lang), value)
@@ -355,18 +640,48 @@ class SpokenTextNormalizer:
         value = value.replace("-", " ")
         return self._WHITESPACE_RE.sub(" ", value).strip()
 
+    _SENTENCE_FOLLOWS_RE = re.compile(r"\s*$|\s+[\"'“‘(\[]?[A-ZÀ-ÖØ-ÞÑ]")
+
     def _expand_dotted_initialisms(self, text: str, lang: str) -> str:
         def replace(match: re.Match[str]) -> str:
             letters = re.findall(r"[A-Za-zÑñ]", match.group(0))
-            return " ".join(self._letter_name(letter, lang) for letter in letters)
+            spoken = " ".join(self._letter_name(letter, lang) for letter in letters)
+            # "at 9 a.m. Then ..." / "... p.m." at the end: the initialism's last dot also ends the sentence.
+            ends_sentence = self._SENTENCE_FOLLOWS_RE.match(text, match.end()) is not None
+            return spoken + "." if ends_sentence else spoken
 
         return self._DOTTED_INITIALISM_RE.sub(replace, text)
 
+    def _expand_title_abbreviations(self, text: str, lang: str) -> str:
+        table = self._TITLE_ABBREVIATIONS.get(lang)
+        if not table:
+            return text
+
+        def replace(match: re.Match[str]) -> str:
+            expansion = table.get(match.group(1).lower())
+            return f"{expansion} " if expansion else match.group(0)
+
+        return self._TITLE_ABBREVIATION_RE.sub(replace, text)
+
+    @staticmethod
+    def _is_dash_word_char(char: str) -> bool:
+        return bool(char) and (
+            char.isalnum() or unicodedata.category(char).startswith("M")
+        )
+
     def _expand_dash_letter_names(self, text: str, lang: str) -> str:
         def left(match: re.Match[str]) -> str:
+            before = match.string[match.start() - 1] if match.start() else ""
+            after = match.string[match.end()] if match.end() < len(match.string) else ""
+            if before == "_" or self._is_dash_word_char(before) or not self._is_dash_word_char(after):
+                return match.group(0)
             return f"{self._letter_name(match.group(1), lang)} "
 
         def right(match: re.Match[str]) -> str:
+            before = match.string[match.start() - 1] if match.start() else ""
+            after = match.string[match.end()] if match.end() < len(match.string) else ""
+            if not self._is_dash_word_char(before) or after == "_" or self._is_dash_word_char(after):
+                return match.group(0)
             return f" {self._letter_name(match.group(1), lang)}"
 
         value = self._DASH_LEFT_SINGLE_LETTER_RE.sub(left, text)
@@ -380,32 +695,53 @@ class SpokenTextNormalizer:
     @classmethod
     def _normalizer_language(cls, language: str) -> str:
         key = str(language or "en").replace("-", "_").lower()
-        return cls._LANG_BY_MODEL_LANGUAGE.get(key, key if key in {"en", "es", "it"} else "en")
+        return cls._LANG_BY_MODEL_LANGUAGE.get(key, key if key in {"en", "es", "it", "fr", "de", "vi"} else "en")
 
     @classmethod
-    def _normalize_punctuation(cls, text: str) -> str:
+    def _normalize_punctuation(cls, text: str, lang: str) -> str:
         value = cls._ZERO_WIDTH_RE.sub("", str(text or ""))
+        value = value.replace("*", " ")   # scene breaks, *emphasis* and footnote stars are not spoken
+        value = cls._normalize_dash_contract(value)
         value = value.translate(cls._UNICODE_TRANSLATION)
-        value = value.replace("=", " equals ")
-        value = value.replace("°", " degrees ")
-        value = re.sub(r"(?<!\d):|:(?!\d)", ",", value)
+        value = cls._DOT_RUN_RE.sub("...", value)
+        value = cls._MIXED_TERMINAL_PUNCTUATION_RE.sub(lambda match: match.group(1), value)
+        equals_word = {"en": "equals", "es": "igual", "it": "uguale", "fr": "égal", "de": "gleich", "vi": "bằng"}.get(lang, "equals")
+        degrees_word = {"en": "degrees", "es": "grados", "it": "gradi", "fr": "degrés", "de": "Grad", "vi": "độ"}.get(lang, "degrees")
+        value = value.replace("=", f" {equals_word} ")
+        value = value.replace("°", f" {degrees_word} ")
         return cls._WHITESPACE_RE.sub(" ", value).strip()
 
     @classmethod
-    def _normalize_identifier_fragment(cls, fragment: str) -> str:
+    def _normalize_dash_contract(cls, text: str) -> str:
+        value = str(text or "")
+        for hyphen in cls._LEXICAL_HYPHENS:
+            value = value.replace(hyphen, "-")
+        for dash in cls._SYNTACTIC_DASHES:
+            value = value.replace(dash, " — ")
+        value = re.sub(r"-{2,}", " — ", value)
+        value = re.sub(r"(?:(?<=\s)-+|-+(?=\s))", " — ", value)
+        return cls._WHITESPACE_RE.sub(" ", value).strip()
+
+    @classmethod
+    def _normalize_identifier_fragment(cls, fragment: str, lang: str) -> str:
         out = str(fragment or "")
-        out = out.replace("+", " plus ")
+        plus_word = {"en": "plus", "es": "más", "it": "più", "fr": "plus", "de": "plus", "vi": "cộng"}.get(lang, "plus")
+        dot_word = {"en": "dot", "es": "punto", "it": "punto", "fr": "point", "de": "Punkt", "vi": "chấm"}.get(lang, "dot")
+        out = out.replace("+", f" {plus_word} ")
         out = out.replace("_", " ")
         out = out.replace("-", " ")
-        out = out.replace(".", " dot ")
+        out = out.replace(".", f" {dot_word} ")
         return out
 
     def _normalize_at_symbols(self, text: str, lang: str) -> str:
-        word = {"en": "at", "es": "arroba", "it": "chiocciola"}.get(lang, "at")
+        word = {
+            "en": "at", "es": "arroba", "it": "chiocciola",
+            "fr": "arobase", "de": "at", "vi": "a còng",
+        }.get(lang, "at")
 
         def replace_email(match: re.Match[str]) -> str:
-            local = self._normalize_identifier_fragment(match.group("local"))
-            domain = self._normalize_identifier_fragment(match.group("domain"))
+            local = self._normalize_identifier_fragment(match.group("local"), lang)
+            domain = self._normalize_identifier_fragment(match.group("domain"), lang)
             return f"{local} {word} {domain}"
 
         return self._EMAIL_RE.sub(replace_email, text).replace("@", f" {word} ")
@@ -423,17 +759,14 @@ class SpokenTextNormalizer:
             try:
                 return _num2words_raw(value, **kwargs).replace(",", "")
             except (NotImplementedError, TypeError, ValueError):
-                try:
-                    return _num2words_raw(value, lang="en", **({"to": "ordinal"} if ordinal else {})).replace(",", "")
-                except Exception:
-                    pass
+                pass
         return _fallback_number_to_words(int(value), lang, ordinal=ordinal)
 
     def _decimal_to_words(self, raw: str, lang: str) -> str:
         whole, frac = self._split_decimal(raw, lang)
         if frac is None:
             return self._to_words(int(self._whole_number_digits(whole) or "0"), lang)
-        point = {"en": "point", "es": "coma", "it": "virgola"}.get(lang, "point")
+        point = {"en": "point", "es": "coma", "it": "virgola", "fr": "virgule", "de": "Komma", "vi": "phẩy"}.get(lang, "point")
         words = [self._to_words(int(self._whole_number_digits(whole) or "0"), lang), point]
         words.extend(self._to_words(int(ch), lang) for ch in frac if ch.isdigit())
         return " ".join(words)
@@ -469,7 +802,7 @@ class SpokenTextNormalizer:
         if comma >= 0 and dot >= 0:
             decimal_sep = "," if comma > dot else "."
         elif comma >= 0:
-            if not cls._is_grouped_integer(value, ",") and (lang in {"es", "it"} or currency):
+            if not cls._is_grouped_integer(value, ",") and (lang in {"es", "it", "fr", "de", "vi"} or currency):
                 decimal_sep = ","
         elif dot >= 0:
             if not cls._is_grouped_integer(value, ".") and (lang == "en" or currency or len(value.rsplit(".", maxsplit=1)[-1]) != 3):
@@ -573,16 +906,18 @@ class SpokenTextNormalizer:
                 singular, plural = names[denominator]
                 return f"{self._to_words(numerator, lang)} {singular if numerator == 1 else plural}"
             return f"{self._to_words(numerator, lang)} over {self._to_words(denominator, lang)}"
-        over = "sobre" if lang == "es" else "su"
+        if lang == "vi":
+            return f"{self._to_words(numerator, lang)} phần {self._to_words(denominator, lang)}"
+        over = {"es": "sobre", "it": "su", "fr": "sur", "de": "durch"}.get(lang, "over")
         return f"{self._to_words(numerator, lang)} {over} {self._to_words(denominator, lang)}"
 
     @staticmethod
     def _and_word(lang: str) -> str:
-        return {"en": "and", "es": "y", "it": "e"}.get(lang, "and")
+        return {"en": "and", "es": "y", "it": "e", "fr": "et", "de": "und", "vi": "và"}.get(lang, "and")
 
     @staticmethod
     def _percent_word(lang: str) -> str:
-        return {"en": "percent", "es": "por ciento", "it": "per cento"}.get(lang, "percent")
+        return {"en": "percent", "es": "por ciento", "it": "per cento", "fr": "pour cent", "de": "Prozent", "vi": "phần trăm"}.get(lang, "percent")
 
 
 _DEFAULT_NORMALIZER: SpokenTextNormalizer | None = None

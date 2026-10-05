@@ -26,54 +26,56 @@
 extern "C" {
 #endif  // __cplusplus
 
-//
-// LiteRtTensor + Types
-//
-
-// Get the string name associated with this tensor. This is an optional
-// attribute and if not set will return a zero-length string.
-// The returned string pointer is owned by the LiteRtModel to which the given
-// Tensor belongs. It becomes invalid when the LiteRtModel is destroyed.
-LiteRtStatus LiteRtGetTensorName(LiteRtTensor tensor, const char** name);
-
-// Get the index associated with this tensor.
-LiteRtStatus LiteRtGetTensorIndex(LiteRtTensor tensor, uint32_t* tensor_index);
-
 // TENSOR TYPES
 
 // Primitive types for elements in a tensor.
 // Matched to tensorflow/compiler/mlir/lite/core/c/tflite_types.h
 typedef enum {
-  kLiteRtElementTypeNone = 0,         // kTfLiteNoType,
-  kLiteRtElementTypeBool = 6,         // kTfLiteBool,
-  kLiteRtElementTypeInt2 = 20,        // kTfLiteInt2,
-  kLiteRtElementTypeInt4 = 18,        // kTfLiteInt4,
-  kLiteRtElementTypeInt8 = 9,         // kTfLiteInt8,
-  kLiteRtElementTypeInt16 = 7,        // kTfLiteInt16,
-  kLiteRtElementTypeInt32 = 2,        // kTfLiteInt32,
-  kLiteRtElementTypeInt64 = 4,        // kTfLiteInt64,
-  kLiteRtElementTypeUInt8 = 3,        // kTfLiteUInt8,
-  kLiteRtElementTypeUInt16 = 17,      // kTfLiteUInt16,
-  kLiteRtElementTypeUInt32 = 16,      // kTfLiteUInt32,
-  kLiteRtElementTypeUInt64 = 13,      // kTfLiteUInt64,
-  kLiteRtElementTypeFloat16 = 10,     // kTfLiteFloat16,
-  kLiteRtElementTypeBFloat16 = 19,    // kTfLiteBFloat16,
-  kLiteRtElementTypeFloat32 = 1,      // kTfLiteFloat32,
-  kLiteRtElementTypeFloat64 = 11,     // kTfLiteFloat64,
-  kLiteRtElementTypeComplex64 = 8,    // kTfLiteComplex64,
-  kLiteRtElementTypeComplex128 = 12,  // kTfLiteComplex128,
-  kLiteRtElementTypeTfResource = 14,  // kTfLiteResource,
-  kLiteRtElementTypeTfString = 5,     // kTfLiteString,
-  kLiteRtElementTypeTfVariant = 15,   // kTfLiteVariant,
+  kLiteRtElementTypeNone = 0,           // kTfLiteNoType,
+  kLiteRtElementTypeBool = 6,           // kTfLiteBool,
+  kLiteRtElementTypeInt2 = 20,          // kTfLiteInt2,
+  kLiteRtElementTypeInt4 = 18,          // kTfLiteInt4,
+  kLiteRtElementTypeInt8 = 9,           // kTfLiteInt8,
+  kLiteRtElementTypeInt16 = 7,          // kTfLiteInt16,
+  kLiteRtElementTypeInt32 = 2,          // kTfLiteInt32,
+  kLiteRtElementTypeInt64 = 4,          // kTfLiteInt64,
+  kLiteRtElementTypeUInt4 = 21,         // kTfLiteUInt4,
+  kLiteRtElementTypeUInt8 = 3,          // kTfLiteUInt8,
+  kLiteRtElementTypeUInt16 = 17,        // kTfLiteUInt16,
+  kLiteRtElementTypeUInt32 = 16,        // kTfLiteUInt32,
+  kLiteRtElementTypeUInt64 = 13,        // kTfLiteUInt64,
+  kLiteRtElementTypeFloat8E4M3FN = 22,  // kTfLiteFloat8E4M3FN,
+  kLiteRtElementTypeFloat8E5M2 = 23,    // kTfLiteFloat8E5M2,
+  kLiteRtElementTypeFloat16 = 10,       // kTfLiteFloat16,
+  kLiteRtElementTypeBFloat16 = 19,      // kTfLiteBFloat16,
+  kLiteRtElementTypeFloat32 = 1,        // kTfLiteFloat32,
+  kLiteRtElementTypeFloat64 = 11,       // kTfLiteFloat64,
+  kLiteRtElementTypeComplex64 = 8,      // kTfLiteComplex64,
+  kLiteRtElementTypeComplex128 = 12,    // kTfLiteComplex128,
+  kLiteRtElementTypeTfResource = 14,    // kTfLiteResource,
+  kLiteRtElementTypeTfString = 5,       // kTfLiteString,
+  kLiteRtElementTypeTfVariant = 15,     // kTfLiteVariant,
 } LiteRtElementType;
 
-// Tensor whose rank is dynamic.
+/// Tensor type when its rank is dynamic.
+///
+/// @note This concrete type is part of the public API and is ABI stable.
 typedef struct {
   // The primitive element type of the constituent data.
   LiteRtElementType element_type;
 } LiteRtUnrankedTensorType;
 
-// Tensor whose rank is static but dimensions may be dynamic.
+#if defined(__cplusplus) && defined(__SIZEOF_POINTER__) && \
+    __SIZEOF_POINTER__ == 8
+static_assert(sizeof(LiteRtUnrankedTensorType) == 4,
+              "LiteRtUnrankedTensorType size mismatch");
+static_assert(offsetof(LiteRtUnrankedTensorType, element_type) == 0,
+              "LiteRtUnrankedTensorType element_type offset mismatch");
+#endif  // __cplusplus
+
+/// Tensor type when its rank is static but dimensions may be dynamic.
+///
+/// @note This concrete type is part of the public API and is ABI stable.
 typedef struct {
   // The primitive element type of the constituent data.
   LiteRtElementType element_type;
@@ -81,6 +83,18 @@ typedef struct {
   // Shape information.
   LiteRtLayout layout;
 } LiteRtRankedTensorType;
+
+// `LiteRtRankedTensorType` embeds `LiteRtLayout`, whose layout is now identical
+// across MSVC and GCC/Clang (see litert/c/litert_layout.h), so this size no
+// longer diverges by compiler. The assert intentionally has no `_MSC_VER`
+// branch.
+#if defined(__cplusplus) && defined(__SIZEOF_POINTER__) && \
+    __SIZEOF_POINTER__ == 8
+static_assert(sizeof(LiteRtRankedTensorType) == 72,
+              "LiteRtRankedTensorType size mismatch");
+static_assert(offsetof(LiteRtRankedTensorType, layout) == 4,
+              "LiteRtRankedTensorType layout offset mismatch");
+#endif  // __cplusplus
 
 inline bool LiteRtIsSameUnrankedTensorType(
     const LiteRtUnrankedTensorType* type1,
@@ -100,6 +114,8 @@ typedef enum {
 // QUANTIZATION
 
 // Schema for tensors quantized with one set of q-params.
+///
+/// @note This concrete type is part of the public API and is ABI stable.
 typedef struct {
   // Scaling factor.
   float scale;
@@ -107,16 +123,65 @@ typedef struct {
   // The value that float:0 maps to in q-space.
   int64_t zero_point;
 } LiteRtQuantizationPerTensor;
+#if defined(__cplusplus) && defined(__SIZEOF_POINTER__) && \
+    __SIZEOF_POINTER__ == 8
+static_assert(sizeof(LiteRtQuantizationPerTensor) == 16,
+              "LiteRtQuantizationPerTensor size mismatch");
+static_assert(offsetof(LiteRtQuantizationPerTensor, scale) == 0,
+              "LiteRtQuantizationPerTensor scale offset mismatch");
+static_assert(offsetof(LiteRtQuantizationPerTensor, zero_point) == 8,
+              "LiteRtQuantizationPerTensor zero_point offset mismatch");
+#endif  // __cplusplus
 
 // Schema for tensors quantized with one set of q-params per channel.
+///
+/// @note This concrete type is part of the public API and is ABI stable.
 typedef struct {
   int32_t quantized_dimension;
   uint64_t num_channels;
   float* scales;
   int64_t* zero_points;
 } LiteRtQuantizationPerChannel;
+#if defined(__cplusplus) && defined(__SIZEOF_POINTER__) && \
+    __SIZEOF_POINTER__ == 8
+static_assert(sizeof(LiteRtQuantizationPerChannel) == 32,
+              "LiteRtQuantizationPerChannel size mismatch");
+static_assert(
+    offsetof(LiteRtQuantizationPerChannel, quantized_dimension) == 0,
+    "LiteRtQuantizationPerChannel quantized_dimension offset mismatch");
+static_assert(offsetof(LiteRtQuantizationPerChannel, num_channels) == 8,
+              "LiteRtQuantizationPerChannel num_channels offset mismatch");
+static_assert(offsetof(LiteRtQuantizationPerChannel, scales) == 16,
+              "LiteRtQuantizationPerChannel scales offset mismatch");
+static_assert(offsetof(LiteRtQuantizationPerChannel, zero_points) == 24,
+              "LiteRtQuantizationPerChannel zero_points offset mismatch");
+#endif  // __cplusplus
+
+// Schema for tensors quantized across blocks of fixed size.
+///
+/// @note This concrete type is part of the public API and is ABI stable.
+typedef struct {
+  LiteRtTensor scales;
+  LiteRtTensor zero_points;
+  int32_t block_size;
+} LiteRtQuantizationBlockWise;
+
+#if defined(__cplusplus) && defined(__SIZEOF_POINTER__) && \
+    __SIZEOF_POINTER__ == 8
+static_assert(sizeof(LiteRtQuantizationBlockWise) == 24,
+              "LiteRtQuantizationBlockWise size mismatch");
+static_assert(offsetof(LiteRtQuantizationBlockWise, scales) == 0,
+              "LiteRtQuantizationBlockWise scales offset mismatch");
+static_assert(offsetof(LiteRtQuantizationBlockWise, zero_points) == 8,
+              "LiteRtQuantizationBlockWise zero_points offset mismatch");
+static_assert(offsetof(LiteRtQuantizationBlockWise, block_size) == 16,
+              "LiteRtQuantizationBlockWise block_size offset mismatch");
+#endif  // __cplusplus
 
 // The identifier for quantization scheme type union.
+///
+/// @note This concrete type is part of the public API and is ABI stable.
+// LINT.IfChange(quantization_type_id)
 typedef enum {
   // Tag for tensors without quantization.
   kLiteRtQuantizationNone = 0,
@@ -130,7 +195,7 @@ typedef enum {
   // [NOT IMPLEMENTED YET] Q-params across blocks of fixed size (e.g. 2048).
   kLiteRtQuantizationBlockWise = 3,
 } LiteRtQuantizationTypeId;
-
+// LINT.ThenChange(../cc/litert_model_types.h:quantization_type_id)
 // Get the identifier for the type of quantization for a given tensor.
 LiteRtStatus LiteRtGetQuantizationTypeId(LiteRtTensor tensor,
                                          LiteRtQuantizationTypeId* q_type_id);
@@ -143,6 +208,10 @@ LiteRtStatus LiteRtGetPerTensorQuantization(
 LiteRtStatus LiteRtGetPerChannelQuantization(
     LiteRtTensor tensor,
     LiteRtQuantizationPerChannel* per_channel_quantization);
+
+// Get the block-wise quantization information for a given tensor if it has it.
+LiteRtStatus LiteRtGetBlockWiseQuantization(
+    LiteRtTensor tensor, LiteRtQuantizationBlockWise* block_wise_quantization);
 
 // EDGES
 
@@ -170,7 +239,6 @@ typedef struct LiteRtModelSerializationOptions {
   // Alignment is enforced relative to the first byte of the flatbuffer.
   size_t bytecode_alignment;
 } LiteRtModelSerializationOptions;
-
 
 #ifdef __cplusplus
 }

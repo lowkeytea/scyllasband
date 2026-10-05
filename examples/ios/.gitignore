@@ -1,0 +1,5 @@
+Pods/
+ScyllasBandStudio.xcworkspace/
+DerivedData*/
+*.xcuserstate
+xcuserdata/

@@ -1,0 +1,23 @@
+PODS:
+  - onnxruntime-c (1.21.0)
+  - ScyllasBandKit (1.0.0):
+    - onnxruntime-c (~> 1.21)
+
+DEPENDENCIES:
+  - ScyllasBandKit (from `../../libscyllasband`)
+
+SPEC REPOS:
+  trunk:
+    - onnxruntime-c
+
+EXTERNAL SOURCES:
+  ScyllasBandKit:
+    :path: "../../libscyllasband"
+
+SPEC CHECKSUMS:
+  onnxruntime-c: ac65025f01072d25d7d394a2b43ac30d9397b260
+  ScyllasBandKit: b61f1ddf0c346426490fa3c3e029cb8ad21eb05d
+
+PODFILE CHECKSUM: f58775febb54fb25a08095b5985afc4be72f5a44
+
+COCOAPODS: 1.16.2

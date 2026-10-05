@@ -17,6 +17,9 @@ class SpeakerMarkerSpan(
 
     val label: String
         get() {
+            settings.delivery?.let { d ->
+                return "${settings.voiceId} · ${settings.language} · E ${formatCfg(d.energy)} T ${formatCfg(d.tension)} V ${formatCfg(d.valence)} A ${formatCfg(d.assertiveness)}${if (d.whisper) " · whisper" else ""}"
+            }
             val affect = settings.emotion?.let {
                 "${it.lowercase()} ${(settings.emotionStrength * 100).toInt()}%"
             } ?: "neutral"
