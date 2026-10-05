@@ -7,7 +7,7 @@
 [gwen:en_us:valence=2.6] I think she means: Scylla's Band is a 150 megabyte voice model with ten voices, six languages, and control over how we sound. It runs fast, right on your iPhone or Android phone.
 [tuesday:en_gb] So let's cover what's new! German, French and Vietnamese are new this time.
 [felix:de:whisper=on] Felix hier. Ich flüstere, damit niemand meinen Akzent hört. Klinge ich wie ein Amerikaner, der Deutsch spricht? Sagt es mir nicht. Bei 150 Megabyte war für Umlaute kaum noch Platz.
-[tuesday:en_gb] Felix says hello.
+[tuesday:en_gb] Felix says hello. I promise that's it.
 [stone:fr:energy=1.8,tension=1.6] Je m'appelle Stone. Vous pouvez régler mes émotions. Bonne chance.
 [scylla:vi:energy=2.4,valence=2.8] Thấy chưa? Vẫn là tôi, giờ tôi có thể làm phiền bạn bằng sáu thứ tiếng.
 [rex:es:energy=2.4,tension=2,valence=2.8,assertiveness=2.2] ¡Y el español sigue aquí! Lo que pasa en tu teléfono, se queda en tu teléfono.
