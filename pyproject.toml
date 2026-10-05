@@ -4,21 +4,18 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scyllasband"
-version = "1.0.0"
-description = "Public inference runtime and bundle contract for Scylla's Band duration-flow TTS"
+version = "2.0.0"
+description = "Inference runtime and bundle contract for Scylla's Band text-to-speech"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = ["numpy>=1.24", "ai-edge-litert>=2.2", "huggingface_hub>=0.23"]
 
 [project.optional-dependencies]
-coreml = ["coremltools>=7"]
-litert = []
-validation = ["faster-whisper>=1.1,<2"]
+onnx = ["onnxruntime>=1.18"]
 
 [project.scripts]
 scyllasband = "scyllasband.cli:main"
 scyllasband-speak = "scyllasband.cli:speak_main"
 scyllasband-group-speak = "scyllasband.cli:group_main"
-scyllasband-validate = "scyllasband.validation.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

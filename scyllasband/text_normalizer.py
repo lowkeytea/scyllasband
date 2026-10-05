@@ -640,10 +640,15 @@ class SpokenTextNormalizer:
         value = value.replace("-", " ")
         return self._WHITESPACE_RE.sub(" ", value).strip()
 
+    _SENTENCE_FOLLOWS_RE = re.compile(r"\s*$|\s+[\"'“‘(\[]?[A-ZÀ-ÖØ-ÞÑ]")
+
     def _expand_dotted_initialisms(self, text: str, lang: str) -> str:
         def replace(match: re.Match[str]) -> str:
             letters = re.findall(r"[A-Za-zÑñ]", match.group(0))
-            return " ".join(self._letter_name(letter, lang) for letter in letters)
+            spoken = " ".join(self._letter_name(letter, lang) for letter in letters)
+            # "at 9 a.m. Then ..." / "... p.m." at the end: the initialism's last dot also ends the sentence.
+            ends_sentence = self._SENTENCE_FOLLOWS_RE.match(text, match.end()) is not None
+            return spoken + "." if ends_sentence else spoken
 
         return self._DOTTED_INITIALISM_RE.sub(replace, text)
 
@@ -695,6 +700,7 @@ class SpokenTextNormalizer:
     @classmethod
     def _normalize_punctuation(cls, text: str, lang: str) -> str:
         value = cls._ZERO_WIDTH_RE.sub("", str(text or ""))
+        value = value.replace("*", " ")   # scene breaks, *emphasis* and footnote stars are not spoken
         value = cls._normalize_dash_contract(value)
         value = value.translate(cls._UNICODE_TRANSLATION)
         value = cls._DOT_RUN_RE.sub("...", value)

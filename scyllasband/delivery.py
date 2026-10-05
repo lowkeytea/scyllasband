@@ -1,17 +1,11 @@
-"""Measured delivery requests, independent of legacy emotion/affect controls."""
+"""Delivery requests: energy, tension, valence and assertiveness on 0-4 (2 = neutral), plus whisper."""
 from __future__ import annotations
 
 import math
 from typing import Any, Mapping
 
-DELIVERY_SCHEMA = "scyllasband_measured_delivery_v1"
-DELIVERY_RELEASE = "v2-measured-20260922"
 DELIVERY_AXES = ("energy", "tension", "valence", "assertiveness")
 DELIVERY_CHANNELS = (*DELIVERY_AXES, "whisper")
-
-
-def delivery_enabled(manifest: Any) -> bool:
-    return getattr(manifest, "controls", {}).get("graph_input_contract") == DELIVERY_SCHEMA
 
 
 def resolve_delivery(value: Mapping[str, Any] | str | None = None) -> dict[str, Any]:
@@ -77,17 +71,3 @@ def delivery_tensors(value: Mapping[str, Any] | str | None = None):
 
 def delivery_spec(value: Mapping[str, Any] | str | None = None) -> str:
     return ",".join(f"{key}={'auto' if val is None else val}" for key, val in resolve_delivery(value).items())
-
-
-def validate_delivery_request(manifest: Any, request: Any) -> None:
-    value = getattr(request, "delivery", None)
-    if not delivery_enabled(manifest):
-        if value is not None:
-            raise ValueError("This bundle uses legacy emotion controls and does not support measured delivery")
-        return
-    if (getattr(request, "affect", None) is not None or getattr(request, "emotion", None)
-            or getattr(request, "emotion_guidance", None)
-            or float(getattr(request, "affect_guidance_scale", 1.0)) != 1.0
-            or float(getattr(request, "emotion_embed_scale", 1.0)) != 1.0):
-        raise ValueError("This measured v2 bundle uses delivery controls; emotion presets and emotion CFG are unsupported")
-    resolve_delivery(value)
