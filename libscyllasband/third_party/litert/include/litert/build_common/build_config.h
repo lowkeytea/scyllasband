@@ -1,8 +1,7 @@
-// Hand-written build_config.h for the staged LiteRT 2.1.2 SDK.
-// Upstream generates this from build_config.h.in via CMake. We're consuming
-// the prebuilt libLiteRt.so from the ai_edge_litert wheel, which is built
-// with GPU + NPU enabled (see GPU symbols in nm output), so neither feature
-// macro is defined here.
+// Hand-written build_config.h for the staged LiteRT 2.2.0 SDK.
+// Upstream generates this file from build_config.h.in during its own build.
+// The prebuilt libLiteRt runtimes are built with GPU and NPU support, so
+// neither LITERT_DISABLE_GPU nor LITERT_DISABLE_NPU is defined here.
 
 #ifndef LITERT_BUILD_COMMON_BUILD_CONFIG_H_
 #define LITERT_BUILD_COMMON_BUILD_CONFIG_H_

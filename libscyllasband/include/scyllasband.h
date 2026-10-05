@@ -1,291 +1,143 @@
-#pragma once
+/*
+ * Scylla's Band native runtime: text-to-speech for scyllasband_measured_delivery_v2 bundles.
+ *
+ * One graph backend is linked into each build: ONNX Runtime (bundle flavor "onnx") or LiteRT (bundle flavor
+ * "litert"). scyllasband_backend() names it.
+ *
+ * Strings are UTF-8. Audio is mono float PCM in [-1, 1] at the bundle sample rate. A runtime serializes its
+ * requests; create one runtime per bundle and reuse it. Functions that return a status record a thread-local
+ * message for scyllasband_last_error() on failure.
+ */
+#ifndef SCYLLASBAND_H
+#define SCYLLASBAND_H
 
 #include <stdint.h>
+
+#if defined(_WIN32)
+#if defined(SCYLLASBAND_BUILDING)
+#define SCYLLASBAND_API __declspec(dllexport)
+#else
+#define SCYLLASBAND_API __declspec(dllimport)
+#endif
+#else
+#define SCYLLASBAND_API __attribute__((visibility("default")))
+#endif
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+#define SCYLLASBAND_ABI_VERSION "2.0.0"
+
 typedef struct ScyllasBandRuntime ScyllasBandRuntime;
 
-typedef struct ScyllasBandLiteRtSession ScyllasBandLiteRtSession;
-
 typedef enum {
-    SCYLLASBAND_TENSOR_FLOAT32 = 1,
-    SCYLLASBAND_TENSOR_FLOAT16 = 2,
-    SCYLLASBAND_TENSOR_FLOAT64 = 3,
-    SCYLLASBAND_TENSOR_INT64 = 4,
-    SCYLLASBAND_TENSOR_INT32 = 5,
-    SCYLLASBAND_TENSOR_INT16 = 6,
-    SCYLLASBAND_TENSOR_INT8 = 7,
-    SCYLLASBAND_TENSOR_UINT8 = 8,
-    SCYLLASBAND_TENSOR_BOOL = 9
-} ScyllasBandTensorType;
-
-typedef enum {
-    SCYLLASBAND_LITERT_ACCELERATOR_AUTO = 0,
-    SCYLLASBAND_LITERT_ACCELERATOR_CPU = 1,
-    SCYLLASBAND_LITERT_ACCELERATOR_GPU = 2,
-    SCYLLASBAND_LITERT_ACCELERATOR_NPU = 3
-} ScyllasBandLiteRtAccelerator;
-
-typedef struct {
-    const char* name;
-    int32_t data_type;
-    const int64_t* shape;
-    int32_t rank;
-    const void* data;
-    uint64_t byte_length;
-} ScyllasBandTensorView;
-
-typedef struct {
-    char* name;
-    int32_t data_type;
-    int64_t* shape;
-    int32_t rank;
-    void* data;
-    uint64_t byte_length;
-} ScyllasBandOwnedTensor;
-
-
-typedef enum {
-    SCYLLASBAND_STATUS_OK = 0,
-    SCYLLASBAND_STATUS_INVALID_ARGUMENT = 1,
-    SCYLLASBAND_STATUS_NOT_IMPLEMENTED = 2,
-    SCYLLASBAND_STATUS_RUNTIME_ERROR = 3
+    SCYLLASBAND_OK = 0,
+    SCYLLASBAND_ERROR_INVALID_ARGUMENT = 1,
+    SCYLLASBAND_ERROR_RUNTIME = 2,
+    SCYLLASBAND_ERROR_CANCELLED = 3
 } ScyllasBandStatus;
 
 typedef enum {
-    /* Resolves to the graph runtime linked into the current build. */
-    SCYLLASBAND_BACKEND_AUTO = 0,
-    SCYLLASBAND_BACKEND_LITERT = 1,
-    SCYLLASBAND_BACKEND_COREML = 2,
-    SCYLLASBAND_BACKEND_ONNX = 3,
-    SCYLLASBAND_BACKEND_COREAI = 4
-} ScyllasBandBackend;
+    SCYLLASBAND_ACCELERATOR_CPU = 0,
+    SCYLLASBAND_ACCELERATOR_GPU = 1,  /* LiteRT GPU, with CPU for unsupported ops */
+    SCYLLASBAND_ACCELERATOR_AUTO = 2  /* GPU when the graphs compile for it, else CPU */
+} ScyllasBandAccelerator;
 
 typedef enum {
-    SCYLLASBAND_SAMPLER_EULER = 0,
-    SCYLLASBAND_SAMPLER_HEUN = 1
+    SCYLLASBAND_SAMPLER_DEFAULT = 0,  /* the bundle default (Heun) */
+    SCYLLASBAND_SAMPLER_HEUN = 1,
+    SCYLLASBAND_SAMPLER_EULER = 2
 } ScyllasBandSampler;
 
-typedef enum {
-    SCYLLASBAND_DURATION_HIERARCHY_DEFAULT = 0,
-    SCYLLASBAND_DURATION_HIERARCHY_P50 = 1,
-    SCYLLASBAND_DURATION_HIERARCHY_SAMPLED = 2
-} ScyllasBandDurationHierarchyMode;
-
 typedef struct {
-    const char* bundle_dir;
-    ScyllasBandBackend backend;
-    int32_t validate_bundle;
-    ScyllasBandLiteRtAccelerator litert_accelerator;
-    int32_t litert_max_threads;
+    const char* bundle_dir;               /* directory holding manifest.json */
+    int32_t threads;                      /* CPU threads per graph; 0: up to 4 (LiteRT), ONNX Runtime's default (ONNX) */
+    ScyllasBandAccelerator accelerator;   /* LiteRT builds; ONNX Runtime builds run on CPU */
 } ScyllasBandRuntimeOptions;
 
 typedef struct {
     const char* text;
-    const char* explicit_phones;
     const char* voice_id;
-    const char* language;
-    const char* emotion;
-    const char* emotion_guidance;
-    int32_t guidance_null_reference;
-    float emotion_embed_scale;
-    const float* prefix_latents;
-    int32_t prefix_latent_dim;
-    int32_t prefix_latent_frames;
-    const char* context_before;
-    const char* context_after;
-    int32_t chunk_index;
-    int32_t chunk_count;
-    const char* boundary_before;
-    const char* boundary_after;
-    float min_sentence_pause_ms;
-    float min_clause_pause_ms;
-    int32_t steps;
+    const char* language;     /* NULL or "": the voice's default language ("en" also selects it) */
+    /* NULL, "" or "neutral": neutral delivery. "auto": unconditioned. Otherwise axis=value pairs, e.g.
+       "energy=2.5,tension=2,valence=2,assertiveness=2,whisper=off": axes on 0-4 (2 = neutral) or "auto",
+       whisper on/off/auto; omitted axes stay neutral. */
+    const char* delivery;
+    float speed;              /* duration scale; 1.0 = the model's own pace; must be positive */
+    int32_t steps;            /* flow steps; 0 = bundle default (8) */
     ScyllasBandSampler sampler;
-    uint64_t seed;
-    int32_t has_seed;
-    float speed;
-    float temperature;
-    /* Legacy affect spec, or delivery:energy=2,tension=2,valence=2,assertiveness=2,whisper=off
-       for a measured-delivery bundle. Tagged use preserves the existing C ABI. */
-    const char* affect;
-    float affect_guidance_scale;
-    int32_t has_affect_guidance_scale;
-    ScyllasBandDurationHierarchyMode duration_hierarchy_mode;
-} ScyllasBandSynthesisRequest;
+    uint64_t seed;            /* sentence i of the plan draws its noise from seed + i */
+    int32_t has_seed;         /* 0: fresh random noise */
+    float temperature;        /* noise scale; 1.0 = default */
+    int32_t normalize_text;   /* nonzero: expand numbers, dates, symbols and abbreviations before G2P */
+} ScyllasBandRequest;
 
 typedef struct {
     float* samples;
-    int32_t sample_count;
+    int64_t sample_count;
     int32_t sample_rate;
     char* metadata_json;
-    float* latents;
-    int32_t latent_dim;
-    int32_t latent_frames;
-} ScyllasBandSynthesisResult;
-
-typedef struct {
-    int32_t predicted_latent_frames;
-    int32_t fixed_latent_frames;
-    char* metadata_json;
-} ScyllasBandDurationEstimateResult;
-
-typedef struct {
-    ScyllasBandSynthesisRequest request;
-    int32_t max_chunk_chars;
-    int32_t min_chunk_chars;
-    int32_t pause_ms;
-    int32_t continuation_pause_ms;
-    int32_t use_prefix_latents;
-    int32_t disable_auto_split_overlong;
-    int32_t preflight_chunks;
-} ScyllasBandLongFormSynthesisRequest;
-
-typedef struct {
-    const char* text;
-    int32_t max_chunk_chars;
-    int32_t min_chunk_chars;
-} ScyllasBandChunkPlanRequest;
-
-typedef struct {
-    char* metadata_json;
-} ScyllasBandChunkPlanResult;
+} ScyllasBandAudio;
 
 typedef enum {
-    SCYLLASBAND_STREAM_EVENT_PLAN_READY = 1,
-    SCYLLASBAND_STREAM_EVENT_CHUNK_STARTED = 2,
-    SCYLLASBAND_STREAM_EVENT_AUDIO_CHUNK = 3,
-    SCYLLASBAND_STREAM_EVENT_CHUNK_FINISHED = 4,
-    SCYLLASBAND_STREAM_EVENT_WARNING = 5,
-    SCYLLASBAND_STREAM_EVENT_DONE = 6
-} ScyllasBandStreamingEventType;
+    SCYLLASBAND_EVENT_PLAN = 1,           /* metadata_json: the sentence plan */
+    SCYLLASBAND_EVENT_CHUNK_STARTED = 2,  /* metadata_json: the sentence about to be spoken */
+    SCYLLASBAND_EVENT_AUDIO = 3,          /* samples of one sentence; they join the previous audio directly */
+    SCYLLASBAND_EVENT_DONE = 4            /* metadata_json: timing summary */
+} ScyllasBandEventType;
 
 typedef struct {
-    ScyllasBandStreamingEventType type;
-    int32_t chunk_index;
-    int32_t chunk_count;
-    const char* chunk_id;
+    ScyllasBandEventType type;
+    int32_t chunk_index;   /* plan index of the sentence; -1 for plan and done events */
+    int32_t chunk_count;   /* sentences in the plan */
+    const char* chunk_id;  /* NULL for plan and done events */
     const char* metadata_json;
-    const float* samples;
-    int32_t sample_count;
+    const float* samples;  /* audio events only; valid during the callback */
+    int64_t sample_count;
     int32_t sample_rate;
-    const float* latents;
-    int32_t latent_dim;
-    int32_t latent_frames;
-} ScyllasBandStreamingEvent;
+} ScyllasBandEvent;
 
-typedef int32_t (*ScyllasBandStreamingCallback)(
-    const ScyllasBandStreamingEvent* event,
-    void* user_data
-);
+/* Return 0 to continue, nonzero to stop (the call then returns SCYLLASBAND_ERROR_CANCELLED). */
+typedef int32_t (*ScyllasBandEventCallback)(const ScyllasBandEvent* event, void* user_data);
 
+SCYLLASBAND_API const char* scyllasband_version(void);
+SCYLLASBAND_API const char* scyllasband_backend(void); /* "onnx" or "litert" */
+SCYLLASBAND_API const char* scyllasband_last_error(void);
 
-const char* scyllasband_last_error(void);
-void scyllasband_clear_error(void);
-/** Internal graph adapters use this to populate the thread-local native error. */
-void scyllasband_graph_session_set_error(const char* message);
-uint64_t scyllasband_tensor_element_size(int32_t data_type);
-void scyllasband_tensors_destroy(ScyllasBandOwnedTensor* tensors, int32_t tensor_count);
+/* Fills the defaults: speed 1, steps 0, default sampler, no seed, temperature 1, normalize_text 1. */
+SCYLLASBAND_API void scyllasband_request_init(ScyllasBandRequest* request);
 
-const char* scyllasband_version(void);
+SCYLLASBAND_API ScyllasBandStatus scyllasband_runtime_create(const ScyllasBandRuntimeOptions* options, ScyllasBandRuntime** out_runtime);
+SCYLLASBAND_API void scyllasband_runtime_destroy(ScyllasBandRuntime* runtime);
 
-ScyllasBandStatus scyllasband_runtime_create(
-    const ScyllasBandRuntimeOptions* options,
-    ScyllasBandRuntime** out_runtime
-);
+/* {"backend", "accelerator", "sample_rate", "release_id", "default_voice", "voices": [{"id", "languages", "default_language"}]}.
+   Owned by the runtime. */
+SCYLLASBAND_API const char* scyllasband_voices_json(ScyllasBandRuntime* runtime);
 
-void scyllasband_runtime_destroy(ScyllasBandRuntime* runtime);
+/* Loads the graphs a short sentence needs so the first request starts quickly. voice_id may be NULL. */
+SCYLLASBAND_API ScyllasBandStatus scyllasband_warmup(ScyllasBandRuntime* runtime, const char* voice_id);
 
-/*
- * Bound the number of target-bucket vector/vocoder session pairs retained by
- * a runtime. Zero keeps every encountered bucket warm; positive values use
- * least-recently-used eviction. Existing cached buckets are trimmed
- * immediately when the capacity is lowered.
- */
-ScyllasBandStatus scyllasband_runtime_set_target_bucket_cache_capacity(
-    ScyllasBandRuntime* runtime,
-    int32_t capacity
-);
+/* The sentence plan for a request (normalized text split into sentences), without synthesizing.
+   Free *out_json with scyllasband_string_free. */
+SCYLLASBAND_API ScyllasBandStatus scyllasband_plan_json(ScyllasBandRuntime* runtime, const ScyllasBandRequest* request, char** out_json);
 
-ScyllasBandStatus scyllasband_runtime_synthesize(
-    ScyllasBandRuntime* runtime,
-    const ScyllasBandSynthesisRequest* request,
-    ScyllasBandSynthesisResult* out_result
-);
+/* Speaks the whole request into one waveform. Free with scyllasband_audio_free. */
+SCYLLASBAND_API ScyllasBandStatus scyllasband_synthesize(ScyllasBandRuntime* runtime, const ScyllasBandRequest* request, ScyllasBandAudio* out_audio);
 
-ScyllasBandStatus scyllasband_runtime_synthesize_long_form(
-    ScyllasBandRuntime* runtime,
-    const ScyllasBandLongFormSynthesisRequest* request,
-    ScyllasBandSynthesisResult* out_result
-);
+/* Speaks the request sentence by sentence, calling `callback` from the calling thread as audio is ready. */
+SCYLLASBAND_API ScyllasBandStatus scyllasband_synthesize_stream(ScyllasBandRuntime* runtime, const ScyllasBandRequest* request,
+                                                                ScyllasBandEventCallback callback, void* user_data);
 
-ScyllasBandStatus scyllasband_runtime_plan_long_form(
-    ScyllasBandRuntime* runtime,
-    const ScyllasBandLongFormSynthesisRequest* request,
-    ScyllasBandChunkPlanResult* out_result
-);
+/* Stops, at their next graph call, the requests already issued on `runtime` (running or waiting for it); later
+   requests are unaffected. Safe to call from any thread. */
+SCYLLASBAND_API void scyllasband_cancel(ScyllasBandRuntime* runtime);
 
-ScyllasBandStatus scyllasband_runtime_synthesize_long_form_stream(
-    ScyllasBandRuntime* runtime,
-    const ScyllasBandLongFormSynthesisRequest* request,
-    ScyllasBandStreamingCallback callback,
-    void* user_data
-);
-
-ScyllasBandStatus scyllasband_runtime_estimate_latent_frames(
-    ScyllasBandRuntime* runtime,
-    const ScyllasBandSynthesisRequest* request,
-    ScyllasBandDurationEstimateResult* out_result
-);
-
-ScyllasBandStatus scyllasband_plan_long_form_chunks(
-    const ScyllasBandChunkPlanRequest* request,
-    ScyllasBandChunkPlanResult* out_result
-);
-
-void scyllasband_chunk_plan_result_free(ScyllasBandChunkPlanResult* result);
-
-void scyllasband_duration_estimate_result_free(ScyllasBandDurationEstimateResult* result);
-
-void scyllasband_synthesis_result_free(ScyllasBandSynthesisResult* result);
-
-const char* scyllasband_status_message(ScyllasBandStatus status);
-
-
-ScyllasBandLiteRtSession* scyllasband_litert_session_create(
-    const char* model_path,
-    int32_t accelerator,
-    int32_t max_threads
-);
-
-void scyllasband_litert_session_destroy(ScyllasBandLiteRtSession* session);
-
-int scyllasband_litert_session_has_signature(
-    const ScyllasBandLiteRtSession* session,
-    const char* signature_name
-);
-
-int scyllasband_litert_session_run(
-    const ScyllasBandLiteRtSession* session,
-    const char* signature_name,
-    const ScyllasBandTensorView* inputs,
-    int32_t input_count,
-    ScyllasBandOwnedTensor** out_tensors,
-    int32_t* out_tensor_count
-);
-
-int scyllasband_litert_session_run_resized(
-    const ScyllasBandLiteRtSession* session,
-    const char* signature_name,
-    const ScyllasBandTensorView* inputs,
-    int32_t input_count,
-    ScyllasBandOwnedTensor** out_tensors,
-    int32_t* out_tensor_count
-);
+SCYLLASBAND_API void scyllasband_audio_free(ScyllasBandAudio* audio);
+SCYLLASBAND_API void scyllasband_string_free(char* value);
 
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* SCYLLASBAND_H */

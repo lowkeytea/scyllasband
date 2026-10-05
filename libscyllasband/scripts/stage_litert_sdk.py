@@ -3,7 +3,7 @@
 `scyllasband/libscyllasband/third_party/litert/lib/<platform>/`.
 
 The headers under `third_party/litert/include/` are committed and pinned to
-the matching upstream tag (currently v2.1.5). Headers are not staged by this
+the matching upstream tag (currently v2.2.0). Headers are not staged by this
 script -- only the runtime library and optional GPU accelerator prebuilts. If
 you bump the LiteRT version, refresh the headers manually from upstream
 `google-ai-edge/LiteRT` at the matching tag, then run this script to refresh
@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Optional
 
 
-DEFAULT_DOWNLOAD_VERSION = "2.1.5"
+DEFAULT_DOWNLOAD_VERSION = "2.2.0"
 DOWNLOAD_BASE_URL = "https://storage.googleapis.com/litert/binaries"
 
 
@@ -148,7 +148,7 @@ def _host_platform_name() -> str:
     machine = platform.machine().lower()
     if sys.platform == "darwin":
         if machine not in {"arm64", "aarch64"}:
-            raise RuntimeError("LiteRT prebuilt downloads currently publish macos-arm64 for macOS hosts.")
+            raise RuntimeError("LiteRT publishes macOS prebuilts for arm64 only.")
         return "macos-arm64"
     if sys.platform.startswith("linux"):
         if machine in {"aarch64", "arm64"}:
@@ -302,8 +302,8 @@ def main() -> int:
     if args.download_gpu_accelerator or args.source_gpu_accelerator_lib is not None:
         print(
             "LiteRT GPU accelerator staged next to the runtime library. "
-            "Reconfigure/rebuild libscyllasband before testing --litert-accelerator gpu; "
-            "libscyllasband preloads staged accelerator plugins before LiteRT environment creation."
+            "LiteRT loads it from the runtime library's directory when a runtime is created with the GPU "
+            "or auto accelerator."
         )
         if platform_name.startswith("linux-"):
             print(

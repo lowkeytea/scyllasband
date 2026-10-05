@@ -1,246 +1,166 @@
 # libscyllasband
 
-`libscyllasband` is the native Scylla's Band inference runtime. It exposes the
-same duration-flow bundle contract used by the Python package and is the
-foundation for C, C++, Swift, Kotlin, and other host integrations.
+`libscyllasband` is the native C++ runtime for Scylla's Band model bundles (graph contract
+`scyllasband_measured_delivery_v2`). It implements the same pipeline as the Python runtime and produces
+the same durations, latents and audio for the same inputs. The public C ABI is `include/scyllasband.h`.
 
-The public ABI is defined in `include/scyllasband.h`. Host code should use the
-`scyllasband_*` functions, `SCYLLASBAND_*` constants, and `ScyllasBand*`
-types. The current ABI and public bundle contract are version `1.0.0`.
+Each build links one graph runtime:
 
-Measured v2 (`scyllasband_measured_delivery_v1`) is supported by the ONNX backend. Use `--delivery energy=2,tension=2,valence=2,assertiveness=2,whisper=off` in the native CLI. C callers preserve the ABI by setting `request.affect` to a string prefixed with `delivery:`; Python callers use `delivery`. Neutral is 2, whisper is binary, and omitted coordinates use separate presence masks. Existing v1 affect requests retain their original behavior. Measured v2 has no emotion CFG, prefix requests, or temporal control curves. Its fixed voice/locale references are embedded in the graphs.
+| Backend | Bundle | Download |
+| --- | --- | --- |
+| LiteRT 2.2 (default) | `scyllasband/models/litert` | `python -m scyllasband download` |
+| ONNX Runtime 1.20+ | `scyllasband/models/onnx` | `python -m scyllasband download --flavor onnx` |
 
-Only FP32 and INT8 ONNX measured bundles are published. The LiteRT/Core AI instructions below continue to apply to compatible legacy bundles, not to an unexported measured model.
+`scyllasband_backend()` reports the linked runtime, and a runtime only opens bundles with artifacts for it.
 
-## Runtime contract
+## Pipeline
 
-A synthesis request can provide raw text or explicit phones, a managed voice,
-language, speed, deterministic seed, Euler or Heun flow sampling, prefix
-latents, neighboring text context, chunk boundaries, and the selected bundle's
-manifest-declared affect vector. Current v2 bundles use:
+Text is normalized to its spoken form, split into paragraphs and sentences, and spoken one sentence at a time.
+For each sentence:
 
-`calm, joy, anger, sadness, whisper`
+1. the bundle G2P converts it to phones with word starts;
+2. the duration graph predicts frames for a 512-phone span of the sentence plus up to 180 context phones on
+   each side from the neighbouring sentences, and the sentence's frames are rounded to integers;
+3. per-frame phone ids and text events (punctuation, word starts, stress and length marks, phone phase,
+   sentence type) are built;
+4. the flow integrates noise to latents with Heun (default) or Euler steps in the smallest fitting
+   latent-frame bucket, conditioned on the span and on the last 96 latent frames already spoken;
+5. the vocoder decodes the sentence with up to 48 frames of the preceding latents as left context, so
+   consecutive sentences form one continuous waveform with no inserted pauses or crossfades.
 
-Pass affect as a comma-separated `axis=value` string such as
-`anger=0.75,whisper=0.25`. Axis strengths are independently bounded to
-`[0, 1]`. `affect_guidance_scale` is separate CFG guidance: `0` selects
-the learned null-affect branch, `1` uses the requested vector directly, and
-values above `1` amplify it. The runtime does not impose an upper cap, but
-high values are extrapolation and can destabilize timing or audio.
+A sentence that needs more frames than the largest bucket holds is split at the clause punctuation (or word
+break) nearest its middle and retried.
 
-An ONNX- or LiteRT-enabled runtime performs the complete native path:
-
-```text
-text -> bundle G2P -> duration prediction -> duration expansion
-     -> Euler/Heun rectified-flow sampling -> Vocos -> waveform
-```
-
-It loads the bundle's phone/language indexes, G2P assets, pronunciation
-overrides, and managed NPZ voice/reference packs. The returned
-`ScyllasBandSynthesisResult` owns waveform samples, metadata, and generated
-latent-tail storage; release them with
-`scyllasband_synthesis_result_free()`.
-
-Schema-v4 runtime packs must use stored ZIP members (`ZIP_STORED`). This keeps
-the mobile/native loader dependency-free; compressed training packs are repacked during export.
-
-## Runtime lifetime and target-bucket memory
-
-Create one `ScyllasBandRuntime` per long-lived client and reuse it. The runtime
-owns the G2P, duration, vector, and vocoder sessions; individual synthesis
-results never own sessions. Destroy the runtime once during client shutdown.
-
-The 256, 384, 512, and 640-frame target buckets have separate vector/vocoder
-graphs. By default, native runtimes retain every bucket they encounter for
-maximum desktop/server throughput. Mobile clients should bound that cache:
+## C API
 
 ```c
+#include "scyllasband.h"
+
 ScyllasBandRuntimeOptions options = {0};
-options.bundle_dir = bundle_path;
-options.backend = SCYLLASBAND_BACKEND_ONNX;
-options.validate_bundle = 1;
+options.bundle_dir = "scyllasband/models/litert";
+options.threads = 0;                                /* default */
+options.accelerator = SCYLLASBAND_ACCELERATOR_CPU;  /* LiteRT: CPU, GPU or AUTO */
 
 ScyllasBandRuntime* runtime = NULL;
-if (scyllasband_runtime_create(&options, &runtime) != SCYLLASBAND_STATUS_OK) {
-    /* Read scyllasband_last_error(). */
+if (scyllasband_runtime_create(&options, &runtime) != SCYLLASBAND_OK) {
+    fprintf(stderr, "%s\n", scyllasband_last_error());
 }
 
-/* One warm target bucket: the recommended memory-first mobile profile. */
-scyllasband_runtime_set_target_bucket_cache_capacity(runtime, 1);
+ScyllasBandRequest request;
+scyllasband_request_init(&request);
+request.text = "Did you really leave the gate open all night?";
+request.voice_id = "scylla";
+request.delivery = "energy=2.5,tension=2,valence=2,assertiveness=2,whisper=off";
+request.seed = 2027;
+request.has_seed = 1;
 
-/* Reuse runtime for every request, then destroy it once. */
+ScyllasBandAudio audio = {0};
+if (scyllasband_synthesize(runtime, &request, &audio) == SCYLLASBAND_OK) {
+    /* audio.samples: audio.sample_count mono floats at audio.sample_rate (24000) */
+}
+scyllasband_audio_free(&audio);
 scyllasband_runtime_destroy(runtime);
 ```
 
-The capacity is the number of target-bucket vector/vocoder session groups,
-not the number of synthesis requests or text chunks. A value of `0` is
-unbounded; positive values use least-recently-used eviction. Lowering the
-capacity trims existing sessions immediately. G2P, duration, and context
-sessions remain warm because they are small and shared by every target bucket.
-Synthesis metadata includes `session_cache.target_bucket_capacity`, count, and
-the current least-to-most-recent bucket frame list.
+| Function | Purpose |
+| --- | --- |
+| `scyllasband_runtime_create` / `_destroy` | Load a bundle; reuse one runtime for every request. |
+| `scyllasband_voices_json` | Backend, sample rate, release and voices with their languages. |
+| `scyllasband_warmup` | Load the graphs a short sentence needs before interactive use. |
+| `scyllasband_plan_json` | The normalized sentence plan for a request, without synthesizing. |
+| `scyllasband_synthesize` | One waveform plus JSON metadata (phones, durations, buckets, timings). |
+| `scyllasband_synthesize_stream` | Plan, sentence-started, audio and done events, one sentence at a time. |
+| `scyllasband_cancel` | Stop requests already issued on the runtime, from any thread. |
 
-Capacity `1` minimizes resident memory but pays session creation time when the
-requested bucket changes. Higher capacities trade memory for fewer reloads.
-Choose a profile once at runtime initialization and measure it on the target
-device; application code should not manually unload component sessions.
+Request fields:
+
+| Field | Meaning |
+| --- | --- |
+| `text`, `voice_id` | Required. |
+| `language` | `NULL` or `en`: the voice's own English dialect; otherwise one of the voice's languages. |
+| `delivery` | `NULL`/`neutral`, `auto`, or `energy=…,tension=…,valence=…,assertiveness=…,whisper=on/off/auto`; axes 0–4, 2 neutral, `auto` per axis. Omitted axes stay neutral. |
+| `speed` | Duration scale; 1 is the model's own pace. |
+| `steps`, `sampler` | Flow steps (0: bundle default 8) and Heun or Euler. |
+| `seed`, `has_seed` | Sentence *i* of the plan draws its noise from `seed + i`; without a seed every request differs. |
+| `temperature` | Noise scale (1 = default). |
+| `normalize_text` | Expand numbers, dates, times, currency, symbols and abbreviations before G2P. |
+
+A runtime serializes its requests; use separate runtimes for concurrent synthesis. Stream callbacks run on
+the calling thread and audio pointers are valid only during the callback; returning nonzero stops the
+request. Errors return a status and set the thread-local `scyllasband_last_error()`.
 
 ## Build
 
-A build without a graph backend validates the ABI, bundle parsing, planning, and native
-utilities:
+The LiteRT C headers (2.2.0) and ONNX Runtime headers (1.30.0) are staged under `third_party/`. Shared
+libraries go under `third_party/<sdk>/lib/<platform>/` (`linux-x86_64`, `android-arm64`, `ios-arm64`, …) and
+are not committed:
 
 ```bash
-cmake -S scyllasband/libscyllasband \
-      -B /tmp/scyllasband_native_build \
-      -DCMAKE_BUILD_TYPE=Release
-cmake --build /tmp/scyllasband_native_build -j
-ctest --test-dir /tmp/scyllasband_native_build --output-on-failure
-```
+# LiteRT runtime (and GPU accelerator) prebuilts for the host or another platform
+python scripts/stage_litert_sdk.py --download-runtime --download-gpu-accelerator --overwrite
+python scripts/stage_litert_sdk.py --platform android-arm64 --download-runtime --download-gpu-accelerator --overwrite
 
-Native ONNX synthesis requires ONNX Runtime headers and a shared library:
+# ONNX Runtime for Linux x86-64
+curl -L https://github.com/microsoft/onnxruntime/releases/download/v1.30.0/onnxruntime-linux-x64-1.30.0.tgz | tar xz
+mkdir -p third_party/onnxruntime/lib/linux-x86_64
+cp -a onnxruntime-linux-x64-1.30.0/lib/libonnxruntime.so* third_party/onnxruntime/lib/linux-x86_64/
+```
 
 ```bash
-cmake -S scyllasband/libscyllasband \
-    -B /tmp/scyllasband_native_onnx \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DSCYLLASBAND_ENABLE_ONNX=ON \
-    -DSCYLLASBAND_ONNXRUNTIME_INCLUDE_DIR=/path/to/onnxruntime/include \
-    -DSCYLLASBAND_ONNXRUNTIME_LIBRARY=/path/to/libonnxruntime.so
-cmake --build /tmp/scyllasband_native_onnx -j
-ctest --test-dir /tmp/scyllasband_native_onnx --output-on-failure
+cmake -S . -B build/litert -DCMAKE_BUILD_TYPE=Release                          # LiteRT (default)
+cmake -S . -B build/onnx -DCMAKE_BUILD_TYPE=Release -DSCYLLASBAND_BACKEND=onnx  # ONNX Runtime
+cmake --build build/litert -j
+ctest --test-dir build/litert --output-on-failure
 ```
 
-The [Android sample](../examples/android/README.md) extracts these files from Microsoft's `onnxruntime-android` AAR and packages the current ONNX bundle for offline use.
+| CMake option | Default | |
+| --- | --- | --- |
+| `SCYLLASBAND_BACKEND` | `litert` | `litert` or `onnx` |
+| `SCYLLASBAND_LITERT_INCLUDE_DIR`, `SCYLLASBAND_LITERT_LIBRARY` | staged SDK | LiteRT headers and `libLiteRt` |
+| `SCYLLASBAND_ONNXRUNTIME_INCLUDE_DIR`, `SCYLLASBAND_ONNXRUNTIME_LIBRARY` | staged SDK | ONNX Runtime headers and library |
+| `SCYLLASBAND_BUILD_TOOLS` | `ON` | `scyllasband_speak` |
+| `SCYLLASBAND_BUILD_TESTS` | `ON` | unit tests (and the parity test, see below) |
 
-The [iOS sample](../examples/ios/README.md) uses the
-[`ScyllasBandKit`](apple/README.md) local CocoaPod in this directory. The pod
-compiles the native sources against Microsoft's `onnxruntime-c` iOS package
-and exposes a Swift-friendly Objective-C API for manifest metadata, warmup,
-streaming synthesis, PCM ownership, and cancellation.
+The library target is `scyllasband_native` (alias `scyllasband::native`). Only `scyllasband_*` symbols are
+exported. On Android, pass the `libLiteRt.so` from the `com.google.ai.edge.litert:litert` AAR or the
+`libonnxruntime.so` from the `com.microsoft.onnxruntime:onnxruntime-android` AAR for `${ANDROID_ABI}`.
 
-Native LiteRT synthesis requires a staged LiteRT SDK:
+LiteRT runs on CPU through XNNPACK. `SCYLLASBAND_ACCELERATOR_GPU` and `_AUTO` load the GPU accelerator
+library from the directory of `libLiteRt` and run the ops it supports on the GPU, the rest on the CPU; with
+`_AUTO`, a graph that the GPU accelerator cannot compile runs entirely on the CPU instead of failing.
+
+## Command-line tool
 
 ```bash
-python scyllasband/libscyllasband/scripts/stage_litert_sdk.py \
-    --download-runtime \
-    --download-gpu-accelerator \
-    --overwrite
-
-cmake -S scyllasband/libscyllasband \
-    -B /tmp/scyllasband_native_litert \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DSCYLLASBAND_ENABLE_LITERT=ON
-cmake --build /tmp/scyllasband_native_litert -j
-ctest --test-dir /tmp/scyllasband_native_litert --output-on-failure
+build/litert/scyllasband_speak --bundle ../scyllasband/models/litert --voice ink \
+    --delivery energy=2.4,whisper=off --seed 2027 \
+    --text "Keep this between us." --output keep.wav --metadata keep.json
 ```
 
-The CMake library target is `scyllasband_native`, with the
-`scyllasband::native` alias. Tools and tests are enabled by default and can
-be controlled with `SCYLLASBAND_BUILD_TOOLS` and
-`SCYLLASBAND_BUILD_TESTS`.
+`--plan-only` prints the sentence plan; `--stream` prints the stream events.
 
-The Python runtime normally locates or builds this library through its shared
-loader. Set `SCYLLASBAND_NATIVE_LIBRARY` only when a host needs to select an
-explicit build.
+## Tests
 
-## Native smoke synthesis
-
-`scyllasband_native_speak` writes the returned float samples as PCM16 WAV and
-can preserve metadata for comparison:
+`ctest` runs the unit suites (`events`, `durations`, `context`, `delivery`, `sentences`, `segments`,
+`normalizer`, `unicode`) against fixtures produced by the Python runtime. Regenerate them after a reference
+change:
 
 ```bash
-/tmp/scyllasband_native_litert/scyllasband_native_speak \
-    --bundle output/scyllasband/release/litert \
-    --text "Oh, wonderful. The alarm is singing again." \
-    --voice scylla \
-    --language en_us \
-    --emotion anger=0.75,whisper=0.25 \
-    --emotion-scale 1.5 \
-    --steps 8 \
-    --sampler heun \
-    --seed 2027 \
-    --output /tmp/scyllasband_native.wav \
-    --metadata /tmp/scyllasband_native.json
+PYTHONPATH=.. python tests/generate_fixtures.py
 ```
 
-Use a selected bundle's manifest as the authority for components, shapes,
-controls, and supported voices/languages.
-
-## Long-form and streaming
-
-`scyllasband_runtime_synthesize_long_form()` plans paragraph, sentence, and
-budget-aware chunks; assigns deterministic per-chunk seeds; carries compatible
-prefix latents; retries overlong text, phone, or latent sequences with smaller
-chunks; and joins the result with boundary-aware pauses.
-
-`scyllasband_runtime_plan_long_form()` returns the same plan without
-synthesizing. `scyllasband_runtime_synthesize_long_form_stream()` emits
-plan, chunk-start, audio, chunk-finish, warning, and completion events through
-`ScyllasBandStreamingCallback`.
-
-The smoke tool exposes these paths:
+`tests/parity_harness.py` compares the built library with the Python runtime on a bundle of the build's
+flavor: text normalization, sentence splitting, punctuation segments and Unicode handling; G2P phones and word
+starts; per-sentence durations, latents (given the same noise) and decoded audio with passage context and
+prefix; the long-form plan and whole-passage audio. It needs numpy and `onnxruntime` or `ai-edge-litert`:
 
 ```bash
-# Inspect a plan.
-scyllasband_native_speak --bundle BUNDLE --file story.txt \
-    --long-form --plan-only --metadata /tmp/plan.json
-
-# Stream chunks and timing events.
-scyllasband_native_speak --bundle BUNDLE --file story.txt \
-    --long-form --stream \
-    --events /tmp/events.jsonl \
-    --chunk-output-dir /tmp/scyllasband_chunks \
-    --output /tmp/story.wav
+PYTHONPATH=.. python tests/parity_harness.py --library build/litert/libscyllasband_native.so \
+    --bundle ../scyllasband/models/litert --report parity.json
 ```
 
-## LiteRT accelerators
+Configure with `-DSCYLLASBAND_PARITY_BUNDLE=<bundle> -DSCYLLASBAND_PARITY_PYTHON=<python>` to run it under
+`ctest` as `scyllasband_parity`.
 
-The LiteRT core library and the platform GPU accelerator library must both be
-present under `third_party/litert/lib/<platform>/`. The staging helper supports
-Android ARM64/x86-64, Linux x86-64/ARM64, Apple Silicon macOS, iOS
-device/simulator, and Windows x86-64. Local SDK libraries are build artifacts
-and must not be committed.
-
-To stage previously downloaded libraries without network access:
-
-```bash
-python scyllasband/libscyllasband/scripts/stage_litert_sdk.py \
-    --source-lib /path/to/libLiteRt.so \
-    --source-gpu-accelerator-lib /path/to/libLiteRtWebGpuAccelerator.so \
-    --overwrite
-```
-
-CPU is the correctness baseline. `--litert-accelerator auto` and `gpu`
-request the corresponding LiteRT accelerator, but individual components may
-fall back to CPU when a graph or platform plugin cannot run correctly. The
-current public release uses one full vector-estimator graph, not separate
-prefix and tail estimator artifacts. Treat returned metadata as authoritative
-for the accelerator actually used.
-
-On Linux, standalone tools without the repository RPATH may need the staged
-library directory on `LD_LIBRARY_PATH`:
-
-```bash
-export LD_LIBRARY_PATH="$PWD/scyllasband/libscyllasband/third_party/litert/lib/linux-x86_64:${LD_LIBRARY_PATH:-}"
-```
-
-Preflight a staged runtime before performance or audio comparison:
-
-```bash
-python scyllasband/libscyllasband/scripts/benchmark_native_litert.py --preflight \
-    --tool /tmp/scyllasband_native_litert/scyllasband_native_speak \
-    --bundle output/scyllasband/release/litert \
-    --litert-stage-root scyllasband/libscyllasband/third_party/litert
-```
-
-Performance baselines are host- and accelerator-specific. Validate audio
-correctness first, compare the same bundle/settings/backend, and only then use
-the benchmark helpers for regression thresholds.
-
-## Current scope
-
-ONNX and LiteRT synthesis, bundle validation, duration estimation, long-form planning,
-aggregate synthesis, streaming callbacks, metadata, and low-level LiteRT tensor
-sessions are implemented. CoreML remains a reserved backend selection; richer
-platform bindings and packaging are separate host-integration work.
+The Unicode tables in `src/scyllasband_unicode_tables.inc` come from Python's `unicodedata`; regenerate them
+with `python tools/generate_unicode_tables.py`.

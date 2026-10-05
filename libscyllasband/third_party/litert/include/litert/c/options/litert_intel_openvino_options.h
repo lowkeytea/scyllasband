@@ -23,37 +23,42 @@
 extern "C" {
 #endif  // __cplusplus
 
-// Create an Intel OpenVINO options object that is type erased. The actual
-// option data can be accessed from the payload.
-LiteRtStatus LiteRtIntelOpenVinoOptionsCreate(LiteRtOpaqueOptions* options);
-LITERT_DEFINE_HANDLE(LiteRtIntelOpenVinoOptions);
+LITERT_DEFINE_HANDLE(LrtIntelOpenVinoOptions);
 
-// The string identifier that discriminates Intel OpenVINO options within
-// type erased options.
-const char* LiteRtIntelOpenVinoOptionsGetIdentifier();
+// Create an Intel OpenVINO options object.
+LiteRtStatus LrtIntelOpenVinoOptionsCreate(LrtIntelOpenVinoOptions* options);
 
-// Attempt to retrieve Intel OpenVINO options from the opaque options. Fails
-// if the opaque options are of another type.
-LiteRtStatus LiteRtIntelOpenVinoOptionsGet(
-    LiteRtOpaqueOptions options, LiteRtIntelOpenVinoOptions* options_data);
+// Destroy the options object.
+void LrtDestroyIntelOpenVinoOptions(LrtIntelOpenVinoOptions options);
+
+// Serializes intel openvino options and returns the components needed to create
+// opaque options. The caller is responsible for passing these to
+// `LiteRtCreateOpaqueOptions`.
+LiteRtStatus LrtGetOpaqueIntelOpenVinoOptionsData(
+    LrtIntelOpenVinoOptions options, const char** identifier, void** payload,
+    void (**payload_deleter)(void*));
+
+// Gets the identifier for Intel OpenVINO options stored in opaque options.
+const char* LrtGetIntelOpenVinoOptionsIdentifier();
+
+// Parses a TOML string into the C API representation.
+LiteRtStatus LrtCreateIntelOpenVinoOptionsFromToml(
+    const char* payload, LrtIntelOpenVinoOptions* options);
 
 // COMPILATION OPTIONS /////////////////////////////////////////////////////////
 
-// device_type ----------------------------------------------------------------
-typedef enum LiteRtIntelOpenVinoDeviceType {
-  kLiteRtIntelOpenVinoDeviceTypeCPU = 0,
-  kLiteRtIntelOpenVinoDeviceTypeGPU = 1,
-  kLiteRtIntelOpenVinoDeviceTypeNPU = 2,
-  kLiteRtIntelOpenVinoDeviceTypeAUTO = 3,
-} LiteRtIntelOpenVinoDeviceType;
-
-LiteRtStatus LiteRtIntelOpenVinoOptionsSetDeviceType(
-    LiteRtIntelOpenVinoOptions options,
-    enum LiteRtIntelOpenVinoDeviceType device_type);
-
-LiteRtStatus LiteRtIntelOpenVinoOptionsGetDeviceType(
-    LiteRtIntelOpenVinoOptions options,
-    enum LiteRtIntelOpenVinoDeviceType* device_type);
+// graph_backend --------------------------------------------------------------
+//
+// The OpenVINO target device for a graph (partition).  Each partition in a
+// compiled model carries its own graph type and is dispatched on the
+// corresponding OpenVINO device.  There is no longer a model-wide "device
+// type"; configure each partition individually via the per-graph API below.
+typedef enum LiteRtIntelOpenVinoGraphBackend {
+  kLiteRtIntelOpenVinoGraphBackendCPU = 0,
+  kLiteRtIntelOpenVinoGraphBackendGPU = 1,
+  kLiteRtIntelOpenVinoGraphBackendNPU = 2,
+  kLiteRtIntelOpenVinoGraphBackendMax = 3,
+} LiteRtIntelOpenVinoGraphBackend;
 
 // performance_mode -----------------------------------------------------------
 
@@ -70,12 +75,12 @@ typedef enum LiteRtIntelOpenVinoPerformanceMode {
   kLiteRtIntelOpenVinoPerformanceModeCumulativeThroughput = 2,
 } LiteRtIntelOpenVinoPerformanceMode;
 
-LiteRtStatus LiteRtIntelOpenVinoOptionsSetPerformanceMode(
-    LiteRtIntelOpenVinoOptions options,
+LiteRtStatus LrtIntelOpenVinoOptionsSetPerformanceMode(
+    LrtIntelOpenVinoOptions options,
     LiteRtIntelOpenVinoPerformanceMode performance_mode);
 
-LiteRtStatus LiteRtIntelOpenVinoOptionsGetPerformanceMode(
-    LiteRtIntelOpenVinoOptions options,
+LiteRtStatus LrtIntelOpenVinoOptionsGetPerformanceMode(
+    LrtIntelOpenVinoOptions options,
     LiteRtIntelOpenVinoPerformanceMode* performance_mode);
 
 // configs_map ----------------------------------------------------------------
@@ -83,20 +88,75 @@ LiteRtStatus LiteRtIntelOpenVinoOptionsGetPerformanceMode(
 // Set a custom configuration option with a string key-value pair.
 // The key and value strings are copied internally, so their lifetime does not
 // need to extend beyond this function call.
-LiteRtStatus LiteRtIntelOpenVinoOptionsSetConfigsMapOption(
-    LiteRtIntelOpenVinoOptions options, const char* key, const char* value);
+LiteRtStatus LrtIntelOpenVinoOptionsSetConfigsMapOption(
+    LrtIntelOpenVinoOptions options, const char* key, const char* value);
 
 // Get the number of custom configuration options
-LiteRtStatus LiteRtIntelOpenVinoOptionsGetNumConfigsMapOptions(
-    LiteRtIntelOpenVinoOptions options, int* num_options);
+LiteRtStatus LrtIntelOpenVinoOptionsGetNumConfigsMapOptions(
+    LrtIntelOpenVinoOptions options, int* num_options);
 
 // Get a custom configuration option by index.
 // The returned key and value pointers point to internal string data
 // and are valid for the lifetime of the options object.
 // The caller should not free these pointers.
-LiteRtStatus LiteRtIntelOpenVinoOptionsGetConfigsMapOption(
-    LiteRtIntelOpenVinoOptions options, int index, const char** key,
+LiteRtStatus LrtIntelOpenVinoOptionsGetConfigsMapOption(
+    LrtIntelOpenVinoOptions options, int index, const char** key,
     const char** value);
+
+// per-graph backend overrides ------------------------------------------------
+//
+// The OpenVINO compiler plugin compiles each partition for its configured
+// graph type (device), and the dispatcher imports each partition's bytecode
+// on that same device automatically.
+//
+// `graph_index` corresponds to the partition index produced by the LiteRT
+// partitioner (i.e. the order of subgraphs in the partitioned model passed
+// to `LiteRtCompilerPluginCompile`).  Applications that want to map a model
+// signature key to a graph index should resolve that mapping themselves and
+// pass the resulting integer index here.
+
+// Sets the OpenVINO graph backend (target device) for a specific graph
+// (partition) index.  Pass `graph_index = -1` as a wildcard to set the default
+// backend used by all graphs that do not have an explicit per-index override.
+// Partitions without either an explicit or wildcard override fall back to NPU.
+LiteRtStatus LrtIntelOpenVinoOptionsSetGraphBackend(
+    LrtIntelOpenVinoOptions options, int graph_index,
+    enum LiteRtIntelOpenVinoGraphBackend graph_backend);
+
+// Gets the graph backend override for a specific graph index.  Falls back to
+// the wildcard (`graph_index = -1`) entry when no per-index override exists.
+// Returns `kLiteRtStatusErrorNotFound` when neither is set.
+LiteRtStatus LrtIntelOpenVinoOptionsGetGraphBackend(
+    LrtIntelOpenVinoOptions options, int graph_index,
+    enum LiteRtIntelOpenVinoGraphBackend* graph_backend);
+
+// Sets an OpenVINO config map option for a specific graph index.  These
+// per-graph configs are merged on top of the model-wide configs at compile
+// time, with the per-graph values taking precedence.
+LiteRtStatus LrtIntelOpenVinoOptionsSetGraphConfigsMapOption(
+    LrtIntelOpenVinoOptions options, int graph_index, const char* key,
+    const char* value);
+
+// Number of graphs that have at least one per-graph override (device and/or
+// config map entries).
+LiteRtStatus LrtIntelOpenVinoOptionsGetNumGraphOverrides(
+    LrtIntelOpenVinoOptions options, int* num_overrides);
+
+// Returns the graph index at slot `slot_index`.  Use together with
+// `LrtIntelOpenVinoOptionsGetNumGraphOverrides` to enumerate overrides.
+LiteRtStatus LrtIntelOpenVinoOptionsGetGraphOverrideIndex(
+    LrtIntelOpenVinoOptions options, int slot_index, int* graph_index);
+
+// Number of per-graph config map entries set for `graph_index`.  Returns 0
+// if no overrides are set for that graph.
+LiteRtStatus LrtIntelOpenVinoOptionsGetNumGraphConfigsMapOptions(
+    LrtIntelOpenVinoOptions options, int graph_index, int* num_options);
+
+// Returns the (key, value) of the `index`-th config map entry for
+// `graph_index`.
+LiteRtStatus LrtIntelOpenVinoOptionsGetGraphConfigsMapOption(
+    LrtIntelOpenVinoOptions options, int graph_index, int index,
+    const char** key, const char** value);
 
 #ifdef __cplusplus
 
