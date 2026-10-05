@@ -4,6 +4,8 @@ Scylla's Band is a local text-to-speech runtime for ten managed voices. It predi
 
 Delivery is controlled with **energy, tension, valence and assertiveness**, each from **0 to 4** with **2 as neutral**, plus **whisper on/off**.
 
+**[Listen to the voice gallery](https://lowkeytea.github.io/scyllasband/)**: every voice in all six languages, seven delivery styles per voice, a long-form narration and a ten-voice dialogue.
+
 ## Quick start
 
 ```bash
