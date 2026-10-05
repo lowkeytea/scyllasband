@@ -6,8 +6,13 @@ struct ScyllasBandStudioApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView(model: model)
-                .task { model.initialize() }
+            if BenchmarkRunner.isRequested {
+                // On-device timing for the repository's benchmarks: no studio runtime is created.
+                Text("Running benchmark…").task { BenchmarkRunner.start() }
+            } else {
+                ContentView(model: model)
+                    .task { model.initialize() }
+            }
         }
     }
 }

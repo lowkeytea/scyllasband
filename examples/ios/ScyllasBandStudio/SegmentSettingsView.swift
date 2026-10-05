@@ -7,14 +7,7 @@ struct SegmentSettingsView: View {
     @Environment(\.dismiss) private var dismiss
 
     private var selectedVoice: SBScyllasBandVoice {
-        bundleInfo.voices.first { $0.identifier == settings.voiceIdentifier } ?? bundleInfo.voices[0]
-    }
-
-    private var emotionSelection: Binding<String> {
-        Binding(
-            get: { settings.emotion ?? "" },
-            set: { settings.emotion = $0.isEmpty ? nil : $0 }
-        )
+        bundleInfo.voice(withIdentifier: settings.voiceIdentifier) ?? bundleInfo.voices[0]
     }
 
     var body: some View {
@@ -26,7 +19,7 @@ struct SegmentSettingsView: View {
                             Text(voice.friendlyName).tag(voice.identifier)
                         }
                     }
-                    .onChange(of: settings.voiceIdentifier) { _ in
+                    .onChange(of: settings.voiceIdentifier) {
                         if !selectedVoice.languages.contains(settings.language) {
                             settings.language = selectedVoice.defaultLanguage
                         }
@@ -39,43 +32,24 @@ struct SegmentSettingsView: View {
                     }
                 }
 
-                if bundleInfo.deliveryEnabled {
-                    Section("Delivery · neutral is 2") {
-                        ForEach(["energy", "tension", "valence", "assertiveness"], id: \.self) { axis in
-                            VStack(alignment: .leading) {
-                                Text("\(axis.capitalized) · \(settings.delivery?[axis] ?? 2, specifier: "%.2f")")
-                                Slider(value: Binding(
-                                    get: { settings.delivery?[axis] ?? 2 },
-                                    set: { value in
-                                        if settings.delivery == nil { settings.delivery = [:] }
-                                        settings.delivery?[axis] = value
-                                    }), in: 0...4)
-                            }
+                Section("Presets") {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 8)], spacing: 8) {
+                        ForEach(DeliveryPreset.allCases) { preset in
+                            presetButton(preset)
                         }
-                        Toggle("Whisper", isOn: Binding(
-                            get: { settings.whisper ?? false }, set: { settings.whisper = $0 }))
                     }
-                } else {
+                    .padding(.vertical, 4)
+                }
+
                 Section {
-                    Picker("Emotion", selection: emotionSelection) {
-                        Text("Neutral").tag("")
-                        ForEach(bundleInfo.affectAxes, id: \.self) { emotion in
-                            Text(emotion.capitalized).tag(emotion)
-                        }
+                    ForEach(DeliveryAxis.allCases) { axis in
+                        DeliverySlider(axis: axis, value: $settings.delivery[dynamicMember: axis.keyPath])
                     }
-                    if settings.emotion != nil {
-                        VStack(alignment: .leading) {
-                            Text("Strength · \(Int(settings.emotionStrength * 100))%")
-                            Slider(value: $settings.emotionStrength, in: 0...1)
-                        }
-                    }
-                    TextField("Emotion CFG", value: $settings.emotionCFG, format: .number)
-                        .keyboardType(.decimalPad)
+                    Toggle("Whisper", isOn: $settings.delivery.whisper)
                 } header: {
                     Text("Delivery")
                 } footer: {
-                    Text("CFG 0 selects the learned null-affect branch, 1 applies the requested emotion directly, and values above 1 amplify it. High values can sound unstable.")
-                }
+                    Text("2 is neutral. The model accepts 0 to 4, but this app keeps each control between 0.5 and 3.1, because past about 3 the training data thins out and the voice distorts. How far a control moves the delivery varies with voice, language, and text, so start near 2 and listen as you move away from it.")
                 }
             }
             .navigationTitle("Speaker settings")
@@ -84,14 +58,57 @@ struct SegmentSettingsView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
                         settings.validate(using: bundleInfo)
-                        settings.emotionStrength = min(max(settings.emotionStrength, 0), 1)
-                        if !settings.emotionCFG.isFinite || settings.emotionCFG < 0 {
-                            settings.emotionCFG = 1
-                        }
                         dismiss()
                     }
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private func presetButton(_ preset: DeliveryPreset) -> some View {
+        let button = Button {
+            settings.delivery = preset.delivery
+        } label: {
+            Text(preset.title)
+                .frame(maxWidth: .infinity)
+        }
+        .accessibilityHint("Applies the \(preset.title.lowercased()) delivery")
+        if settings.delivery == preset.delivery {
+            button.buttonStyle(.borderedProminent)
+                .accessibilityAddTraits(.isSelected)
+        } else {
+            button.buttonStyle(.bordered)
+        }
+    }
+}
+
+private struct DeliverySlider: View {
+    let axis: DeliveryAxis
+    @Binding var value: Float
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(axis.title)
+                Spacer()
+                Text(value, format: .number.precision(.fractionLength(1)))
+                    .monospacedDigit()
+                    .foregroundStyle(value == DeliverySettings.neutralValue ? Color(uiColor: .secondaryLabel) : .accentColor)
+            }
+            Slider(value: $value, in: DeliverySettings.valueRange, step: 0.1) {
+                Text(axis.title)
+            }
+            HStack {
+                Text(axis.range.low)
+                Spacer()
+                Text(axis.range.high)
+            }
+            .font(.caption2)
+            .foregroundStyle(Color(uiColor: .secondaryLabel))
+            .accessibilityHidden(true)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityHint("Lower: \(axis.range.low). Higher: \(axis.range.high).")
     }
 }

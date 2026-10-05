@@ -7,130 +7,107 @@ if [[ $# -ne 1 ]]; then
 fi
 
 script_dir="${0:A:h}"
-scyllasband_root="${script_dir}/../../.."
+scyllasband_root="${script_dir:h:h:h}"
 models_dir="${scyllasband_root}/scyllasband/models"
 destination_root="$1/scyllasband"
 
-# Embed one release from scyllasband/models. Discovery prefers v2, then v1,
-# then the legacy flat v1 layout; Core AI and ONNX always come from that same
-# release so an app cannot accidentally mix model generations:
-#   coreai    -> used on iOS 27+
-#   onnx-int8 -> ONNX fallback for earlier iOS (preferred: smaller)
-#   onnx      -> ONNX fallback when int8 was not downloaded
-# SCYLLASBAND_IOS_BUNDLE_DIR overrides discovery with a single bundle.
+# Embeds the Scylla's Band bundles found in scyllasband/models (symlinks are followed):
+#   coreai -> Core AI, used on iOS 27 and later (devices only)
+#   coreml -> Core ML, used on iOS 18-26, in the Simulator, and wherever Core AI is unavailable
+# SCYLLASBAND_IOS_BUNDLE_DIR embeds one specific bundle instead.
 
 typeset -a embed_sources embed_names
 
-verify_coreai_bundle() {
+bundle_flavor() {
     local bundle="$1"
-    local required=(
-        "manifest.json"
-        "coreai/g2p.aimodel"
-        "coreai/duration_predictor.aimodel"
-        "coreai/vector_context_encoder.aimodel"
-        "coreai/vector_estimator.aimodel"
-        "coreai/vocoder.aimodel"
-    )
-    for relative_path in "${required[@]}"; do
-        if [[ ! -e "${bundle}/${relative_path}" ]]; then
-            echo "error: Core AI bundle is missing ${relative_path}" >&2
-            exit 1
-        fi
-    done
+    if [[ -d "${bundle}/coreai" ]]; then
+        echo "coreai"
+    elif [[ -d "${bundle}/coreml" ]]; then
+        echo "coreml"
+    else
+        echo ""
+    fi
 }
 
-verify_onnx_bundle() {
-    local bundle="$1"
-    local required=(
-        "manifest.json"
-        "onnx/components/shared_weights.bin"
-        "onnx/g2p/model.onnx"
-    )
-    for relative_path in "${required[@]}"; do
-        if [[ ! -f "${bundle}/${relative_path}" ]]; then
-            echo "error: ONNX bundle is missing ${relative_path}" >&2
-            exit 1
-        fi
-    done
-}
-
-if [[ -n "${SCYLLASBAND_IOS_BUNDLE_DIR:-}" ]]; then
-    override="${SCYLLASBAND_IOS_BUNDLE_DIR}"
-    if [[ ! -f "${override}/manifest.json" ]]; then
-        echo "error: Scylla's Band bundle not found at ${override}" >&2
+verify_bundle() {
+    local bundle="$1" flavor="$2" extension
+    case "${flavor}" in
+        coreai) extension="aimodel" ;;
+        coreml) extension="mlmodelc" ;;
+        *) echo "error: ${bundle} is neither a Core AI nor a Core ML bundle" >&2; exit 1 ;;
+    esac
+    if [[ ! -f "${bundle}/manifest.json" ]]; then
+        echo "error: the ${flavor} bundle at ${bundle} is missing manifest.json" >&2
         exit 1
     fi
-    if [[ -d "${override}/coreai" ]]; then
-        verify_coreai_bundle "${override}"
-        embed_sources+=("${override}")
-        embed_names+=("coreai")
-    else
-        verify_onnx_bundle "${override}"
-        embed_sources+=("${override}")
-        embed_names+=("onnx-int8")
+    if [[ ! -d "${bundle}/assets" ]]; then
+        echo "error: the ${flavor} bundle at ${bundle} is missing assets/" >&2
+        exit 1
     fi
-else
-    selected_models_dir=""
-    for candidate in "${models_dir}/v2" "${models_dir}/v1" "${models_dir}"; do
-        if [[ -f "${candidate}/coreai/manifest.json" || \
-              -f "${candidate}/onnx-int8/manifest.json" || \
-              -f "${candidate}/onnx/manifest.json" ]]; then
-            selected_models_dir="${candidate}"
-            break
+    for asset in g2p duration_predictor vector_context_encoder vector_estimator vocoder; do
+        if [[ ! -d "${bundle}/${flavor}/${asset}.${extension}" ]]; then
+            echo "error: the ${flavor} bundle at ${bundle} is missing ${flavor}/${asset}.${extension}" >&2
+            exit 1
         fi
     done
-    if [[ -n "${selected_models_dir}" ]]; then
-        measured_bundle=""
-        for onnx_name in onnx onnx-int8; do
-            manifest="${selected_models_dir}/${onnx_name}/manifest.json"
-            if [[ -f "${manifest}" ]] && /usr/bin/grep -q 'scyllasband_measured_delivery_v1' "${manifest}"; then
-                measured_bundle="${selected_models_dir}/${onnx_name}"
-                break
-            fi
-        done
-        if [[ -n "${measured_bundle}" ]]; then
-            verify_onnx_bundle "${measured_bundle}"
-            embed_sources+=("${measured_bundle}")
-            embed_names+=("onnx")
-        else
-        if [[ -f "${selected_models_dir}/coreai/manifest.json" ]]; then
-            verify_coreai_bundle "${selected_models_dir}/coreai"
-            embed_sources+=("${selected_models_dir}/coreai")
-            embed_names+=("coreai")
-        fi
-        for onnx_name in onnx-int8 onnx; do
-            if [[ -f "${selected_models_dir}/${onnx_name}/manifest.json" ]]; then
-                verify_onnx_bundle "${selected_models_dir}/${onnx_name}"
-                embed_sources+=("${selected_models_dir}/${onnx_name}")
-                embed_names+=("${onnx_name}")
-                break
-            fi
-        done
-        fi
+}
+
+# Core AI has no Simulator runtime, so Simulator builds embed only Core ML.
+simulator_build=0
+[[ "${PLATFORM_NAME:-}" == *simulator ]] && simulator_build=1
+
+if [[ -n "${SCYLLASBAND_IOS_BUNDLE_DIR:-}" ]]; then
+    override="${SCYLLASBAND_IOS_BUNDLE_DIR:A}"
+    flavor="$(bundle_flavor "${override}")"
+    verify_bundle "${override}" "${flavor}"
+    if [[ "${flavor}" == "coreai" && ${simulator_build} -eq 1 ]]; then
+        echo "error: SCYLLASBAND_IOS_BUNDLE_DIR is a Core AI bundle; the Simulator needs a Core ML bundle" >&2
+        exit 1
     fi
+    embed_sources+=("${override}")
+    embed_names+=("${flavor}")
+else
+    for flavor in coreai coreml; do
+        candidate="${models_dir}/${flavor}"
+        [[ -e "${candidate}" ]] || continue
+        if [[ "${flavor}" == "coreai" && ${simulator_build} -eq 1 ]]; then
+            echo "note: skipping the Core AI bundle; the Simulator runs the Core ML bundle"
+            continue
+        fi
+        verify_bundle "${candidate}" "${flavor}"
+        embed_sources+=("${candidate:A}")
+        embed_names+=("${flavor}")
+    done
 fi
 
 if (( ${#embed_sources[@]} == 0 )); then
-    echo "error: no Scylla's Band bundle found under ${models_dir}" >&2
-    echo "error: run 'python -m scyllasband download' (Core AI plus ONNX on macOS 27, ONNX elsewhere)" >&2
-    echo "error: or set SCYLLASBAND_IOS_BUNDLE_DIR to a specific runtime bundle" >&2
+    echo "error: no usable Scylla's Band bundle found in ${models_dir} (expected coreml/ and/or coreai/)" >&2
+    echo "error: run 'python -m scyllasband download --flavor coreml --yes' (iOS 18+ and the Simulator)" >&2
+    echo "error: and/or 'python -m scyllasband download --flavor coreai --yes' (iOS 27+ devices) at the repository root," >&2
+    echo "error: or set SCYLLASBAND_IOS_BUNDLE_DIR to one bundle directory" >&2
     exit 1
 fi
 
-# The destination persists across builds; clear it so bundles removed from
-# scyllasband/models (or files removed within a bundle) don't linger in the app.
-/bin/rm -rf "${destination_root}"
+# The destination persists across builds. rsync copies only what changed and --delete removes files that left a
+# bundle; bundles, examples and older layouts no longer embedded are removed first. The .mlpackage sources are not needed at
+# run time: the manifest points at the compiled .mlmodelc directories.
+for entry in "${destination_root}"/*(N); do
+    if (( ${embed_names[(Ie)${entry:t}]} == 0 )); then
+        /bin/rm -rf "${entry}"
+    fi
+done
 /bin/mkdir -p "${destination_root}/examples"
 for (( index = 1; index <= ${#embed_sources[@]}; index++ )); do
-    echo "note: embedding ${embed_names[index]} bundle from ${embed_sources[index]}"
-    /usr/bin/ditto "${embed_sources[index]}" "${destination_root}/${embed_names[index]}"
+    echo "note: embedding the ${embed_names[index]} bundle from ${embed_sources[index]}"
+    /usr/bin/rsync -aL --delete --exclude '*.mlpackage' --exclude '.DS_Store' \
+        "${embed_sources[index]}/" "${destination_root}/${embed_names[index]}/"
 done
 
-for example_name in emotional_text.txt groupSpeak.txt test_document.txt; do
+for example_name in walkthrough_demo.txt test_document.txt emotional_text.txt; do
     source_example="${scyllasband_root}/data/${example_name}"
     if [[ ! -f "${source_example}" ]]; then
-        echo "error: example script is missing at ${source_example}" >&2
+        echo "error: example document is missing at ${source_example}" >&2
         exit 1
     fi
-    /usr/bin/ditto "${source_example}" "${destination_root}/examples/${example_name}"
+    /bin/cp -f "${source_example}" "${destination_root}/examples/${example_name}"
 done
