@@ -3,6 +3,7 @@ import ScyllasBandKit
 
 struct ContentView: View {
     @ObservedObject var model: StudioViewModel
+    @State private var showingRuntimeSettings = false
 
     var body: some View {
         NavigationStack {
@@ -15,23 +16,45 @@ struct ContentView: View {
             }
             .background(Color(uiColor: .systemGroupedBackground).ignoresSafeArea())
             .navigationTitle("Scylla’s Band Studio")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showingRuntimeSettings = true
+                    } label: {
+                        Image(systemName: "gearshape")
+                    }
+                    .accessibilityLabel("Runtime settings")
+                }
+            }
+            .sheet(isPresented: $showingRuntimeSettings) {
+                RuntimeSettingsView(model: model)
+            }
         }
     }
 
     private var editorScreen: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Build a script from speaker segments. Each segment has its own voice, language, emotion strength, and CFG; native long-form planning handles chunks within it.")
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Build a script from speaker segments. Each segment has its own voice, language, and delivery; the runtime speaks it sentence by sentence.")
                         .font(.subheadline)
                         .foregroundStyle(Color(uiColor: .secondaryLabel))
-                    presetMenu
+                    HStack {
+                        presetMenu
+                        Spacer()
+                        runtimeBadge
+                    }
+                }
+
+                if model.isPreparing {
+                    preparingCard
                 }
 
                 ForEach($model.segments) { $segment in
                     SegmentCard(
                         segment: $segment,
                         bundleInfo: model.bundleInfo,
+                        isFirst: segment.id == model.segments.first?.id,
                         canDelete: model.segments.count > 1,
                         onDelete: { model.removeSegment(id: segment.id) }
                     )
@@ -73,6 +96,40 @@ struct ContentView: View {
         }
     }
 
+    private var runtimeBadge: some View {
+        Button {
+            showingRuntimeSettings = true
+        } label: {
+            Label(model.runtimeSummary, systemImage: "cpu")
+                .font(.caption.weight(.medium))
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .accessibilityLabel("Runtime: \(model.runtimeSummary). Opens runtime settings.")
+    }
+
+    private var preparingCard: some View {
+        HStack(alignment: .top, spacing: 12) {
+            ProgressView()
+                .tint(.accentColor)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Preparing voices…")
+                    .font(.headline)
+                Text(model.preparingDetail)
+                    .font(.footnote)
+                    .foregroundStyle(Color(uiColor: .secondaryLabel))
+            }
+            Spacer(minLength: 0)
+        }
+        .padding()
+        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(Color.accentColor.opacity(0.55), lineWidth: 1)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
     private var playbackButton: some View {
         Button(action: model.playOrStop) {
             Label(model.isPlaying ? "Stop" : "Play script", systemImage: model.isPlaying ? "stop.fill" : "play.fill")
@@ -86,7 +143,7 @@ struct ContentView: View {
 
     private var statusLine: some View {
         HStack(alignment: .top, spacing: 10) {
-            if model.isInitializing || model.isPlaying {
+            if model.isPreparing || model.isPlaying {
                 ProgressView()
                     .tint(.accentColor)
             }
@@ -100,8 +157,8 @@ struct ContentView: View {
 
     private var presetMenu: some View {
         Menu {
-            ForEach(ExamplePreset.allCases) { preset in
-                Button(preset.title) { model.loadPreset(preset) }
+            ForEach(ExampleDocument.allCases) { example in
+                Button(example.title) { model.loadExample(example) }
             }
         } label: {
             Label("Load example", systemImage: "doc.text")
@@ -126,6 +183,10 @@ struct ContentView: View {
                             .foregroundStyle(Color(uiColor: .secondaryLabel))
                     }
                 }
+                Spacer(minLength: 0)
+                Text(model.runtimeSummary)
+                    .font(.caption)
+                    .foregroundStyle(Color(uiColor: .secondaryLabel))
             }
 
             if let context = model.nowPlayingContext {
@@ -136,7 +197,7 @@ struct ContentView: View {
 
             Divider()
 
-            Text(model.nowPlayingText ?? "Preparing the first audio chunk…")
+            Text(model.nowPlayingText ?? "Preparing the first sentence…")
                 .font(.title3.weight(.medium))
                 .foregroundStyle(Color(uiColor: .label))
                 .frame(maxWidth: .infinity, minHeight: 220, alignment: .topLeading)
@@ -162,6 +223,7 @@ struct ContentView: View {
 private struct SegmentCard: View {
     @Binding var segment: ScriptSegment
     let bundleInfo: SBScyllasBandBundleInfo?
+    let isFirst: Bool
     let canDelete: Bool
     let onDelete: () -> Void
     @State private var showingSettings = false
@@ -209,12 +271,16 @@ private struct SegmentCard: View {
                 SegmentSettingsView(settings: $segment.settings, bundleInfo: bundleInfo)
             }
         }
+        #if DEBUG
+        .onAppear {
+            if isFirst, bundleInfo != nil, LaunchOptions.consumeShowSegmentSettings() {
+                showingSettings = true
+            }
+        }
+        #endif
     }
 
     private var summary: String {
-        let delivery = segment.settings.emotion.map {
-            "\($0) \(Int(segment.settings.emotionStrength * 100))% · CFG \(segment.settings.emotionCFG.formatted(.number.precision(.fractionLength(0...2))))"
-        } ?? "neutral"
-        return "\(languageLabel(segment.settings.language)) · \(delivery)"
+        "\(languageLabel(segment.settings.language)) · \(segment.settings.delivery.summary)"
     }
 }

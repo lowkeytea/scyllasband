@@ -27,6 +27,9 @@ from .g2p import SILENCE, G2PFrontend
 
 GRAPH_CONTRACT = "scyllasband_measured_delivery_v2"
 LATENT_HOP = 512
+# Target lengths v2 was trained on, in latent frames (about 1.4 to 9 seconds): shorter targets lose their prosody and
+# longer ones their intelligibility. A bundle can state its own as controls.chunking.min/max_target_frames.
+MIN_TARGET_FRAMES, MAX_TARGET_FRAMES = 64, 420
 
 
 def balanced_context(before: Sequence[int], target: Sequence[int], after: Sequence[int], max_phones: int) -> tuple[list[int], list[int]]:
@@ -112,10 +115,19 @@ class Engine:
         self.latent_dim = int(self.manifest["audio"]["latent_dim"])
         buckets = controls["target_buckets"]["buckets"]
         self.buckets = sorted((int(b["latent_frames"]), str(b["vector_estimator"]), str(b["vocoder"])) for b in buckets)
+        # Optional graphs that run every flow step in one call, for one sampler and step count: {latent_frames: component}.
+        fused = controls.get("fused_flow") or {}
+        self.fused_flow = (str(fused.get("sampler", "")).lower(), int(fused.get("steps", 0)))
+        self.flow_graphs = {int(b["latent_frames"]): str(b["vector_flow"]) for b in buckets if b.get("vector_flow")}
+        chunking = controls.get("chunking") or {}
+        self.min_target_frames = int(chunking.get("min_target_frames", MIN_TARGET_FRAMES))
+        self.max_target_frames = min(int(chunking.get("max_target_frames", MAX_TARGET_FRAMES)), self.buckets[-1][0])
+        # Optional narrower G2P inputs, smallest first: a phrase runs at the smallest width that holds it.
+        self.g2p_buckets = sorted((int(b["text_tokens"]), str(b["component"])) for b in controls.get("g2p_buckets") or [])
         self._session_factory = session_factory or self._onnx_session
         self._sessions: dict[str, Any] = {}
         self._lock = threading.RLock()
-        self.g2p = G2PFrontend(self.bundle_dir, assets, controls, self.phone_to_id, infer=lambda x: self._run("g2p", text=x))
+        self.g2p = G2PFrontend(self.bundle_dir, assets, controls, self.phone_to_id, infer=self._g2p)
 
     # --- sessions -----------------------------------------------------------------------------------------------------
     def _onnx_session(self, name: str, spec: Mapping[str, Any]) -> OnnxSession:
@@ -129,6 +141,17 @@ class Engine:
 
     def _run(self, name: str, **feeds: np.ndarray) -> np.ndarray:
         return self.session(name).run(feeds)
+
+    def _g2p(self, text: np.ndarray) -> np.ndarray:
+        """G2P logits for padded text ids [1, tokens]; padding is masked, so a narrower graph gives the same logits."""
+        if self.g2p_buckets:
+            pad = int(self.g2p.tokenizer.get("text_pad_index", 0))
+            used = np.flatnonzero(np.asarray(text)[0] != pad)
+            length = int(used[-1]) + 1 if used.size else 1
+            for width, name in self.g2p_buckets:
+                if width >= length:
+                    return self._run(name, text=np.asarray(text)[:, :width])
+        return self._run("g2p", text=text)
 
     @property
     def max_frames(self) -> int:
@@ -210,7 +233,10 @@ class Engine:
             noise = rng.standard_normal((self.latent_dim, length)).astype(np.float32) * float(noise_scale)
         x[0, :, :length] = noise
         heun = str(sampler).lower() == "heun"
-        for step in range(int(steps)):
+        fused = self.flow_graphs.get(frames) if (str(sampler).lower(), int(steps)) == self.fused_flow else None
+        if fused is not None:
+            x = self._run(fused, noise=x, **feeds)
+        for step in range(0 if fused is not None else int(steps)):
             a = self._run(vector_name, noise=x, time=np.array([step / steps], np.float32), **feeds)
             if heun:
                 b = self._run(vector_name, noise=x + a / steps, time=np.array([(step + 1) / steps], np.float32), **feeds)
@@ -219,6 +245,7 @@ class Engine:
                 x = x + a / steps
             x = x * mask[:, None, :]
         metadata = dict(phones=sentence.phones, durations=durations, latent_frames=length, bucket=frames, steps=int(steps), sampler=sampler,
+                        fused_flow=fused is not None,
                         prefix_frames=int(prefix_mask.sum()), context_before=min(len(sentence.before_ids), self.context_phones),
                         context_after=min(len(sentence.after_ids), self.context_phones))
         return SentenceResult(latents=x[0, :, :length].copy(), durations=durations, bucket=frames, metadata=metadata)

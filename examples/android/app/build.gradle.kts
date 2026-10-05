@@ -2,45 +2,26 @@ plugins {
     alias(libs.plugins.android.application)
 }
 
+// LiteRT (default) or ONNX Runtime: -Pscyllasband.backend=onnx. The library module reads the same property.
+val scyllasbandBackend = (findProperty("scyllasband.backend") as String?)?.lowercase() ?: "litert"
 val repositoryRoot = projectDir.resolve("../../..").canonicalFile
-val scyllasbandModelsDir = repositoryRoot.resolve("scyllasband/models")
-// Android runs ONNX only. Prefer the mobile-optimized int8 bundle and fall
-// back to full ONNX. Versioned v2 is always searched before v1 and the old
-// flat v1 layout remains readable for existing checkouts.
-val scyllasbandOnnxInt8BundleDir = sequenceOf(
-    "v2/onnx",
-    "v2/onnx-int8",
-    "v1/onnx-int8",
-    "v1/onnx",
-    "onnx-int8",
-    "onnx",
-)
-    .map(scyllasbandModelsDir::resolve)
-    .firstOrNull { it.resolve("manifest.json").isFile }
-    ?: scyllasbandModelsDir.resolve("v2/onnx")
+val scyllasbandBundleDir = repositoryRoot.resolve("scyllasband/models/$scyllasbandBackend")
 val exampleDataDir = repositoryRoot.resolve("data")
 val generatedAssetsDir = layout.buildDirectory.dir("generated/scyllasbandAssets/main")
 
 val prepareScyllasBandAssets by tasks.registering(Sync::class) {
     doFirst {
-        check(scyllasbandOnnxInt8BundleDir.resolve("manifest.json").isFile) {
-            "Scylla's Band ONNX manifest not found under ${scyllasbandModelsDir.absolutePath}. Run `python -m scyllasband download --model-version v2 --runtime-bundles onnx`."
-        }
-        check(scyllasbandOnnxInt8BundleDir.resolve("onnx/components/shared_weights.bin").isFile) {
-            "Scylla's Band ONNX shared weights are missing under ${scyllasbandOnnxInt8BundleDir.absolutePath}."
-        }
-        check(scyllasbandOnnxInt8BundleDir.resolve("onnx/g2p/model.onnx").isFile) {
-            "Scylla's Band ONNX G2P model is missing under ${scyllasbandOnnxInt8BundleDir.absolutePath}."
-        }
-        if (scyllasbandOnnxInt8BundleDir.name != "onnx-int8") {
-            logger.lifecycle("Embedding the full ONNX bundle; download onnx-int8 for a smaller APK.")
+        check(scyllasbandBundleDir.resolve("manifest.json").isFile) {
+            "Scylla's Band $scyllasbandBackend bundle not found at ${scyllasbandBundleDir.absolutePath}. " +
+                "Run `python -m scyllasband download --yes`" +
+                (if (scyllasbandBackend == "onnx") " --flavor onnx" else "") + "."
         }
     }
-    from(scyllasbandOnnxInt8BundleDir) {
-        into("scyllasband/onnx-int8")
+    from(scyllasbandBundleDir) {
+        into("scyllasband/bundle")
     }
     from(exampleDataDir) {
-        include("emotional_text.txt", "groupSpeak.txt", "test_document.txt")
+        include("walkthrough_demo.txt", "test_document.txt", "emotional_text.txt")
         into("scyllasband/examples")
     }
     into(generatedAssetsDir)
@@ -86,7 +67,13 @@ android {
     }
 
     androidResources {
-        noCompress += listOf("onnx", "bin", "npz")
+        noCompress += listOf("tflite", "onnx", "bin")
+    }
+
+    packaging {
+        // LiteRT loads its GPU accelerator from the directory of libLiteRt.so, so the libraries must be
+        // extracted to disk instead of being mapped from the APK.
+        jniLibs.useLegacyPackaging = true
     }
 }
 

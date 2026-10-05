@@ -125,6 +125,8 @@ const char* scyllasband_version(void) { return SCYLLASBAND_ABI_VERSION; }
 const char* scyllasband_backend(void) {
 #if defined(SCYLLASBAND_WITH_LITERT)
     return "litert";
+#elif defined(SCYLLASBAND_WITH_APPLE)
+    return "apple";
 #else
     return "onnx";
 #endif

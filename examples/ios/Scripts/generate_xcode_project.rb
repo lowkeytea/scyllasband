@@ -9,11 +9,11 @@ project_path = File.join(root, 'ScyllasBandStudio.xcodeproj')
 FileUtils.rm_rf(project_path)
 
 project = Xcodeproj::Project.new(project_path)
-project.root_object.attributes['LastSwiftUpdateCheck'] = '2660'
-project.root_object.attributes['LastUpgradeCheck'] = '2660'
+project.root_object.attributes['LastSwiftUpdateCheck'] = '2700'
+project.root_object.attributes['LastUpgradeCheck'] = '2700'
 project.root_object.development_region = 'en'
 
-target = project.new_target(:application, 'ScyllasBandStudio', :ios, '16.0')
+target = project.new_target(:application, 'ScyllasBandStudio', :ios, '18.0')
 source_group = project.main_group.new_group('ScyllasBandStudio', 'ScyllasBandStudio')
 
 Dir.glob(File.join(root, 'ScyllasBandStudio', '*.swift')).sort.each do |absolute_path|
@@ -31,7 +31,7 @@ asset_phase.show_env_vars_in_log = '0'
 asset_phase.always_out_of_date = '1'
 
 project.build_configurations.each do |configuration|
-  configuration.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '16.0'
+  configuration.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '18.0'
 end
 
 target.build_configurations.each do |configuration|

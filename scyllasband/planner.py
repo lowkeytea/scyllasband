@@ -69,11 +69,13 @@ def split_sentences(text: str) -> list[str]:
     return out
 
 
-def split_for_retry(text: str) -> list[str]:
-    """Split one overlong sentence in two: at the clause punctuation nearest the middle, else between words."""
+def split_for_retry(text: str, *, min_share: float = 0.0) -> list[str]:
+    """Split one overlong sentence in two: at the clause punctuation nearest the middle that leaves each piece at least
+    ``min_share`` of the characters, else between the words nearest the middle."""
     value = text.strip()
     middle = len(value) / 2
-    cuts = [m.end() for m in _CLAUSE_RE.finditer(value) if 0 < m.end() < len(value)]
+    least = min_share * len(value)
+    cuts = [m.end() for m in _CLAUSE_RE.finditer(value) if 0 < m.end() < len(value) and least <= m.end() <= len(value) - least]
     if not cuts:
         cuts = [m.end() for m in re.finditer(r"\s+", value)]
     if not cuts:

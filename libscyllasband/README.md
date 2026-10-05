@@ -8,10 +8,19 @@ Each build links one graph runtime:
 
 | Backend | Bundle | Download |
 | --- | --- | --- |
-| LiteRT 2.2 (default) | `scyllasband/models/litert` | `python -m scyllasband download` |
+| LiteRT 2.2 (default) | `scyllasband/models/litert` | `python -m scyllasband download --flavor litert` |
 | ONNX Runtime 1.20+ | `scyllasband/models/onnx` | `python -m scyllasband download --flavor onnx` |
+| Apple: Core AI (iOS/macOS 27) and Core ML (iOS 18 / macOS 15) | `scyllasband/models/coreai`, `scyllasband/models/coreml` | `python -m scyllasband download --flavor coreai` (or `coreml`) |
 
-`scyllasband_backend()` reports the linked runtime, and a runtime only opens bundles with artifacts for it.
+`scyllasband_backend()` reports the linked runtime (`litert`, `onnx` or `apple`), and a runtime only opens bundles with
+artifacts for it. The Apple build runs whichever of Core AI or Core ML the bundle is for; Core AI is weak-linked, so the
+library still loads on systems without it.
+
+On Apple bundles `ScyllasBandRuntimeOptions.accelerator` chooses where graphs run: `CPU`, `GPU`, `AUTO` (the bundle's
+recommendation per graph, `controls.<backend>.compute_units`; the GPU for both release bundles) or `NEURAL_ENGINE` (the
+graphs the bundle lists in `controls.<backend>.neural_engine_assets` run on the Neural Engine, the rest on the CPU). iOS
+allows no GPU work from background apps, so apps that speak in the background use `NEURAL_ENGINE` (Core AI) or `CPU`.
+`SCYLLASBAND_COMPUTE_UNITS` (e.g. `gpu,vector_estimator=ane`) overrides the recommendation used by `AUTO`.
 
 ## Pipeline
 
@@ -28,8 +37,11 @@ For each sentence:
 5. the vocoder decodes the sentence with up to 48 frames of the preceding latents as left context, so
    consecutive sentences form one continuous waveform with no inserted pauses or crossfades.
 
-A sentence that needs more frames than the largest bucket holds is split at the clause punctuation (or word
-break) nearest its middle and retried.
+Every pass stays within the 64 to 420 latent frames (about 1.4 to 9 seconds) the model was trained on. A
+sentence shorter than that takes in the following sentences of its paragraph, and a short last sentence of a
+paragraph joins the one before it, as long as the joined text stays within the maximum. A sentence longer than
+the maximum is split at the clause punctuation nearest its middle (or, without usable punctuation, the word
+break) and retried.
 
 ## C API
 
@@ -113,9 +125,22 @@ cmake --build build/litert -j
 ctest --test-dir build/litert --output-on-failure
 ```
 
+Apple (macOS; needs the Ninja or Xcode generator for the Swift Core AI bridge):
+
+```bash
+cmake -S . -B build/apple -G Ninja -DCMAKE_BUILD_TYPE=Release -DSCYLLASBAND_BACKEND=apple -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0
+cmake --build build/apple
+build/apple/scyllasband_speak --bundle ../scyllasband/models/coreai --voice scylla --text "Hello." --accelerator auto \
+    --output hello.wav
+build/apple/scyllasband_speak --bundle ../scyllasband/models/coreai --voice scylla --text "Hello. Again." --timings 4
+```
+
+`--timings N` speaks the text N times in one process and prints load, first-audio and total times as JSON. For iOS apps,
+use the `ScyllasBandKit` pod (`ScyllasBandKit.podspec`, [apple/README.md](apple/README.md)).
+
 | CMake option | Default | |
 | --- | --- | --- |
-| `SCYLLASBAND_BACKEND` | `litert` | `litert` or `onnx` |
+| `SCYLLASBAND_BACKEND` | `litert` | `litert`, `onnx` or `apple` |
 | `SCYLLASBAND_LITERT_INCLUDE_DIR`, `SCYLLASBAND_LITERT_LIBRARY` | staged SDK | LiteRT headers and `libLiteRt` |
 | `SCYLLASBAND_ONNXRUNTIME_INCLUDE_DIR`, `SCYLLASBAND_ONNXRUNTIME_LIBRARY` | staged SDK | ONNX Runtime headers and library |
 | `SCYLLASBAND_BUILD_TOOLS` | `ON` | `scyllasband_speak` |

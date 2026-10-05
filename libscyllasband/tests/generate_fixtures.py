@@ -33,6 +33,7 @@ TEXTS = [
     "Hello (there). [laughs] Fine!) Next? 'Quoted.' “Curly.” End", "No terminal punctuation here", "...", "Ok!!! Sure?? Yes?!?! Fine..",
     "Para one.\n\nPara two line one.\nline two.\n \n\t\nPara three.", "A -- B - C-D — E – F", "x y z, ‘a’ «b»",
     "one, two; three: four - five", "Dr. Smith arrived at 9 a.m. Then he left.", "",
+    "Well, the engineer who rebuilt the clockwork orchestra in the basement finally invited everyone to hear it play, at last.",
 ]
 
 
@@ -125,10 +126,11 @@ def text_cases() -> dict:
         for max_chars in (140, 10):
             segments.append(dict(text=text, max_chars=max_chars,
                                  expected=[[segment, list(tokens)] for segment, tokens in punctuated_segments(text, max_chars=max_chars)]))
-        try:
-            retry.append(dict(text=text, expected=split_for_retry(text)))
-        except ValueError:
-            retry.append(dict(text=text, error=True))
+        for min_share in (0.0, 0.1, 0.3):
+            try:
+                retry.append(dict(text=text, min_share=min_share, expected=split_for_retry(text, min_share=min_share)))
+            except ValueError:
+                retry.append(dict(text=text, min_share=min_share, error=True))
     return dict(sentences=sentences, retry=retry, paragraphs=paragraphs, segments=segments, phrase=phrase)
 
 

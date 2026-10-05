@@ -85,6 +85,9 @@ public:
     int prefix_frames() const { return prefix_frames_; }
     int decode_context() const { return decode_context_; }
     std::size_t context_phones() const { return context_phones_; }
+    // Target lengths the model was trained on, in latent frames; the streaming loop keeps every sentence it synthesizes within them.
+    int64_t min_target_frames() const { return min_target_frames_; }
+    int64_t max_target_frames() const { return max_target_frames_; }
     int default_steps() const { return default_steps_; }
     const std::string& default_sampler() const { return default_sampler_; }
     std::string release() const;
@@ -117,6 +120,7 @@ private:
     struct Bucket {
         int64_t frames;
         std::string vector_estimator, vocoder;
+        std::string vector_flow;  // optional: every flow step in one graph, for fused_sampler_/fused_steps_
     };
     Graph& graph(const std::string& component);
     GraphOutput run(const std::string& component, const std::vector<TensorView>& inputs);
@@ -131,9 +135,13 @@ private:
     std::map<std::string, int64_t> voice_to_id_, language_to_id_, bits_;
     std::vector<Voice> voices_;
     std::vector<Bucket> buckets_;
+    std::vector<std::pair<int64_t, std::string>> g2p_buckets_;  // optional narrower G2P inputs (text tokens, component), smallest first
+    std::string fused_sampler_;
+    int fused_steps_ = 0;
     std::size_t span_width_ = 512, context_phones_ = 180;
     int prefix_frames_ = 96, decode_context_ = 48, latent_dim_ = 24, latent_hop_ = 512, sample_rate_ = 24000;
     int default_steps_ = 8;
+    int64_t min_target_frames_ = 64, max_target_frames_ = 420;
     std::string default_sampler_ = "heun";
     std::unique_ptr<G2P> g2p_;
     std::mutex graphs_mutex_;

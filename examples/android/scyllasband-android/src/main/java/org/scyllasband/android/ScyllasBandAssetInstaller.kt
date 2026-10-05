@@ -12,10 +12,8 @@ internal class ScyllasBandAssetInstaller(
             .bufferedReader(Charsets.UTF_8)
             .use { it.readText() }
         val installedManifest = File(destination, "manifest.json")
-        val installedWeights = File(destination, "onnx/components/shared_weights.bin")
         if (
             installedManifest.isFile &&
-            installedWeights.isFile &&
             installedManifest.readText(Charsets.UTF_8) == bundledManifest
         ) {
             return destination
@@ -26,9 +24,6 @@ internal class ScyllasBandAssetInstaller(
         temporary.mkdirs()
         copyAssetTree(assetRoot, temporary)
         check(File(temporary, "manifest.json").isFile) { "Installed Scylla's Band manifest is missing" }
-        check(File(temporary, "onnx/components/shared_weights.bin").isFile) {
-            "Installed Scylla's Band shared weights are missing"
-        }
         destination.deleteRecursively()
         check(temporary.renameTo(destination)) {
             "Unable to move the installed Scylla's Band bundle to ${destination.absolutePath}"
@@ -52,6 +47,6 @@ internal class ScyllasBandAssetInstaller(
     }
 
     private companion object {
-        const val DEFAULT_ASSET_ROOT = "scyllasband/onnx-int8"
+        const val DEFAULT_ASSET_ROOT = "scyllasband/bundle"
     }
 }

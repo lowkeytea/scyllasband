@@ -11,13 +11,8 @@ import android.util.Log
 import android.view.View
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
-import android.widget.CheckBox
-import android.widget.LinearLayout
-import org.scyllasband.android.ScyllasBandDelivery
 import android.widget.Button
-import android.widget.EditText
 import android.widget.ProgressBar
-import android.widget.SeekBar
 import android.widget.Spinner
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
@@ -25,12 +20,13 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import org.scyllasband.android.ScyllasBand
+import org.scyllasband.android.ScyllasBandAccelerator
+import org.scyllasband.android.ScyllasBandDelivery
 import org.scyllasband.android.ScyllasBandBundleInfo
 import org.scyllasband.android.ScyllasBandSegmentSettings
 import org.scyllasband.android.ScyllasBandVoice
 import org.json.JSONArray
 import org.json.JSONObject
-import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -65,9 +61,9 @@ class MainActivity : AppCompatActivity() {
 
     private val examplePresets by lazy {
         listOf(
-            ExamplePreset(R.string.example_emotional, "emotional_text.txt", false),
-            ExamplePreset(R.string.example_group_speak, "groupSpeak.txt", true),
+            ExamplePreset(R.string.example_walkthrough, DefaultWalkthrough.ASSET_NAME, true),
             ExamplePreset(R.string.example_test_document, "test_document.txt", false),
+            ExamplePreset(R.string.example_emotional, "emotional_text.txt", false),
         )
     }
 
@@ -95,6 +91,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         stopRequested.set(true)
+        scyllasband.cancel()
         activePlayer?.close()
         activePlayer = null
         worker.execute { scyllasband.close() }
@@ -163,7 +160,7 @@ class MainActivity : AppCompatActivity() {
     private fun initializeScyllasBand() {
         setStatus(getString(R.string.status_installing))
         worker.execute {
-            val result = runCatching { scyllasband.initialize() }
+            val result = runCatching { scyllasband.initialize(accelerator = ACCELERATOR) }
             postToUi {
                 result.onSuccess { info ->
                     bundleInfo = info
@@ -174,9 +171,9 @@ class MainActivity : AppCompatActivity() {
                     setStatus(
                         getString(
                             R.string.status_ready,
-                            info.modelName,
+                            info.backend,
+                            info.accelerator,
                             info.voices.size,
-                            info.affectAxes.size,
                         ),
                     )
                 }.onFailure { error ->
@@ -252,44 +249,11 @@ class MainActivity : AppCompatActivity() {
         val dialogView = layoutInflater.inflate(R.layout.dialog_speaker_point, null)
         val voiceSpinner = dialogView.findViewById<Spinner>(R.id.voiceSpinner)
         val languageSpinner = dialogView.findViewById<Spinner>(R.id.languageSpinner)
-        val emotionSpinner = dialogView.findViewById<Spinner>(R.id.emotionSpinner)
-        val strengthSeek = dialogView.findViewById<SeekBar>(R.id.strengthSeek)
-        val strengthValue = dialogView.findViewById<TextView>(R.id.strengthValue)
-        val cfgInput = dialogView.findViewById<EditText>(R.id.cfgInput)
+        val deliveryControls = DeliveryControls(dialogView, layoutInflater)
 
         val voices = info.voices
         voiceSpinner.adapter = simpleAdapter(voices.map { it.displayName })
-        val emotions = listOf<String?>(null) + info.affectAxes
-        emotionSpinner.adapter = simpleAdapter(
-            emotions.map { it?.replaceFirstChar(Char::uppercase) ?: getString(R.string.neutral) },
-        )
-        cfgInput.setText(formatFloat(initial.emotionCfg))
-        strengthSeek.max = 100
-        strengthSeek.progress = (initial.emotionStrength * 100).toInt().coerceIn(0, 100)
-
-        val deliverySliders = mutableMapOf<String, SeekBar>()
-        val whisperToggle = CheckBox(this).apply { text = "Whisper"; isChecked = initial.delivery?.whisper ?: false }
-        if (info.deliveryEnabled) {
-            val panel = dialogView as LinearLayout
-            val firstLegacy = panel.indexOfChild(emotionSpinner) - 1
-            for (i in firstLegacy until panel.childCount) panel.getChildAt(i).visibility = View.GONE
-            val initialDelivery = initial.delivery ?: ScyllasBandDelivery()
-            val values = mapOf("energy" to initialDelivery.energy, "tension" to initialDelivery.tension,
-                "valence" to initialDelivery.valence, "assertiveness" to initialDelivery.assertiveness)
-            for ((axis, value) in values) {
-                val label = TextView(this)
-                val slider = SeekBar(this).apply { max = 400; progress = (value * 100).toInt() }
-                fun updateLabel() { label.text = "${axis.replaceFirstChar(Char::uppercase)} · ${formatFloat(slider.progress / 100f)}" }
-                updateLabel()
-                slider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                    override fun onProgressChanged(bar: SeekBar?, value: Int, user: Boolean) = updateLabel()
-                    override fun onStartTrackingTouch(bar: SeekBar?) = Unit
-                    override fun onStopTrackingTouch(bar: SeekBar?) = Unit
-                })
-                panel.addView(label); panel.addView(slider); deliverySliders[axis] = slider
-            }
-            panel.addView(whisperToggle)
-        }
+        deliveryControls.delivery = initial.delivery
 
         var displayedLanguages: List<String> = emptyList()
 
@@ -304,17 +268,6 @@ class MainActivity : AppCompatActivity() {
             languageSpinner.setSelection(selected, false)
         }
 
-        fun updateStrength() {
-            val neutral = emotionSpinner.selectedItemPosition == 0
-            strengthSeek.isEnabled = !neutral
-            strengthSeek.alpha = if (neutral) 0.45f else 1f
-            strengthValue.text = if (neutral) {
-                getString(R.string.not_applicable)
-            } else {
-                getString(R.string.percent_value, strengthSeek.progress)
-            }
-        }
-
         voiceSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
                 val previous = displayedLanguages.getOrNull(languageSpinner.selectedItemPosition)
@@ -323,30 +276,9 @@ class MainActivity : AppCompatActivity() {
 
             override fun onNothingSelected(parent: AdapterView<*>?) = Unit
         }
-        emotionSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                updateStrength()
-            }
-
-            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
-        }
-        strengthSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                updateStrength()
-            }
-
-            override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
-            override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
-        })
-
         val initialVoiceIndex = voices.indexOfFirst { it.id == initial.voiceId }.coerceAtLeast(0)
         voiceSpinner.setSelection(initialVoiceIndex, false)
         updateLanguages(initial.language)
-        emotionSpinner.setSelection(
-            emotions.indexOf(initial.emotion).takeIf { it >= 0 } ?: 0,
-            false,
-        )
-        updateStrength()
 
         val builder = MaterialAlertDialogBuilder(this)
             .setTitle(if (allowDelete) R.string.edit_speaker_point else R.string.add_speaker_point)
@@ -357,27 +289,11 @@ class MainActivity : AppCompatActivity() {
         val dialog = builder.create()
         dialog.setOnShowListener {
             dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val cfg = if (info.deliveryEnabled) 1f else cfgInput.text?.toString()?.trim()?.toFloatOrNull()
-                if (cfg == null || !cfg.isFinite() || cfg < 0f) {
-                    cfgInput.error = getString(R.string.cfg_validation)
-                    return@setOnClickListener
-                }
                 val voice = selectedVoice()
-                val language = voice.languages[languageSpinner.selectedItemPosition]
-                val emotion = if (info.deliveryEnabled) null else emotions[emotionSpinner.selectedItemPosition]
                 val settings = ScyllasBandSegmentSettings(
                     voiceId = voice.id,
-                    language = language,
-                    emotion = emotion,
-                    emotionStrength = if (emotion == null) 0f else strengthSeek.progress / 100f,
-                    emotionCfg = cfg,
-                    delivery = if (info.deliveryEnabled) ScyllasBandDelivery(
-                        energy = deliverySliders.getValue("energy").progress / 100f,
-                        tension = deliverySliders.getValue("tension").progress / 100f,
-                        valence = deliverySliders.getValue("valence").progress / 100f,
-                        assertiveness = deliverySliders.getValue("assertiveness").progress / 100f,
-                        whisper = whisperToggle.isChecked,
-                    ) else null,
+                    language = voice.languages[languageSpinner.selectedItemPosition],
+                    delivery = deliveryControls.delivery,
                 )
                 onSave(settings)
                 dialog.dismiss()
@@ -412,7 +328,7 @@ class MainActivity : AppCompatActivity() {
                 segments.forEachIndexed { index, segment ->
                     if (stopRequested.get()) return@runCatching
                     var currentChunkText = segment.text
-                    scyllasband.synthesizeSegmentStreaming(
+                    scyllasband.synthesizeStreaming(
                         segment.text,
                         segment.settings,
                         seed = PLAYBACK_SEED + index,
@@ -521,9 +437,7 @@ class MainActivity : AppCompatActivity() {
     private fun loadExample(preset: ExamplePreset) {
         val info = bundleInfo ?: return
         val result = runCatching {
-            val source = assets.open("scyllasband/examples/${preset.assetName}")
-                .bufferedReader(Charsets.UTF_8)
-                .use { it.readText() }
+            val source = readExample(preset.assetName)
             if (preset.groupSpeak) {
                 GroupSpeakPresetParser.parse(source, defaultSettings, info)
             } else {
@@ -545,8 +459,12 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun readExample(assetName: String): String =
+        assets.open("scyllasband/examples/$assetName").bufferedReader(Charsets.UTF_8).use { it.readText() }
+
     private fun stopPlayback() {
         stopRequested.set(true)
+        scyllasband.cancel()
         setStatus(getString(R.string.status_stopping))
         activePlayer?.close()
         activePlayer = null
@@ -655,7 +573,7 @@ class MainActivity : AppCompatActivity() {
         }
         if (!pendingDefaultWalkthrough) return
         val info = bundleInfo ?: return
-        val snapshot = DefaultWalkthrough.snapshot(defaultSettings, info)
+        val snapshot = DefaultWalkthrough.snapshot(readExample(DefaultWalkthrough.ASSET_NAME), defaultSettings, info)
         renderSnapshot(snapshot)
         lastPointSettings = snapshot.points.lastOrNull()?.settings ?: defaultSettings
         pendingDefaultWalkthrough = false
@@ -667,10 +585,7 @@ class MainActivity : AppCompatActivity() {
     ): ScyllasBandSegmentSettings {
         val voice = info.voices.firstOrNull { it.id == settings.voiceId } ?: info.voices.first()
         val language = settings.language.takeIf { it in voice.languages } ?: voice.defaultLanguage
-        val emotion = settings.emotion?.takeIf { it in info.affectAxes }
-        return settings.copy(voiceId = voice.id, language = language, emotion = emotion,
-            emotionCfg = if (info.deliveryEnabled) 1f else settings.emotionCfg,
-            delivery = if (info.deliveryEnabled) settings.delivery else null)
+        return settings.copy(voiceId = voice.id, language = language)
     }
 
     private fun simpleAdapter(values: List<String>): ArrayAdapter<String> =
@@ -683,6 +598,9 @@ class MainActivity : AppCompatActivity() {
         "en_gb" -> getString(R.string.language_en_gb)
         "es" -> getString(R.string.language_es)
         "it" -> getString(R.string.language_it)
+        "fr" -> getString(R.string.language_fr)
+        "de" -> getString(R.string.language_de)
+        "vi" -> getString(R.string.language_vi)
         else -> id
     }
 
@@ -699,30 +617,33 @@ class MainActivity : AppCompatActivity() {
     private fun friendlyError(error: Throwable): String =
         error.message?.takeIf { it.isNotBlank() } ?: error.javaClass.simpleName
 
-    private fun formatFloat(value: Float): String =
-        String.format(Locale.US, if (value % 1f == 0f) "%.0f" else "%.2f", value)
-
     private fun settingsToJson(settings: ScyllasBandSegmentSettings) = JSONObject()
         .put("voice", settings.voiceId)
         .put("language", settings.language)
-        .put("emotion", settings.emotion ?: JSONObject.NULL)
-        .put("strength", settings.emotionStrength.toDouble())
-        .put("cfg", settings.emotionCfg.toDouble())
-        .put("delivery", settings.delivery?.let { JSONObject().put("energy", it.energy.toDouble())
-            .put("tension", it.tension.toDouble()).put("valence", it.valence.toDouble())
-            .put("assertiveness", it.assertiveness.toDouble()).put("whisper", it.whisper) })
+        .put(
+            "delivery",
+            JSONObject()
+                .put("energy", settings.delivery.energy.toDouble())
+                .put("tension", settings.delivery.tension.toDouble())
+                .put("valence", settings.delivery.valence.toDouble())
+                .put("assertiveness", settings.delivery.assertiveness.toDouble())
+                .put("whisper", settings.delivery.whisper),
+        )
 
-    private fun settingsFromJson(value: JSONObject) = ScyllasBandSegmentSettings(
-        voiceId = value.getString("voice"),
-        language = value.getString("language"),
-        emotion = value.optString("emotion").takeIf { !value.isNull("emotion") && it.isNotBlank() },
-        emotionStrength = value.optDouble("strength", 0.0).toFloat(),
-        emotionCfg = value.optDouble("cfg", 1.0).toFloat(),
-        delivery = value.optJSONObject("delivery")?.let { ScyllasBandDelivery(
-            it.optDouble("energy", 2.0).toFloat(), it.optDouble("tension", 2.0).toFloat(),
-            it.optDouble("valence", 2.0).toFloat(), it.optDouble("assertiveness", 2.0).toFloat(),
-            it.optBoolean("whisper", false)) },
-    )
+    private fun settingsFromJson(value: JSONObject): ScyllasBandSegmentSettings {
+        val delivery = value.getJSONObject("delivery")
+        return ScyllasBandSegmentSettings(
+            voiceId = value.getString("voice"),
+            language = value.getString("language"),
+            delivery = ScyllasBandDelivery(
+                energy = delivery.optDouble("energy", 2.0).toFloat(),
+                tension = delivery.optDouble("tension", 2.0).toFloat(),
+                valence = delivery.optDouble("valence", 2.0).toFloat(),
+                assertiveness = delivery.optDouble("assertiveness", 2.0).toFloat(),
+                whisper = delivery.optBoolean("whisper", false),
+            ),
+        )
+    }
 
     private fun snapshotToJson(snapshot: SpeakerDocumentSnapshot): JSONObject {
         val points = JSONArray()
@@ -752,6 +673,10 @@ class MainActivity : AppCompatActivity() {
         const val LOG_TAG = "ScyllasBandPlayback"
         const val MARKER_TEXT = "\uFFFC"
         const val PLAYBACK_SEED = 31_415L
+
+        // CPU: on the Galaxy Z Fold 8 it runs at about 0.11x real time, and LiteRT's GPU accelerator either
+        // fails (AUTO falls back to the CPU) or hangs (GPU). See the README.
+        val ACCELERATOR = ScyllasBandAccelerator.CPU
         const val STATE_DOCUMENT = "speaker_document"
         const val STATE_DEFAULT_WALKTHROUGH = "default_walkthrough"
         const val STATE_DEFAULTS = "default_settings"

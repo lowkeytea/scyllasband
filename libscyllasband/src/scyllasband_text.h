@@ -31,7 +31,7 @@ std::vector<std::pair<Text, std::vector<std::string>>> punctuated_segments(const
 
 // planner.split_sentences / split_for_retry / paragraph split
 std::vector<Text> split_sentences(const Text& text);
-std::vector<Text> split_for_retry(const Text& text);
+std::vector<Text> split_for_retry(const Text& text, double min_share = 0.0);
 std::vector<Text> split_paragraphs(const Text& text);
 
 }  // namespace scyllasband

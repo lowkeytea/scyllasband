@@ -1,52 +1,98 @@
 # Scylla's Band iOS sample
 
-Measured v2 uses four 0–4 sliders (neutral 2) and a whisper switch. The SDK detects its manifest and preserves the original emotion UI for v1. The measured starter script uses the new delivery tags; old emotion-tagged presets remain legacy-model examples. Download measured FP32 with `python -m scyllasband download --model-version v2 --runtime-bundles onnx --yes`. No measured LiteRT/Core AI bundle is available. These interface changes require a target-platform build/device check; Linux ONNX validation does not substitute for that.
+This SwiftUI sample speaks multi-voice, multilingual documents on iPhone and
+iPad with Scylla's Band v2 (release `v2-20261005`). It uses Apple's Core ML
+runtime on iOS 18–26 and Core AI on iOS 27 and later. It keeps one warmed
+`SBScyllasBand` runtime, reads voices and languages from the bundle at run
+time, streams each sentence's mono Float32 audio into `AVAudioEngine` as soon
+as it's ready, and keeps the sentence being spoken on screen.
 
+A document is a list of speaker-segment cards. Each card has a voice, a
+language, and a delivery: energy, tension, valence, and assertiveness, with 2
+as neutral, plus whisper on/off. The model accepts 0–4 for each control, but
+this app keeps them between 0.5 and 3.1: the training data thins out past
+about 3, and pushing further distorts the voice. The segment settings also
+offer the Neutral, Calm, Assertive, Joyful, Angry, Sad, and Whisper presets,
+the same as the main README's (for example, Joyful is
+`energy=2.4,tension=2,valence=2.8,assertiveness=2.2`). **Load
+example** imports the repository's `data/` documents: `walkthrough_demo.txt`
+(the first-launch document, a tagged dialogue across voices and languages),
+`test_document.txt` (long narration), and `emotional_text.txt` (energetic
+prose). Tagged lines become cards using the same rules as
+`python -m scyllasband group-speak`:
 
-This SwiftUI sample mirrors the Android app's integration behavior on iPhone
-and iPad while using Apple's native Core AI runtime. It keeps one warmed
-`SBScyllasBand`, reads voices/languages/affect axes from `manifest.json`, plans
-native long-form chunks, streams mono Float32 audio into `AVAudioEngine`, and
-keeps the currently spoken text visible while playback continues.
+```text
+[ariadne:en_us:energy=2.3,valence=2.5] Good to see you. [es] Me alegra verte.
+[ink:en_gb:whisper=on] Keep this between us.
+```
 
-The UI represents Android's inline speaker points as explicit speaker-segment
-cards. Settings apply until the next segment, and tagged `groupSpeak` scripts
-become editable segment cards when imported. All colors use semantic system
-colors so light and dark appearance remain readable.
+A language tag such as `[es]` keeps the voice and delivery. A tag with a
+delivery replaces the delivery, and controls it leaves out return to 2. Tag
+values may use the full 0–4 range; the app clamps them to 0.5–3.1, so
+`energy=3.3` becomes 3. `[ink]` alone switches to that voice in its default
+language. Each line starts again from the defaults.
+
+The gear button opens the runtime settings. They show the active backend
+(Core ML or Core AI) and compute unit and let you choose where the models run:
+Automatic (the bundle's recommendation, the default), CPU, GPU, or Neural
+Engine. Changing the compute unit reloads the voices.
+
+## Requirements
+
+- A Mac with Xcode 27 and CocoaPods
+- An iPhone or iPad with iOS 18 or later, or the iOS Simulator. Core AI needs
+  a device with iOS 27 or later. Earlier systems and the Simulator run the
+  Core ML bundle.
+- At least one model bundle in `scyllasband/models`, downloaded at the
+  repository root:
+
+  ```bash
+  python -m scyllasband download --flavor coreml --yes   # iOS 18 and later, and the Simulator
+  python -m scyllasband download --flavor coreai --yes   # iOS 27 and later devices
+  ```
+
+  On a Mac, `python -m scyllasband download` without flags asks which bundle
+  to download.
 
 ## Build and run
 
-Requirements:
-
-- macOS with Xcode; the Core AI path needs Xcode 27 (its SDK ships
-  `CoreAI.framework` for devices only, so Core AI does not run in Simulator)
-- An iOS 16+ device or simulator; Core AI synthesis activates on iOS 27+
-- CocoaPods
-- Downloaded model bundles: run `python -m scyllasband download` at the
-  repository root and select v2 plus the desired ONNX bundle
-
 ```bash
-python -m scyllasband download --model-version v2 --runtime-bundles onnx-int8 --yes
-
 cd examples/ios
 pod install
 
-xcodebuild -workspace ScyllasBandStudio.xcworkspace \
-  -scheme ScyllasBandStudio \
+# Simulator (Core ML on the CPU)
+xcodebuild -workspace ScyllasBandStudio.xcworkspace -scheme ScyllasBandStudio \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build
+
+# Device
+xcodebuild -workspace ScyllasBandStudio.xcworkspace -scheme ScyllasBandStudio \
   -destination 'generic/platform=iOS' build
 ```
 
-Then open `ScyllasBandStudio.xcworkspace`, choose the
-`ScyllasBandStudio` scheme, select a Development Team, and run it. The app
-needs no network, microphone, or user-storage permission.
+To run the app, open `ScyllasBandStudio.xcworkspace` (not the `.xcodeproj`,
+which fails with `No such module 'ScyllasBandKit'`), select a development team,
+and run the `ScyllasBandStudio` scheme. The app needs no network, microphone,
+or storage permission.
 
-The asset build phase searches `scyllasband/models/v2` before `models/v1` and
-the legacy flat layout. It embeds Core AI, when present, plus one ONNX bundle
-(`onnx-int8` preferred, `onnx` otherwise) from the same release, preventing
-cross-generation model mixing. At launch the app picks
-Core AI on iOS 27+ when it was embedded and falls back to the ONNX bundle on
-earlier systems. Set `SCYLLASBAND_IOS_BUNDLE_DIR` to embed one specific
-bundle instead.
+The **Prepare Scylla's Band assets** build phase
+(`Scripts/prepare_assets.sh`) checks `scyllasband/models/coreai` and
+`scyllasband/models/coreml`, following symlinks. It embeds each bundle found
+in the app as `scyllasband/coreai` and `scyllasband/coreml`, together with
+the three example documents, and fails if neither bundle exists. Simulator
+builds embed only Core ML. Set `SCYLLASBAND_IOS_BUNDLE_DIR` to embed one
+specific bundle directory instead. At launch, the app runs Core AI on iOS 27
+devices when that bundle was embedded and Core ML everywhere else, falling
+back to Core ML if Core AI can't load.
+
+In Debug builds, the launch argument `-autoplay` plays the first-launch
+document as soon as the voices are ready. `-showSegmentSettings` opens the
+first segment's settings. The app logs runtime timings under the
+`org.scyllasband.studio` subsystem:
+
+```bash
+xcrun simctl launch booted org.scyllasband.studio -autoplay
+xcrun simctl spawn booted log stream --predicate 'subsystem == "org.scyllasband.studio"'
+```
 
 The Xcode project is checked in. Regenerate it only after adding sources or
 changing generated build settings:
@@ -56,69 +102,94 @@ Scripts/generate_xcode_project.rb
 pod install
 ```
 
-Always open the `.xcworkspace` after installing pods. Opening only the
-`.xcodeproj` produces `No such module 'ScyllasBandKit'`.
+## First launch
+
+The app creates and warms the runtime on a background queue and shows
+**Preparing voices…** until it's ready. The first time a Core AI bundle loads
+after the app is installed or iOS is updated, Core AI specializes its models
+for the device. That can take tens of seconds; the system caches the result,
+so later launches are quick. Core ML also takes longest on its first load.
+
+The Simulator runs Core ML on the CPU only, so the app fixes its compute unit
+to CPU there, and synthesis is much slower than on a device.
+
+## Background playback
+
+This sample doesn't declare the `audio` background mode, so speech stops when
+the app leaves the foreground. To keep speaking in the background, add `audio`
+to `UIBackgroundModes` and switch away from the GPU: iOS doesn't allow GPU work
+from background apps, and Automatic uses the GPU (the bundles recommend it in
+`controls.<backend>.compute_units`).
+
+- **Core AI:** choose **Neural Engine**. The speech generator (the model that
+  does most of the work) runs on the Neural Engine and the other models on the
+  CPU; the bundle lists which models are accurate on the Neural Engine in
+  `controls.coreai.neural_engine_assets`.
+- **Core ML:** choose **CPU**. The Core ML bundle lists no Neural Engine models.
+
+On an iPhone 17 Pro Max, a three-sentence passage (11.6 s of speech) starts
+playing after about 240 ms on the GPU (Core AI or Core ML), 400 ms with Core
+AI's Neural Engine placement and 770 ms on Core ML's CPU, with a warm runtime.
+Core AI on the CPU alone is much slower (about 2.5 s).
+
+## On-device benchmark
+
+The app has a timing mode used for the repository's measurements. It creates no
+studio runtime; it speaks a fixed passage four times, prints one `SBBENCH {…}`
+JSON line (load time, launch-to-first-audio, warm first audio, real-time factor,
+memory footprint) and exits:
+
+```bash
+xcrun devicectl device process launch --device <udid> --console --terminate-existing \
+  org.scyllasband.studio -benchmark coreai auto 4
+```
+
+`<bundle>` is `coreai`, `coreml` or a folder copied to the app's
+`Documents/benchmark/`; the unit is `auto`, `cpu`, `gpu` or `ane`. Pass
+`--environment-variables '{"SCYLLASBAND_COMPUTE_UNITS": "cpu,vector_estimator=ane"}'`
+with `auto` to try another per-model placement.
 
 ## Reusing the bridge
 
-The app owns no C or C++ integration code. To move synthesis into another app:
+The app contains no C or C++. To add synthesis to another app:
 
 1. Copy the complete `libscyllasband` directory into the destination
    repository.
 2. Add the local static pod:
 
    ```ruby
-   platform :ios, '16.0'
+   platform :ios, '18.0'
    use_frameworks! :linkage => :static
    pod 'ScyllasBandKit', :path => '../path/to/libscyllasband'
    ```
 
-3. Run `pod install`, open the workspace, and import `ScyllasBandKit`.
-4. Deliver a complete bundle (Core AI for iOS 27+, ONNX for anything
-   earlier) as an app resource, install-time asset, or one-time download.
-   Preserve its layout and pass its directory URL to `SBScyllasBand`; the
-   runtime picks the backend from the bundle's `preferred_backends`.
-5. Create and warm one runtime on a serial queue and reuse it for synthesis.
-
-Minimal Swift integration:
+3. Run `pod install`, open the workspace, and `import ScyllasBandKit`.
+4. Ship the `coreml` and/or `coreai` bundle directories unchanged, for
+   example as app resources.
+5. Create, warm, and use one runtime from a single serial queue, never the
+   main thread.
 
 ```swift
-let runtime = try SBScyllasBand(
-    bundleURL: bundleURL,
-    threadCount: min(ProcessInfo.processInfo.activeProcessorCount, 6),
-    targetBucketCacheCapacity: SBScyllasBand.defaultMobileTargetBucketCacheCapacity
-)
-try runtime.warmUp()
+let directory = Bundle.main.resourceURL!.appendingPathComponent("scyllasband")
+guard let bundleURL = SBScyllasBand.preferredBundleURL(inDirectory: directory) else { return }
+let runtime = try SBScyllasBand(bundleURL: bundleURL, computeUnit: .automatic)
+try runtime.warmUp(withVoice: nil)
 
-let settings = SBScyllasBandSegmentSettings(
-    voiceIdentifier: "gwen",
-    language: "en_us",
-    emotion: "neutral",
-    emotionStrength: 0.6,
-    emotionCFG: 1.2
-)
+let request = SBScyllasBandRequest(text: "Finally, Scylla's Band is singing on Apple hardware.",
+                                   voiceIdentifier: "ariadne")
+request.language = "en_us"
+request.delivery = SBScyllasBandDelivery(energy: 3, tension: 2, valence: 3, assertiveness: 2, whisper: false)
 
-try runtime.synthesizeText(
-    "Finally, Scylla's Band is singing on Apple hardware.",
-    settings: settings,
-    seed: 31_415,
-    chunkStarted: { index, count, text in
-        print("rendering \(index + 1)/\(count): \(text ?? "")")
-        return true
-    },
-    audioChunk: { chunk in
-        // Schedule chunk.pcmFloat32Data before returning.
-        return true
-    }
-)
+try runtime.synthesizeRequest(request, chunkStarted: { index, count, text in
+    print("sentence \(index + 1)/\(count): \(text ?? "")")
+    return true
+}, audioChunk: { chunk in
+    // chunk.pcmFloat32Data: mono Float32 at chunk.sampleRate; schedule it before returning.
+    return true
+})
 ```
 
-The public bridge owns manifest discovery, runtime lifetime, warmup,
-cancellation, safe PCM copies, and language-boundary types. `libscyllasband`
-owns normalization, Core AI G2P, duration prediction, long-form planning,
-shared-weight function selection, acoustic sampling, and waveform generation.
-The app owns document editing, playback, interruptions, lifecycle, and UI.
-
-The G2P asset is versioned independently: a future seven-language G2P update
-can replace `coreai/g2p.aimodel` plus `assets/g2p/` without reconverting the
-four-language acoustic checkpoints.
+`requestCancellation()` is safe from any thread. It stops requests already
+issued at their next model call, and the call then throws
+`SBScyllasBandErrorCancelled`. See [ScyllasBandKit](../../libscyllasband/apple/README.md)
+for the full API.

@@ -1,101 +1,116 @@
 # Scylla's Band Android sample
 
-Measured v2 uses four 0–4 sliders (neutral 2) and a whisper switch. The SDK detects its manifest and preserves the original emotion UI for v1. The measured starter script uses the new delivery tags; old emotion-tagged presets remain legacy-model examples. Download measured FP32 with `python -m scyllasband download --model-version v2 --runtime-bundles onnx --yes`. No measured LiteRT/Core AI bundle is available. These interface changes require a target-platform build/device check; Linux ONNX validation does not substitute for that.
-
-
-This sample demonstrates the current Scylla's Band duration-flow model through the native ONNX Runtime backend.
+An on-device text-to-speech studio for the Scylla's Band v2 model (`scyllasband_measured_delivery_v2` bundles). It runs the native `libscyllasband` runtime through LiteRT by default; nothing leaves the phone.
 
 ## What it demonstrates
 
-- The optional `scyllasband` INT8 ONNX bundle, including external shared weights and 24 kHz audio playback.
-- All voices and each voice's supported languages, loaded from `manifest.json` rather than hard-coded UI lists.
-- Neutral delivery or any v2 affect axis (`calm`, `joy`, `anger`, `sadness`, and `whisper`), a normalized strength from 0 to 1, and a separate non-negative CFG value.
-- A paste-friendly text editor with inline speaker points. Double-tap or long-press to add a point; tap a point to edit or remove it. A point controls all following text until another point appears. New points copy the settings of the last point created.
-- A preset selector populated from the repository's `data/` examples. The multilingual `groupSpeak.txt` tags are converted into editable inline speaker points when loaded.
-- Language-aware spoken-text normalization matching the Python runtime for numbers, dates, times, currency, percentages, fractions, and common symbols.
-- `groupSpeak`-style playback: the document becomes ordered text/settings segments, long segments use the native Scylla's Band long-form planner, and each completed native audio chunk is streamed directly to a mono float `AudioTrack` while later chunks render.
-- A playback-only transcript replaces the locked editor while speaking and follows the current native-planned chunk, voice, and language. Transcript changes are scheduled against `AudioTrack.playbackHeadPosition`, so queued audio does not move the display ahead of what is audible.
-- Startup performs one discarded one-step render to warm the persistent ONNX sessions. Normal Android playback uses the core Python `--faster` quality settings of two Heun steps and 180-character maximum chunks; native long-form retry splitting remains enabled.
+- All ten voices and each voice's languages, read from the runtime (`scyllasband_voices_json`) rather than hard-coded.
+- Measured delivery: four continuous sliders, energy, tension, valence and assertiveness, each 0.5-3.1 with 2 neutral (0.1 steps), plus a whisper switch. Quick presets (Neutral, Calm, Assertive, Joyful, Angry, Sad, Whisper) only fill the sliders. The app limits the four axes to 0.5-3.1 (see Delivery range):
+
+  | Preset | Delivery |
+  | --- | --- |
+  | Calm | `energy=1.2,tension=0.8,valence=2.6` |
+  | Assertive | `energy=2.6,tension=2.2,assertiveness=3` |
+  | Joyful | `energy=3,valence=3` |
+  | Angry | `energy=3,tension=3,valence=0.8,assertiveness=3` |
+  | Sad | `energy=1,tension=1.6,valence=0.8,assertiveness=1.6` |
+  | Whisper | `whisper=on` |
+
+- A text editor with inline speaker points (voice, language, delivery). Double-tap or long-press to add a point, tap one to edit or remove it. A point applies until the next one; new points copy the last one's settings.
+- An example selector loading the repository's `data/` files: `walkthrough_demo.txt` (tagged multi-voice, multilingual dialogue; also the first-launch document), `test_document.txt` (long narration) and `emotional_text.txt` (energetic prose). Tagged files become editable speaker points.
+- Streaming playback: each sentence the runtime finishes is queued to a mono float `AudioTrack` while the next renders. The playback transcript follows the audible sentence. Stop calls `scyllasband_cancel`, which ends synthesis at the next graph call.
+
+### Dialogue tags
+
+Imported text uses the same format as `python -m scyllasband group-speak`:
+
+```text
+[ariadne:en_us:energy=2.3,valence=2.5] Good to see you. [es] Me alegra verte.
+[ink:en_gb:whisper=on] Keep this between us.
+```
+
+`[voice:language:delivery]` sets all three (an empty voice or language keeps the active one). A language-only tag such as `[es]` keeps the active voice and delivery. A tag with a delivery part replaces the delivery, and axes it does not name return to neutral. `[voice]` alone switches voice. Each line starts from the default settings. `auto` delivery is not supported by this editor, and axes outside 0.5-3.1 are clamped.
 
 ## Build
 
-From this directory:
+1. Download the LiteRT bundle (about 164 MB, INT8) from the repository root:
+
+   ```bash
+   python -m scyllasband download --yes
+   ```
+
+2. Stage the LiteRT Android prebuilts (git-ignored, under `libscyllasband/third_party/litert/lib/<platform>/`):
+
+   ```bash
+   python libscyllasband/scripts/stage_litert_sdk.py --platform android-arm64 --download-runtime --download-gpu-accelerator --overwrite
+   python libscyllasband/scripts/stage_litert_sdk.py --platform android-x86_64 --download-runtime --download-gpu-accelerator --overwrite
+   ```
+
+3. Build from this directory (needs the Android SDK, NDK 29.0.13113456 and CMake):
+
+   ```bash
+   ./gradlew :app:assembleDebug
+   ./gradlew :app:testDebugUnitTest :scyllasband-android:testDebugUnitTest
+   ```
+
+The APK is `app/build/outputs/apk/debug/app-debug.apk`. It embeds the bundle as assets and the first launch copies it to `noBackupFilesDir`, because the runtime needs filesystem paths. Production apps should deliver the model as an install-time asset pack or a one-time download, and keep only the target ABI. arm64-v8a and x86_64 are built; arm64-v8a is the one that matters on devices.
+
+`libLiteRt.so` and `libLiteRtClGlAccelerator.so` are packaged with `jniLibs.useLegacyPackaging = true` so they are extracted to disk: LiteRT loads its GPU accelerator from the directory of `libLiteRt.so`.
+
+### ONNX Runtime instead of LiteRT
 
 ```bash
-./gradlew :app:assembleDebug
+python -m scyllasband download --flavor onnx --yes
+./gradlew -Pscyllasband.backend=onnx :app:assembleDebug
 ```
 
-The build prefers the CPU-optimized v2 bundle at `scyllasband/models/v2/onnx-int8`, then v2 FP32, v1, and the legacy flat layout. If v2 is missing, run this first from the repository root:
+This links `libscyllasband` against ONNX Runtime 1.30.0 (`onnxruntime-android`) and embeds `scyllasband/models/onnx` (about 250 MB). ONNX Runtime builds run on the CPU. LiteRT is the default.
 
-```bash
-python -m scyllasband download --model-version v2 --runtime-bundles onnx-int8 --yes
-```
+## Accelerator
 
-The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
+`ScyllasBand.initialize(threadCount, accelerator)` takes `CPU`, `GPU` or `AUTO`. The sample uses `CPU` (XNNPACK, up to 4 threads), the default.
 
-The sample deliberately packages the complete INT8 ONNX bundle for offline use. The model bundle is roughly 292 MB (278 MiB), and first launch copies it into `noBackupFilesDir` because ONNX Runtime needs filesystem paths for the model and its external weight file. Production apps should normally deliver the model as an install-time asset pack or download it once, and should keep only the target ABI.
+CPU is fast enough: on a Galaxy Z Fold 8 (Snapdragon SM8850) two fixed sentences synthesize in about 0.7 s each (6.2 s and 6.1 s of audio, first audio 0.3-0.7 s, real-time factor about 0.11-0.13). The LiteRT GPU accelerator (OpenCL/OpenGL, `libLiteRtClGlAccelerator.so`) did not help there with this model: it cannot run the INT64 `CAST`/`ADD` and `GATHER_ND` ops, so graphs are split across the GPU and CPU, and
+- `AUTO` fails at the first invoke (`LITERT_OPENGL failed to invoke`, status 3, in the warmup). `initialize` then recreates the runtime on the CPU, so `AUTO` always ends up usable but only ever gives CPU speed here;
+- `GPU` failed to build a delegate kernel on the Adreno (`Unable to parse bc coord for BATCH axis`) and initialization never finished.
+
+The Android emulator behaves like `AUTO` on the device: the GPU graphs compile but fail when invoked.
+
+## Delivery range
+
+The app keeps energy, tension, valence and assertiveness between 0.5 and 3.1 (2 is neutral). The model accepts 0-4, but training data thins out past about 3 (tension reaches 3.1) and pushing further distorts the voice. The sliders are limited to that range, the presets (the same as the main README's) lie within it, and values read from tagged documents are clamped when they become speaker points. `ScyllasBandDelivery` itself still validates the full 0-4 range; the limit is an app-level choice.
 
 ## Minimal integration
-
-The app creates one wrapper, initializes it once on its worker, reuses it for
-every segment, and closes it with the activity. The default initialization is
-the documented mobile profile: warmup enabled, platform-derived thread count,
-and one cached target bucket.
 
 ```kotlin
 private val scyllasband by lazy { ScyllasBand.create(applicationContext) }
 
-// Run off the main thread. This installs assets, creates one runtime, and warms it.
-val bundleInfo = scyllasband.initialize()
+// Off the main thread: installs the bundle, creates the runtime, warms it up.
+val info = scyllasband.initialize()   // info.voices, info.sampleRate, info.backend, info.accelerator
 
-scyllasband.synthesizeSegmentStreaming(
+val settings = ScyllasBandSegmentSettings(
+    voiceId = "ariadne",
+    language = "en_us",
+    delivery = ScyllasBandDelivery(energy = 2.5f, valence = 2.3f),
+)
+scyllasband.synthesizeStreaming(
     text = text,
     settings = settings,
-    seed = 31_415L,
-    onChunkStarted = { _, _, _ -> true },
-    onAudioChunk = { samples, _, _ ->
-        // Retain or consume samples before returning. Return false to cancel.
-        true
-    },
+    seed = 31_415L,                      // optional; null draws fresh noise
+    onChunkStarted = { index, count, sentence -> true },
+    onAudioChunk = { samples, index, count -> true },   // return false to stop
 )
 
+scyllasband.cancel()   // from any thread
 scyllasband.close()
 ```
 
-High-memory clients that prioritize steady-state throughput can explicitly use
-`initialize(targetBucketCacheCapacity = 0)` to retain every encountered
-bucket. Values above one provide intermediate profiles. Keep this decision in
-the integration layer; the UI does not manage ONNX sessions.
+Synthesis uses the bundle defaults (8 Heun steps); `steps` is an optional parameter. `ScyllasBandDelivery.spec()` produces the ABI delivery string, for example `energy=2.5,tension=2,valence=2.3,assertiveness=2,whisper=off`.
 
 ## Modules
 
-- `libscyllasband` owns model planning, target-bucket selection, ONNX session reuse, and LRU eviction. It exposes the same cache control through the public C ABI used by other hosts.
-- `scyllasband-android` builds `libscyllasband` with `SCYLLASBAND_ENABLE_ONNX=ON`, links it to the native library from `onnxruntime-android`, installs the bundle, selects the documented mobile defaults, and exposes a small Kotlin API.
-- Streaming playback hands each native ONNX audio callback to a dedicated `AudioTrack` thread through a two-chunk bounded queue. This lets synthesis overlap playback across chunk and speaker-segment boundaries without retaining a long queue of waveforms or letting the displayed transcript run far ahead of audible speech.
-- `app` owns the marker editor, settings dialogs, document segmentation, lifecycle, and audio playback.
+- `libscyllasband` is the shared C++ runtime (ABI 2.0.0).
+- `scyllasband-android` builds it with `-DSCYLLASBAND_BACKEND=litert|onnx`, adds the JNI layer, installs the bundle and exposes the Kotlin API above.
+- `app` owns the marker editor, point dialog, document segmentation, lifecycle and audio playback.
 
-The app needs no network, microphone, or storage permission at runtime.
-
-On first launch, the editor opens with a tagged walkthrough converted into editable speaker points for Scylla, Max, Tuesday, Spanish-speaking Rex, and Italian-speaking Ink. It demonstrates language switching, emotion strength, CFG, and the same tag-import workflow used by the bundled group conversation preset.
-
-The sample logs time to first audio, total playback time, and native-heap change under the `ScyllasBandPlayback` log tag. These measurements make repeated-play regressions visible with `adb logcat` without adding profiling UI to the app.
-
-## Memory and performance profile
-
-The INT8 ONNX bundle uses separate vector/vocoder graphs for four latent-frame
-buckets, backed by a roughly 260 MB (248 MiB) external-weight file. The default
-capacity-one LRU bounds the number of warm vector/vocoder bucket sessions.
-Re-measure native memory and latency on each target device: the earlier FP32
-figures do not describe this INT8 build, and debug-build results remain
-device-specific.
-
-Useful checks:
-
-```bash
-adb logcat -s ScyllasBandPlayback:I '*:S'
-adb shell dumpsys meminfo org.scyllasband.demo
-```
-
-When comparing profiles, use the same script and stop point. A capacity of one
-should stabilize after the first complete bucket replacement; continued growth
-across identical repeat runs is a regression.
+The app needs no network, microphone or storage permission.
