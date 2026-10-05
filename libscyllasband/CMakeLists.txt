@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 project(libscyllasband VERSION 2.0.0 LANGUAGES CXX)
 
-set(SCYLLASBAND_BACKEND "litert" CACHE STRING "Graph runtime linked into libscyllasband: litert or onnx")
-set_property(CACHE SCYLLASBAND_BACKEND PROPERTY STRINGS litert onnx)
+set(SCYLLASBAND_BACKEND "litert" CACHE STRING "Graph runtime linked into libscyllasband: litert, onnx or apple (Core ML and Core AI)")
+set_property(CACHE SCYLLASBAND_BACKEND PROPERTY STRINGS litert onnx apple)
 option(SCYLLASBAND_BUILD_TOOLS "Build the scyllasband_speak command-line tool" ON)
 option(SCYLLASBAND_BUILD_TESTS "Build the native unit tests" ON)
 
@@ -63,10 +63,26 @@ elseif(SCYLLASBAND_BACKEND STREQUAL "onnx")
     set(_scyllasband_sdk_include "${SCYLLASBAND_ONNXRUNTIME_INCLUDE_DIR}")
     set(_scyllasband_sdk_library "${SCYLLASBAND_ONNXRUNTIME_LIBRARY}")
     set(_scyllasband_backend_define SCYLLASBAND_WITH_ONNXRUNTIME=1)
+elseif(SCYLLASBAND_BACKEND STREQUAL "apple")
+    # Core ML (macOS 15 / iOS 18) and Core AI (macOS 27 / iOS 27, through a Swift bridge; weak-linked so the library
+    # still loads on earlier systems). Swift sources need the Ninja or Xcode generator.
+    if(NOT APPLE)
+        message(FATAL_ERROR "SCYLLASBAND_BACKEND=apple builds only for macOS and iOS.")
+    endif()
+    enable_language(OBJCXX)
+    enable_language(Swift)
+    set(_scyllasband_backend_source src/scyllasband_graph_apple.mm apple/Sources/ScyllasBandCoreAI.swift)
+    set(_scyllasband_sdk_include "")
+    set(_scyllasband_sdk_library "-framework CoreML" "-framework Foundation")
+    set(_scyllasband_backend_define SCYLLASBAND_WITH_APPLE=1)
 else()
-    message(FATAL_ERROR "SCYLLASBAND_BACKEND must be litert or onnx (got '${SCYLLASBAND_BACKEND}').")
+    message(FATAL_ERROR "SCYLLASBAND_BACKEND must be litert, onnx or apple (got '${SCYLLASBAND_BACKEND}').")
 endif()
-get_filename_component(_scyllasband_sdk_library_dir "${_scyllasband_sdk_library}" DIRECTORY)
+if(SCYLLASBAND_BACKEND STREQUAL "apple")
+    set(_scyllasband_sdk_library_dir "")
+else()
+    get_filename_component(_scyllasband_sdk_library_dir "${_scyllasband_sdk_library}" DIRECTORY)
+endif()
 message(STATUS "libscyllasband backend: ${SCYLLASBAND_BACKEND} (${_scyllasband_sdk_library})")
 
 # The engine and text frontend; the shared library and the unit tests both link it.
@@ -81,8 +97,16 @@ add_library(scyllasband_core STATIC
 )
 target_compile_features(scyllasband_core PUBLIC cxx_std_17)
 target_include_directories(scyllasband_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include" "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_include_directories(scyllasband_core SYSTEM PRIVATE "${_scyllasband_sdk_include}")
-target_compile_definitions(scyllasband_core PUBLIC ${_scyllasband_backend_define} SCYLLASBAND_BUILDING)
+if(SCYLLASBAND_BACKEND STREQUAL "apple")
+    target_compile_options(scyllasband_core PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
+    set_target_properties(scyllasband_core PROPERTIES Swift_MODULE_NAME ScyllasBandCoreAI)
+    target_link_options(scyllasband_core PUBLIC "LINKER:-weak_framework,CoreAI")
+endif()
+if(_scyllasband_sdk_include)
+    target_include_directories(scyllasband_core SYSTEM PRIVATE "${_scyllasband_sdk_include}")
+endif()
+# C and C++ only: swiftc takes neither NAME=value definitions nor clang's floating-point flags.
+target_compile_definitions(scyllasband_core PUBLIC $<$<COMPILE_LANGUAGE:C,CXX,OBJCXX>:${_scyllasband_backend_define};SCYLLASBAND_BUILDING>)
 target_link_libraries(scyllasband_core PUBLIC "${_scyllasband_sdk_library}" ${CMAKE_DL_LIBS})
 set_target_properties(scyllasband_core PROPERTIES
     POSITION_INDEPENDENT_CODE ON
@@ -91,7 +115,7 @@ set_target_properties(scyllasband_core PROPERTIES
 )
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     # Keep float arithmetic in source order (no fused multiply-add) so results match across platforms.
-    target_compile_options(scyllasband_core PUBLIC -ffp-contract=off)
+    target_compile_options(scyllasband_core PUBLIC $<$<COMPILE_LANGUAGE:C,CXX,OBJCXX>:-ffp-contract=off>)
 endif()
 
 add_library(scyllasband_native SHARED src/scyllasband.cpp)

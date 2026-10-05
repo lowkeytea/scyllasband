@@ -191,7 +191,7 @@ void Engine::validate() const {
             throw std::invalid_argument("Bundle component '" + name + "' has no " + backend + " artifact; this runtime was built for " + backend +
                                         " bundles");
         }
-        if (!std::filesystem::is_regular_file(std::filesystem::path(bundle_dir_) / artifact.get("path").str())) {
+        if (!std::filesystem::exists(std::filesystem::path(bundle_dir_) / artifact.get("path").str())) {  // Apple assets are directories
             throw std::invalid_argument("Bundle component '" + name + "' has no " + backend + " artifact at " + artifact.get("path").str());
         }
     }

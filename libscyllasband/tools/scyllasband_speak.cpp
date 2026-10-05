@@ -16,7 +16,7 @@ namespace {
 const char* kUsage =
     "usage: scyllasband_speak --bundle DIR --voice ID (--text TEXT | --file PATH) [--output OUT.wav]\n"
     "  [--language CODE] [--delivery SPEC] [--speed 1.0] [--steps N] [--sampler heun|euler] [--seed N]\n"
-    "  [--temperature 1.0] [--threads N] [--accelerator cpu|gpu|auto] [--no-normalize] [--metadata OUT.json]\n"
+    "  [--temperature 1.0] [--threads N] [--accelerator cpu|gpu|auto|ane] [--no-normalize] [--metadata OUT.json]\n"
     "  [--plan-only] [--stream]\n";
 
 void write_wav(const std::string& path, const float* samples, int64_t count, int32_t rate) {
@@ -105,7 +105,10 @@ int main(int argc, char** argv) {
     ScyllasBandRuntimeOptions options{};
     options.bundle_dir = bundle.c_str();
     options.threads = threads;
-    options.accelerator = accelerator == "gpu" ? SCYLLASBAND_ACCELERATOR_GPU : accelerator == "auto" ? SCYLLASBAND_ACCELERATOR_AUTO : SCYLLASBAND_ACCELERATOR_CPU;
+    options.accelerator = accelerator == "gpu"    ? SCYLLASBAND_ACCELERATOR_GPU
+                          : accelerator == "auto" ? SCYLLASBAND_ACCELERATOR_AUTO
+                          : accelerator == "ane"  ? SCYLLASBAND_ACCELERATOR_NEURAL_ENGINE
+                                                  : SCYLLASBAND_ACCELERATOR_CPU;
     ScyllasBandRuntime* runtime = nullptr;
     if (scyllasband_runtime_create(&options, &runtime) != SCYLLASBAND_OK) return fail("cannot load the bundle");
 

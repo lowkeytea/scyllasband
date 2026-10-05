@@ -1,8 +1,8 @@
 /*
  * Scylla's Band native runtime: text-to-speech for scyllasband_measured_delivery_v2 bundles.
  *
- * One graph backend is linked into each build: ONNX Runtime (bundle flavor "onnx") or LiteRT (bundle flavor
- * "litert"). scyllasband_backend() names it.
+ * One graph backend is linked into each build: ONNX Runtime (bundle flavor "onnx"), LiteRT ("litert"), or on Apple
+ * platforms Core ML and Core AI ("coreml", iOS 18 / macOS 15; "coreai", iOS 27 / macOS 27). scyllasband_backend() names it.
  *
  * Strings are UTF-8. Audio is mono float PCM in [-1, 1] at the bundle sample rate. A runtime serializes its
  * requests; create one runtime per bundle and reuse it. Functions that return a status record a thread-local
@@ -41,7 +41,10 @@ typedef enum {
 typedef enum {
     SCYLLASBAND_ACCELERATOR_CPU = 0,
     SCYLLASBAND_ACCELERATOR_GPU = 1,  /* LiteRT GPU, with CPU for unsupported ops */
-    SCYLLASBAND_ACCELERATOR_AUTO = 2  /* GPU when the graphs compile for it, else CPU */
+    SCYLLASBAND_ACCELERATOR_AUTO = 2,  /* LiteRT: GPU when the graphs compile for it, else CPU. Core ML / Core AI: the bundle's
+                                          recommended compute unit per graph */
+    SCYLLASBAND_ACCELERATOR_NEURAL_ENGINE = 3  /* Core ML / Core AI: the graphs the bundle lists as accurate on the Neural
+                                                  Engine run there, the rest on the CPU (usable from background apps) */
 } ScyllasBandAccelerator;
 
 typedef enum {
@@ -53,7 +56,7 @@ typedef enum {
 typedef struct {
     const char* bundle_dir;               /* directory holding manifest.json */
     int32_t threads;                      /* CPU threads per graph; 0: up to 4 (LiteRT), ONNX Runtime's default (ONNX) */
-    ScyllasBandAccelerator accelerator;   /* LiteRT builds; ONNX Runtime builds run on CPU */
+    ScyllasBandAccelerator accelerator;   /* LiteRT and Apple builds; ONNX Runtime builds run on CPU */
 } ScyllasBandRuntimeOptions;
 
 typedef struct {
@@ -102,7 +105,7 @@ typedef struct {
 typedef int32_t (*ScyllasBandEventCallback)(const ScyllasBandEvent* event, void* user_data);
 
 SCYLLASBAND_API const char* scyllasband_version(void);
-SCYLLASBAND_API const char* scyllasband_backend(void); /* "onnx" or "litert" */
+SCYLLASBAND_API const char* scyllasband_backend(void); /* "onnx", "litert" or "apple" (Core ML and Core AI bundles) */
 SCYLLASBAND_API const char* scyllasband_last_error(void);
 
 /* Fills the defaults: speed 1, steps 0, default sampler, no seed, temperature 1, normalize_text 1. */

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Native libscyllasband vs the Python reference runtime on a real bundle.
 
-Checks, for the build's own backend (ONNX Runtime or LiteRT):
+Checks, for the build's own backend (ONNX Runtime, LiteRT, or Core ML / Core AI for Apple builds, on the same compute unit
+as the Python reference):
 - text frontend: spoken-text normalization, sentence split, punctuation segments, Unicode lower/NFC tables;
 - G2P: identical phones and word starts;
 - per sentence (with passage context and the previous sentence's latents as prefix): identical durations,
@@ -97,10 +98,10 @@ class Native:
         if status != 0:
             raise RuntimeError(f"{what} failed ({status}): {self.error()}")
 
-    def open(self, bundle: str) -> None:
+    def open(self, bundle: str, accelerator: int = 0) -> None:
         class Options(ctypes.Structure):
             _fields_ = [("bundle_dir", ctypes.c_char_p), ("threads", ctypes.c_int32), ("accelerator", ctypes.c_int)]
-        options = Options(bundle.encode(), 0, 0)
+        options = Options(bundle.encode(), 0, accelerator)
         runtime = ctypes.c_void_p()
         self._check(self.lib.scyllasband_runtime_create(ctypes.byref(options), ctypes.byref(runtime)), "runtime_create")
         self.runtime = runtime
@@ -207,9 +208,14 @@ def rel_error(reference: np.ndarray, candidate: np.ndarray) -> float:
     return float(np.linalg.norm(reference.astype(np.float64) - candidate)) / max(denominator, 1e-30)
 
 
-def reference_runtime(bundle: str, backend: str):
+ACCELERATORS = {"cpu": 0, "gpu": 1, "ane": 3}
+
+
+def reference_runtime(bundle: str, backend: str, compute_units: str = "cpu"):
     from scyllasband.engine import Engine
     from scyllasband.runtime import ScyllasBandRuntime
+    if backend == "apple":   # the bundle names Core ML or Core AI; run it on the native side's compute unit
+        return ScyllasBandRuntime.from_bundle(Path(bundle), compute_units=compute_units)
     factory = None
     if backend == "litert":
         from scyllasband.litert import litert_session_factory
@@ -377,6 +383,7 @@ def main() -> int:
     parser.add_argument("--steps", type=int, default=8)
     parser.add_argument("--latent-tolerance", type=float, default=1e-4)
     parser.add_argument("--min-snr", type=float, default=50.0)
+    parser.add_argument("--accelerator", choices=sorted(ACCELERATORS), default="cpu", help="Apple builds: compute unit on both sides")
     parser.add_argument("--report", type=Path)
     parser.add_argument("--skip-frontend", action="store_true")
     args = parser.parse_args()
@@ -386,8 +393,8 @@ def main() -> int:
     failures: list[str] = []
     if not args.skip_frontend:
         check_frontend(native, report, failures)
-    native.open(args.bundle)
-    runtime = reference_runtime(args.bundle, native.backend)
+    native.open(args.bundle, ACCELERATORS[args.accelerator])
+    runtime = reference_runtime(args.bundle, native.backend, args.accelerator)
     try:
         check_sentences(native, runtime, report, failures, args)
         check_long_form(native, runtime, report, failures, args)
