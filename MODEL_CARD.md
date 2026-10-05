@@ -32,27 +32,31 @@ The default download is the LiteRT bundle, installed under `scyllasband/models/l
 | Energy, tension, valence, assertiveness | 0–4 or unspecified | 2 each |
 | Whisper | on/off or unspecified | off |
 
-With every control at 2, the default, voices speak in a calm, conversational delivery with a neutral tone. Moving a control away from 2 changes the delivery:
+With every control at 2, the default, voices speak in a calm, conversational delivery with a neutral tone. Raising or lowering a control changes the delivery:
 
-| Control | Toward 0 | Toward 4 |
+| Control | Lower | Higher |
 | --- | --- | --- |
-| Energy | Lower, darker voice with more pauses between phrases | Higher, brighter, more projected voice |
+| Energy | Lower, darker voice with a few more pauses | Higher, brighter, more projected voice |
 | Tension | Slightly looser and steadier | Tighter, with wider pitch swings |
-| Valence | Flatter pitch, a little slower, longer pauses | Livelier pitch, a little quicker, shorter pauses |
-| Assertiveness | Hesitant, with longer pauses between phrases | Faster and clipped with few pauses; the strongest control over pace |
+| Valence | Flatter, more downcast pitch | Livelier pitch, a little quicker, shorter pauses |
+| Assertiveness | More pauses between phrases | Faster and clipped with fewer pauses; the strongest control over pace |
 
-Whisper on gives quieter, breathy speech. Combining the controls gives familiar deliveries:
+Whisper on gives quieter, breathy speech.
+
+The model learned delivery mostly from settings between about 1.7 and 2.8 for energy, 1.9 and 3.0 for valence, 1.8 and 2.7 for assertiveness, and 1.0 and 3.1 for tension. The controls are most reliable inside those ranges; further out, voices can sound strained or a style can become ambiguous.
+
+Combining the controls gives familiar deliveries:
 
 | Delivery | Settings |
 | --- | --- |
-| Calm and soft | `energy=1.2,tension=0.8,valence=2.6` |
-| Assertive and rapid-fire | `energy=2.6,tension=2.2,assertiveness=3.6` |
-| Joyful | `energy=3.2,valence=3.6` |
-| Angry | `energy=3.4,tension=3.4,valence=0.8,assertiveness=3.4` |
-| Sad | `energy=1,tension=1.6,valence=0.8,assertiveness=1.6` |
+| Calm and soft | `energy=1.8,tension=1,valence=2.5,assertiveness=2.1` |
+| Assertive and quick | `energy=2.6,tension=2.4,valence=2.1,assertiveness=2.8` |
+| Joyful | `energy=2.7,tension=2.1,valence=3.1,assertiveness=2.3` |
+| Angry | `energy=2.7,tension=3.1,valence=1.3,assertiveness=2.5` |
+| Sad | `energy=1.7,tension=1.7,valence=1.8,assertiveness=2` |
 | Whispered | `whisper=on` |
 
-The [voice gallery](https://lowkeytea.github.io/scyllasband/#delivery) plays each of these for all ten voices with the exact settings used. How far a control moves the delivery varies with voice, language and text, so start near 2 and listen as you move toward the extremes.
+Angry takes valence a little below the trained range so that it separates clearly from joyful. These are moderate styles; how strongly each comes through varies with voice, language and text. The [voice gallery](https://lowkeytea.github.io/scyllasband/#delivery) plays each of them for all ten voices.
 
 `--delivery auto` omits all coordinates. A per-axis `auto` omits just that coordinate; other unspecified fields in a partial request use neutral defaults. Omission is represented by a separate mask, not by the value 2. It is not an automatic text-to-performance planner.
 

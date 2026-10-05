@@ -40,9 +40,9 @@ Every voice speaks each line below in its own English, with the settings shown.
 | Delivery | Settings | Line |
 | --- | --- | --- |
 | Neutral (default) | `energy=2,tension=2,valence=2,assertiveness=2,whisper=off` | Please put the small blue box beside the kitchen window, then close the door behind you. |
-| Calm and soft | `energy=1.2,tension=0.8,valence=2.6,assertiveness=2,whisper=off` | Take a slow breath. There's no rush tonight; the rain will keep the city quiet for a while. |
-| Assertive and rapid-fire | `energy=2.6,tension=2.2,valence=2,assertiveness=3.6,whisper=off` | Listen carefully. We leave at six, we stay together, and nobody goes back for the bags. |
-| Joyful | `energy=3.2,tension=2,valence=3.6,assertiveness=2,whisper=off` | We actually did it! The whole street came out to watch, and nobody wanted the night to end! |
-| Angry | `energy=3.4,tension=3.4,valence=0.8,assertiveness=3.4,whisper=off` | No. You don't get to walk in here and change the rules again. Not after everything. |
-| Sad | `energy=1,tension=1.6,valence=0.8,assertiveness=1.6,whisper=off` | I kept the letter for years... I never opened it. Maybe I was afraid of what it would say. |
+| Calm and soft | `energy=1.8,tension=1,valence=2.5,assertiveness=2.1,whisper=off` | Take a slow breath. There's no rush tonight; the rain will keep the city quiet for a while. |
+| Assertive and quick | `energy=2.6,tension=2.4,valence=2.1,assertiveness=2.8,whisper=off` | Listen carefully. We leave at six, we stay together, and nobody goes back for the bags. |
+| Joyful | `energy=2.7,tension=2.1,valence=3.1,assertiveness=2.3,whisper=off` | We actually did it! The whole street came out to watch, and nobody wanted the night to end! |
+| Angry | `energy=2.7,tension=3.1,valence=1.3,assertiveness=2.5,whisper=off` | No. You don't get to walk in here and change the rules again. Not after everything. |
+| Sad | `energy=1.7,tension=1.7,valence=1.8,assertiveness=2,whisper=off` | I kept the letter for years... I never opened it. Maybe I was afraid of what it would say. |
 | Whisper | `energy=2,tension=2,valence=2,assertiveness=2,whisper=on` | Keep your voice down. The guard changes at four, and the side door is still unlocked. |

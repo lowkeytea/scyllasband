@@ -1,15 +1,15 @@
 [scylla:en_us:whisper=on] Hey. Hey! You, with the headphones. Come closer... the others don't know you're here yet.
 [scylla:en_us:energy=2.4,assertiveness=2.6] Yeah, I can see you looking around. I'm talking about you!
-[scylla:en_us:energy=3,valence=3.5] Ok... so here's my big, warm, friendly voice! Everyone trusts a happy voice, right? Right!?
-[scylla:en_us:energy=3.3,tension=3.3,valence=0.8,assertiveness=3.3] Oh, come on! I whispered, I sparkled, and you're still just poking at the screen!
+[scylla:en_us:energy=2.7,tension=2.1,valence=3.1,assertiveness=2.3] Ok... so here's my big, warm, friendly voice! Everyone trusts a happy voice, right? Right!?
+[scylla:en_us:energy=2.7,tension=3.1,valence=1.3,assertiveness=2.5] Oh, come on! I whispered, I sparkled, and you're still just poking at the screen!
 [ink:en_gb:whisper=on] Scylla! Deep breath... relax...
-[ink:en_gb:energy=1.6,tension=1.4,valence=2.4] What is it you're actually trying to tell these nice people?
+[ink:en_gb:energy=1.8,tension=1.2,valence=2.4] What is it you're actually trying to tell these nice people?
 [gwen:en_us:energy=1.8,tension=1.6,valence=2.6] What she's trying to say is: we got an upgrade. Version two, with new languages and new tricks.
 [tuesday:en_gb:energy=2,tension=1.6] Introductions, then, before she does all seven languages herself. And don't worry: everything you're hearing happens right on your device. The cloud wasn't invited.
 [felix:de:whisper=on] Felix hier. Ich flüstere nicht, weil es geheim ist. Ich flüstere, weil ich es am besten kann.
 [stone:fr:energy=1.8,tension=1.6] Je m'appelle Stone. Le drame, ce n'est pas mon genre. Le français, si.
-[scylla:vi:energy=2.8,valence=3.2] Thấy chưa? Vẫn là tôi, chỉ là bằng tiếng Việt.
-[rex:es:energy=3.3,valence=3.6] ¡Y el español sigue aquí! Diez voces, un montón de idiomas, y ni una sola palabra sale de tu teléfono.
+[scylla:vi:energy=2.7,valence=3.1] Thấy chưa? Vẫn là tôi, chỉ là bằng tiếng Việt.
+[rex:es:energy=2.7,tension=2.1,valence=3.1,assertiveness=2.3] ¡Y el español sigue aquí! Diez voces, un montón de idiomas, y ni una sola palabra sale de tu teléfono.
 [max:it:energy=2.3,valence=2.8] E poi c'è l'italiano: ogni frase un piccolo dramma. Prego, niente applausi.
-[ariadne:en_us:energy=1.6,tension=1.4,valence=2.4] Everyone is very impressive. But I have been here for two whole versions now, and still nobody has brought the little cookies.
-[orpheus:en_gb:energy=1.3,valence=1] And that's the demo. She waits for her cookies, I wait for a bigger part. Play it again. Perhaps we both get lucky.
+[ariadne:en_us:energy=1.8,tension=1.2,valence=2.4] Everyone is very impressive. But I have been here for two whole versions now, and still nobody has brought the little cookies.
+[orpheus:en_gb:energy=1.7,tension=1.7,valence=1.8] And that's the demo. She waits for her cookies, I wait for a bigger part. Play it again. Perhaps we both get lucky.
