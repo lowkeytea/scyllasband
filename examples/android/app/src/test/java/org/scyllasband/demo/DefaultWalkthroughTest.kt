@@ -1,73 +1,63 @@
 package org.scyllasband.demo
 
-import org.scyllasband.android.ScyllasBandBundleInfo
-import org.scyllasband.android.ScyllasBandSegmentSettings
-import org.scyllasband.android.ScyllasBandVoice
+import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.scyllasband.android.ScyllasBandBundleInfo
+import org.scyllasband.android.ScyllasBandDelivery
+import org.scyllasband.android.ScyllasBandSegmentSettings
+import org.scyllasband.android.ScyllasBandVoice
 
+/** Parses the real data/walkthrough_demo.txt that the app bundles as its first-launch document. */
 class DefaultWalkthroughTest {
     private val voices = ALL_VOICES.map { id ->
         val english = if (id in BRITISH_VOICES) "en_gb" else "en_us"
         ScyllasBandVoice(id, id.replaceFirstChar { it.uppercase() }, listOf(english) + NON_ENGLISH_LANGUAGES, english)
     }
     private val info = ScyllasBandBundleInfo(
-        modelName = "test",
+        backend = "litert",
+        accelerator = "cpu",
         sampleRate = 24_000,
+        releaseId = "test",
         voices = voices,
-        affectAxes = listOf("calm", "joy", "anger", "sadness", "sarcasm", "whisper"),
     )
-    private val defaults = ScyllasBandSegmentSettings("gwen", "en_us")
+    private val defaults = ScyllasBandSegmentSettings("scylla", "en_us")
+    private val source = File("../../../data/${DefaultWalkthrough.ASSET_NAME}").readText(Charsets.UTF_8)
+
+    private fun snapshot() = DefaultWalkthrough.snapshot(source, defaults, info)
 
     @Test
-    fun launchesWithTheRequestedSpeakersAndLanguages() {
-        val snapshot = DefaultWalkthrough.snapshot(defaults, info)
-        val segments = SpeakerDocument.segments(snapshot, defaults)
+    fun usesEveryVoiceAndLanguageOfTheDemo() {
+        val segments = SpeakerDocument.segments(snapshot(), defaults)
 
-        assertEquals(
-            listOf(
-                "gwen", "gwen", "gwen", "ink", "scylla", "tuesday", "felix",
-                "stone", "scylla", "rex", "max", "ariadne", "orpheus",
-            ),
-            segments.map { it.settings.voiceId },
-        )
+        assertEquals(ALL_VOICES.toSet(), segments.map { it.settings.voiceId }.toSet())
         assertEquals("de", segments.single { it.settings.voiceId == "felix" }.settings.language)
         assertEquals("fr", segments.single { it.settings.voiceId == "stone" }.settings.language)
         assertEquals("es", segments.single { it.settings.voiceId == "rex" }.settings.language)
         assertEquals("it", segments.single { it.settings.voiceId == "max" }.settings.language)
-        assertEquals(
-            listOf("en_us", "vi"),
-            segments.filter { it.settings.voiceId == "scylla" }.map { it.settings.language },
-        )
-        assertEquals(ALL_VOICES.toSet(), segments.map { it.settings.voiceId }.toSet())
+        assertTrue(segments.any { it.settings.voiceId == "scylla" && it.settings.language == "vi" })
     }
 
     @Test
-    fun convertsTagsToEditablePointsWithVariedEmotionControls() {
-        val snapshot = DefaultWalkthrough.snapshot(defaults, info)
+    fun convertsEachTaggedLineToAnEditablePointWithDelivery() {
+        val snapshot = snapshot()
 
-        assertEquals(13, snapshot.points.size)
+        assertEquals(source.lines().count { it.isNotBlank() }, snapshot.points.size)
         assertFalse(snapshot.text.contains('['))
+        assertTrue(snapshot.points.first().settings.delivery.whisper)
         assertEquals(
-            info.affectAxes.toSet(),
-            snapshot.points.mapNotNull { it.settings.emotion }.toSet(),
+            ScyllasBandDelivery(energy = 2.7f, tension = 3.1f, valence = 1.3f, assertiveness = 2.5f),
+            snapshot.points.map { it.settings.delivery }.first { it.tension == 3.1f },
         )
-        assertTrue(snapshot.points.map { it.settings.emotionStrength }.distinct().size >= 4)
-        assertTrue(snapshot.points.map { it.settings.emotionCfg }.distinct().size >= 4)
-    }
-
-    @Test
-    fun dialogueTouchesEverySupportedLanguage() {
-        val text = DefaultWalkthrough.snapshot(defaults, info).text.lowercase()
-
-        assertTrue("flüstere" in text)
-        assertTrue("le français" in text)
-        assertTrue("tiếng việt" in text)
-        assertTrue("el español" in text)
-        assertTrue("l'italiano" in text)
-        assertTrue("cookies" in text)
+        snapshot.points.forEach {
+            val d = it.settings.delivery
+            listOf(d.energy, d.tension, d.valence, d.assertiveness).forEach { v ->
+                assertTrue(v in DELIVERY_UI_MIN..DELIVERY_UI_MAX)
+            }
+        }
+        assertTrue(snapshot.points.map { it.settings.delivery }.distinct().size >= 8)
     }
 
     private companion object {

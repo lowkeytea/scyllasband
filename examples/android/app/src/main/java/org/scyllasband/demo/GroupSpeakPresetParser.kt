@@ -1,9 +1,17 @@
 package org.scyllasband.demo
 
-import org.scyllasband.android.ScyllasBandDelivery
 import org.scyllasband.android.ScyllasBandBundleInfo
+import org.scyllasband.android.ScyllasBandDelivery
 import org.scyllasband.android.ScyllasBandSegmentSettings
 
+/**
+ * Converts `[voice:language:delivery]` tagged text into plain text plus speaker points.
+ *
+ * - `[voice:language:energy=2.3,valence=2.5]` sets voice, language and delivery. An empty voice or language
+ *   part keeps the active one. A delivery part replaces the active delivery; unspecified axes are neutral.
+ * - `[es]` (a language) keeps the active voice and delivery; `[ink]` (anything else) switches voice only.
+ * - Every line starts again from the defaults.
+ */
 object GroupSpeakPresetParser {
     private val tagPattern = Regex("\\[([-A-Za-z0-9_.,:=]+)]")
     private val languageTags = setOf("en", "en_us", "en_gb", "es", "it", "fr", "de", "vi")
@@ -31,6 +39,39 @@ object GroupSpeakPresetParser {
         return SpeakerDocumentSnapshot(output.toString().trimEnd(), points)
     }
 
+    /** Parses `energy=2.5,tension=2,whisper=on` into a delivery; omitted axes are neutral. */
+    fun parseDelivery(spec: String): ScyllasBandDelivery {
+        val clean = spec.trim().lowercase()
+        if (clean.isEmpty() || clean == "neutral") return ScyllasBandDelivery()
+        var delivery = ScyllasBandDelivery()
+        val seen = mutableSetOf<String>()
+        for (term in clean.split(',')) {
+            val pair = term.split('=', limit = 2)
+            require(pair.size == 2 && pair[0].isNotBlank()) { "Invalid delivery term '$term'" }
+            val axis = pair[0].trim()
+            val raw = pair[1].trim()
+            require(seen.add(axis)) { "Delivery axis '$axis' is repeated" }
+            require(raw != "auto") { "'auto' delivery is not supported by this editor ('$axis')" }
+            if (axis == "whisper") {
+                require(raw == "on" || raw == "off") { "whisper must be on or off" }
+                delivery = delivery.copy(whisper = raw == "on")
+                continue
+            }
+            val value = raw.toFloatOrNull()
+            require(value != null && value.isFinite() && value in ScyllasBandDelivery.MIN..ScyllasBandDelivery.MAX) {
+                "Delivery '$axis' must be within [0, 4]"
+            }
+            delivery = when (axis) {
+                "energy" -> delivery.copy(energy = value)
+                "tension" -> delivery.copy(tension = value)
+                "valence" -> delivery.copy(valence = value)
+                "assertiveness" -> delivery.copy(assertiveness = value)
+                else -> error("Unknown delivery axis '$axis'")
+            }
+        }
+        return delivery
+    }
+
     private fun parseTag(
         label: String,
         current: ScyllasBandSegmentSettings,
@@ -39,85 +80,35 @@ object GroupSpeakPresetParser {
         var voiceId = current.voiceId
         var language = current.language
         var delivery = current.delivery
-        var emotion = current.emotion
-        var strength = current.emotionStrength
+        var explicitLanguage = false
         val clean = label.trim().lowercase()
 
         if (':' in clean) {
             val parts = clean.split(':', limit = 3)
             if (parts[0].isNotBlank()) voiceId = parts[0]
-            if (parts.getOrElse(1) { "" }.isNotBlank()) language = parts[1]
-            parts.getOrNull(2)?.takeIf { it.isNotBlank() }?.let { affect ->
-                if (bundleInfo.deliveryEnabled) {
-                    var d = ScyllasBandDelivery()
-                    val seen = mutableSetOf<String>()
-                    for (term in affect.split(',')) {
-                        val pair = term.split('=', limit = 2)
-                        require(pair.size == 2 && seen.add(pair[0])) { "Invalid delivery tag" }
-                        val axis = pair[0]; val raw = pair[1]
-                        if (axis == "whisper") {
-                            require(raw == "on" || raw == "off") { "Whisper must be on or off" }
-                            d = d.copy(whisper = raw == "on")
-                        } else {
-                            val v = raw.toFloatOrNull() ?: error("Invalid delivery value")
-                            d = when (axis) {
-                                "energy" -> d.copy(energy = v)
-                                "tension" -> d.copy(tension = v)
-                                "valence" -> d.copy(valence = v)
-                                "assertiveness" -> d.copy(assertiveness = v)
-                                else -> error("Unknown measured delivery axis '$axis'")
-                            }
-                        }
-                    }
-                    delivery = d; emotion = null; strength = 0f
-                    return@let
-                }
-                val terms = affect.split(',')
-                require(terms.size == 1) {
-                    "This Android editor supports one emotion per point; preset tag [$label] mixes several axes"
-                }
-                val (axis, value) = parseAffectTerm(terms.single(), bundleInfo)
-                emotion = axis
-                strength = value
+            if (parts.getOrElse(1) { "" }.isNotBlank()) {
+                language = parts[1]
+                explicitLanguage = true
+            }
+            parts.getOrNull(2)?.takeIf { it.isNotBlank() }?.let {
+                // Tagged documents may exceed the app's 0.5-3.1 range; clamp (sparse training data beyond about 3).
+                delivery = parseDelivery(it).coerceToUiRange()
             }
         } else if (clean in languageTags) {
             language = clean
-        } else if (clean in bundleInfo.affectAxes) {
-            emotion = clean
-            strength = 1f
+            explicitLanguage = true
         } else if (clean.isNotBlank()) {
             voiceId = clean
         }
 
         val voice = bundleInfo.voices.firstOrNull { it.id == voiceId }
             ?: error("Preset refers to unknown voice '$voiceId'")
-        language = when (language) {
-            "en" -> voice.defaultLanguage
-            in voice.languages -> language
-            else -> error("Preset language '$language' is not available for ${voice.id}")
+        language = when {
+            language == "en" -> voice.defaultLanguage
+            language in voice.languages -> language
+            explicitLanguage -> error("Preset language '$language' is not available for ${voice.id}")
+            else -> voice.defaultLanguage
         }
-        return current.copy(
-            voiceId = voice.id,
-            language = language,
-            emotion = emotion,
-            emotionStrength = strength,
-            delivery = delivery,
-            emotionCfg = if (bundleInfo.deliveryEnabled) 1f else current.emotionCfg,
-        )
-    }
-
-    private fun parseAffectTerm(
-        term: String,
-        bundleInfo: ScyllasBandBundleInfo,
-    ): Pair<String, Float> {
-        val parts = term.split('=', limit = 2)
-        require(parts.size == 2) { "Invalid preset emotion '$term'" }
-        val axis = parts[0].trim()
-        require(axis in bundleInfo.affectAxes) { "Unknown preset emotion '$axis'" }
-        val value = parts[1].trim().toFloatOrNull()
-        require(value != null && value.isFinite() && value in 0f..1f) {
-            "Preset emotion strength for '$axis' must be within [0, 1]"
-        }
-        return axis to value
+        return ScyllasBandSegmentSettings(voice.id, language, delivery)
     }
 }

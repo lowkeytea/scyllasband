@@ -5,34 +5,28 @@ internal object ScyllasBandNative {
         System.loadLibrary("scyllasband_android_jni")
     }
 
-    external fun create(
-        bundlePath: String,
-        threadCount: Int,
-        targetBucketCacheCapacity: Int,
-    ): Long
+    external fun create(bundlePath: String, threadCount: Int, accelerator: Int): Long
 
-    external fun warmup(handle: Long, voiceId: String, language: String)
+    external fun voicesJson(handle: Long): String
 
-    external fun synthesizeSegment(
+    external fun backend(): String
+
+    external fun warmup(handle: Long, voiceId: String?)
+
+    /** Returns false when the listener or [cancel] stopped the request before it finished. */
+    external fun synthesizeStreaming(
         handle: Long,
         text: String,
         voiceId: String,
-        language: String,
-        affect: String?,
-        emotionCfg: Float,
+        language: String?,
+        delivery: String?,
+        steps: Int,
         seed: Long,
-    ): FloatArray
-
-    external fun synthesizeSegmentStreaming(
-        handle: Long,
-        text: String,
-        voiceId: String,
-        language: String,
-        affect: String?,
-        emotionCfg: Float,
-        seed: Long,
+        hasSeed: Boolean,
         listener: ScyllasBandNativeChunkListener,
-    )
+    ): Boolean
+
+    external fun cancel(handle: Long)
 
     external fun destroy(handle: Long)
 }

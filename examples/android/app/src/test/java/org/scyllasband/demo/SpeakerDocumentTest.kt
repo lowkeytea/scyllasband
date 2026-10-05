@@ -1,13 +1,14 @@
 package org.scyllasband.demo
 
+import org.scyllasband.android.ScyllasBandDelivery
 import org.scyllasband.android.ScyllasBandSegmentSettings
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class SpeakerDocumentTest {
     private val default = ScyllasBandSegmentSettings("scylla", "en_us")
-    private val spanishJoy = ScyllasBandSegmentSettings("ariadne", "es", "joy", 0.75f, 1.25f)
-    private val italianAnger = ScyllasBandSegmentSettings("ink", "it", "anger", 0.5f, 1.5f)
+    private val spanishJoyful = ScyllasBandSegmentSettings("ariadne", "es", DeliveryPreset.JOYFUL.delivery)
+    private val italianWhisper = ScyllasBandSegmentSettings("ink", "it", ScyllasBandDelivery(energy = 3.4f, whisper = true))
 
     @Test
     fun pointAppliesUntilTheNextPoint() {
@@ -15,16 +16,16 @@ class SpeakerDocumentTest {
         val snapshot = SpeakerDocumentSnapshot(
             text,
             listOf(
-                SpeakerPoint(text.indexOf("Hola"), spanishJoy),
-                SpeakerPoint(text.indexOf("Dopo"), italianAnger),
+                SpeakerPoint(text.indexOf("Hola"), spanishJoyful),
+                SpeakerPoint(text.indexOf("Dopo"), italianWhisper),
             ),
         )
 
         assertEquals(
             listOf(
                 SpeechSegment("Before.", default),
-                SpeechSegment("Hola mundo.", spanishJoy),
-                SpeechSegment("Dopo.", italianAnger),
+                SpeechSegment("Hola mundo.", spanishJoyful),
+                SpeechSegment("Dopo.", italianWhisper),
             ),
             SpeakerDocument.segments(snapshot, default),
         )
@@ -45,10 +46,10 @@ class SpeakerDocumentTest {
     fun laterPointAtSameOffsetWinsWithoutCreatingEmptyAudio() {
         val snapshot = SpeakerDocumentSnapshot(
             "Hello",
-            listOf(SpeakerPoint(0, spanishJoy), SpeakerPoint(0, italianAnger)),
+            listOf(SpeakerPoint(0, spanishJoyful), SpeakerPoint(0, italianWhisper)),
         )
         assertEquals(
-            listOf(SpeechSegment("Hello", italianAnger)),
+            listOf(SpeechSegment("Hello", italianWhisper)),
             SpeakerDocument.segments(snapshot, default),
         )
     }

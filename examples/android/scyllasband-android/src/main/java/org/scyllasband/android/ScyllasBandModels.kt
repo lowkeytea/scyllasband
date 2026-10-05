@@ -1,5 +1,7 @@
 package org.scyllasband.android
 
+import java.util.Locale
+
 data class ScyllasBandVoice(
     val id: String,
     val displayName: String,
@@ -8,49 +10,67 @@ data class ScyllasBandVoice(
 )
 
 data class ScyllasBandBundleInfo(
-    val modelName: String,
+    val backend: String,
+    val accelerator: String,
     val sampleRate: Int,
+    val releaseId: String,
     val voices: List<ScyllasBandVoice>,
-    val affectAxes: List<String>,
-    val deliveryEnabled: Boolean = false,
 )
 
+/** Where the LiteRT graphs run. ONNX Runtime builds always run on the CPU. */
+enum class ScyllasBandAccelerator(internal val code: Int) {
+    CPU(0),
+
+    /** LiteRT GPU, with the CPU for unsupported ops. */
+    GPU(1),
+
+    /** The GPU when the graphs compile for it, else the CPU. */
+    AUTO(2),
+}
+
+/**
+ * Four continuous delivery axes on 0-4 (2 is neutral) plus whisper. [spec] is the ABI delivery string.
+ */
 data class ScyllasBandDelivery(
-    val energy: Float = 2f,
-    val tension: Float = 2f,
-    val valence: Float = 2f,
-    val assertiveness: Float = 2f,
+    val energy: Float = NEUTRAL,
+    val tension: Float = NEUTRAL,
+    val valence: Float = NEUTRAL,
+    val assertiveness: Float = NEUTRAL,
     val whisper: Boolean = false,
 ) {
     init {
-        require(listOf(energy, tension, valence, assertiveness).all { it.isFinite() && it in 0f..4f }) {
-            "Measured delivery values must be finite and within [0, 4]"
+        require(listOf(energy, tension, valence, assertiveness).all { it.isFinite() && it in MIN..MAX }) {
+            "Delivery axes must be finite and within [$MIN, $MAX]"
         }
     }
-    fun spec(): String = "delivery:energy=$energy,tension=$tension,valence=$valence,assertiveness=$assertiveness,whisper=${if (whisper) "on" else "off"}"
+
+    fun spec(): String = String.format(
+        Locale.US,
+        "energy=%s,tension=%s,valence=%s,assertiveness=%s,whisper=%s",
+        format(energy),
+        format(tension),
+        format(valence),
+        format(assertiveness),
+        if (whisper) "on" else "off",
+    )
+
+    companion object {
+        const val MIN = 0f
+        const val MAX = 4f
+        const val NEUTRAL = 2f
+
+        private fun format(value: Float): String =
+            String.format(Locale.US, "%.2f", value).trimEnd('0').trimEnd('.')
+    }
 }
 
 data class ScyllasBandSegmentSettings(
     val voiceId: String,
     val language: String,
-    val emotion: String? = null,
-    val emotionStrength: Float = 0f,
-    val emotionCfg: Float = 1f,
-    val delivery: ScyllasBandDelivery? = null,
+    val delivery: ScyllasBandDelivery = ScyllasBandDelivery(),
 ) {
     init {
         require(voiceId.isNotBlank()) { "voiceId must not be blank" }
         require(language.isNotBlank()) { "language must not be blank" }
-        require(emotionStrength in 0f..1f) { "emotionStrength must be within [0, 1]" }
-        require(emotionCfg.isFinite() && emotionCfg >= 0f) { "emotionCfg must be finite and non-negative" }
-    }
-
-    fun affectSpec(): String? {
-        delivery?.let {
-            require(emotion == null && emotionCfg == 1f) { "Measured delivery cannot be mixed with emotion or CFG" }
-            return it.spec()
-        }
-        val axis = emotion?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
-        return axis?.let { "$it=${emotionStrength.coerceIn(0f, 1f)}" }
     }
 }
