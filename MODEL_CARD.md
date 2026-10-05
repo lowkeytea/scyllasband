@@ -51,7 +51,7 @@ Combining the controls gives familiar deliveries:
 | --- | --- |
 | Calm and soft | `energy=1.8,tension=1,valence=2.5,assertiveness=2.1` |
 | Assertive and quick | `energy=2.6,tension=2.4,valence=2.1,assertiveness=2.8` |
-| Joyful | `energy=2.7,tension=2.1,valence=3.1,assertiveness=2.3` |
+| Joyful | `energy=2.4,tension=2,valence=2.8,assertiveness=2.2` |
 | Angry | `energy=2.7,tension=3.1,valence=1.3,assertiveness=2.5` |
 | Sad | `energy=1.7,tension=1.7,valence=1.8,assertiveness=2` |
 | Whispered | `whisper=on` |
