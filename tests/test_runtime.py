@@ -107,6 +107,15 @@ class NormalizerTest(unittest.TestCase):
                          "The Pool of Tears. It was very odd.")
 
 
+class InitialismTest(unittest.TestCase):
+    def test_names_stay_in_their_sentence_and_times_can_end_one(self):
+        from scyllasband.text_normalizer import normalize_spoken_text
+        self.assertEqual(normalize_spoken_text("D.J. Stumpy met J.K. Rowling.", language="en_us"), "dee jay Stumpy met jay kay Rowling.")
+        self.assertEqual(normalize_spoken_text("We left at 5 p.m. Then it rained.", language="en_us"),
+                         "We left at five pee em. Then it rained.")
+        self.assertEqual(normalize_spoken_text("She lives in the U.S.", language="en_us"), "She lives in the you ess.")
+
+
 class PlannerTest(unittest.TestCase):
     def test_sentence_split(self):
         self.assertEqual(split_sentences('You. Are. Not. It. "Really?!" she asked... Fine'),

@@ -546,12 +546,15 @@ Text expand_dotted_initialisms(const Text& value, const std::string& lang) {
             if (!spoken.empty()) spoken.push_back(' ');
             spoken += letter_name(s[i], lang);
         }
-        // _SENTENCE_FOLLOWS_RE = \s*$|\s+["'“‘(\[]?[A-ZÀ-ÖØ-ÞÑ]  (matched at the initialism's end)
+        // The last dot also ends the sentence at the end of the text, and after a lower-case initialism followed by
+        // _SENTENCE_FOLLOWS_RE = \s+["'“‘(\[]?[A-ZÀ-ÖØ-ÞÑ]; an upper-case one before a capital is part of a name.
         std::size_t j = run_end(s, m.end, is_space);
         bool ends_sentence = j == s.size();
         if (!ends_sentence && j > m.end) {
             std::size_t k = in_set(s[j], U"\"'“‘([") ? j + 1 : j;
-            ends_sentence = upper_latin(at(s, k)) || (k != j && upper_latin(at(s, j)));
+            bool lower = true;
+            for (std::size_t i = m.start; i < m.end; ++i) lower = lower && (!initial_letter(s[i]) || !upper_latin(s[i]));
+            ends_sentence = lower && (upper_latin(at(s, k)) || (k != j && upper_latin(at(s, j))));
         }
         return ends_sentence ? spoken + U"." : spoken;
     });

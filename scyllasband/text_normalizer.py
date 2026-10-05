@@ -646,8 +646,12 @@ class SpokenTextNormalizer:
         def replace(match: re.Match[str]) -> str:
             letters = re.findall(r"[A-Za-zÑñ]", match.group(0))
             spoken = " ".join(self._letter_name(letter, lang) for letter in letters)
-            # "at 9 a.m. Then ..." / "... p.m." at the end: the initialism's last dot also ends the sentence.
-            ends_sentence = self._SENTENCE_FOLLOWS_RE.match(text, match.end()) is not None
+            # The last dot also ends the sentence at the end of the text ("... at 5 p.m.") and after a lower-case
+            # initialism followed by a capital ("at 9 a.m. Then ..."). An upper-case initialism before a capital is part
+            # of a name ("D.J. Stumpy", "J.K. Rowling") and loses its dot, as in the training normalizer.
+            follows = self._SENTENCE_FOLLOWS_RE.match(text, match.end())
+            at_end = not text[match.end():].strip()
+            ends_sentence = at_end or (follows is not None and all(letter.islower() for letter in letters))
             return spoken + "." if ends_sentence else spoken
 
         return self._DOTTED_INITIALISM_RE.sub(replace, text)
