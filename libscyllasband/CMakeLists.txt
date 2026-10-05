@@ -9,7 +9,8 @@ option(SCYLLASBAND_BUILD_TESTS "Build the native unit tests" ON)
 set(SCYLLASBAND_LITERT_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/litert/include" CACHE PATH "LiteRT C API headers")
 set(SCYLLASBAND_ONNXRUNTIME_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/onnxruntime/include" CACHE PATH "ONNX Runtime C/C++ headers")
 
-# Staged SDK platform directory: third_party/<sdk>/lib/<platform>/
+# Staged SDK platform directory: third_party/<sdk>/lib/<platform>/. The lookups below ignore CMAKE_FIND_ROOT_PATH,
+# which cross-compiling toolchains (the Android NDK) restrict to their sysroot.
 if(ANDROID)
     if(ANDROID_ABI STREQUAL "arm64-v8a")
         set(_scyllasband_platform "android-arm64")
@@ -36,7 +37,7 @@ if(SCYLLASBAND_BACKEND STREQUAL "litert")
     set(_scyllasband_backend_source src/scyllasband_graph_litert.cpp)
     # Pass SCYLLASBAND_LITERT_LIBRARY to use a libLiteRt outside the staged SDK.
     find_library(SCYLLASBAND_LITERT_LIBRARY NAMES LiteRt libLiteRt
-        PATHS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/litert/lib/${_scyllasband_platform}" NO_DEFAULT_PATH)
+        PATHS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/litert/lib/${_scyllasband_platform}" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
     if(NOT EXISTS "${SCYLLASBAND_LITERT_INCLUDE_DIR}/litert/c/litert_compiled_model.h")
         message(FATAL_ERROR "LiteRT headers not found in ${SCYLLASBAND_LITERT_INCLUDE_DIR}.")
     endif()
@@ -51,7 +52,7 @@ elseif(SCYLLASBAND_BACKEND STREQUAL "onnx")
     set(_scyllasband_backend_source src/scyllasband_graph_onnx.cpp)
     # Pass SCYLLASBAND_ONNXRUNTIME_LIBRARY to use an ONNX Runtime outside the staged SDK.
     find_library(SCYLLASBAND_ONNXRUNTIME_LIBRARY NAMES onnxruntime
-        PATHS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/onnxruntime/lib/${_scyllasband_platform}" NO_DEFAULT_PATH)
+        PATHS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/onnxruntime/lib/${_scyllasband_platform}" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
     if(NOT EXISTS "${SCYLLASBAND_ONNXRUNTIME_INCLUDE_DIR}/onnxruntime_cxx_api.h")
         message(FATAL_ERROR "ONNX Runtime headers not found in ${SCYLLASBAND_ONNXRUNTIME_INCLUDE_DIR}.")
     endif()
