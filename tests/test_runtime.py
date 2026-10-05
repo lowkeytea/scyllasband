@@ -170,6 +170,32 @@ class EngineTest(unittest.TestCase):
             self.assertEqual(engine._fake.calls[-1]["latents"].shape, (1, 24, 16))
             self.assertEqual(int(engine._fake.calls[-1]["latent_mask"].sum()), frames)
 
+    def test_fused_flow_replaces_the_step_loop(self):
+        engine = _fake_engine(apple=True)
+        sentence = Sentence(phones=["<sil>", "a", "b", "<end_stmt>", "<sil>"], word_starts=[])
+        delivery = delivery_tensors(None)[:2]
+        fused = engine.synthesize_sentence(sentence, voice="scylla", language="en_us", delivery=delivery, steps=8, sampler="heun",
+                                           rng=np.random.default_rng(0))
+        names = [call["name"] for call in engine._fake.calls]
+        self.assertEqual(names.count("vector_flow_8"), 1)
+        self.assertFalse(any(name.startswith("vector_estimator") for name in names))
+        self.assertNotIn("time", engine._fake.calls[names.index("vector_flow_8")])
+        self.assertTrue(fused.metadata["fused_flow"])
+        engine._fake.calls.clear()
+        stepped = engine.synthesize_sentence(sentence, voice="scylla", language="en_us", delivery=delivery, steps=2, sampler="heun",
+                                             rng=np.random.default_rng(0))
+        names = [call["name"] for call in engine._fake.calls]
+        self.assertEqual(names.count("vector_estimator_8"), 4)
+        self.assertFalse(stepped.metadata["fused_flow"])
+
+    def test_g2p_runs_the_narrowest_bucket_that_fits(self):
+        plain, bucketed = _fake_engine(), _fake_engine(apple=True)
+        self.assertEqual(bucketed.phonemize("hello", language="en_us")["phones"], plain.phonemize("hello", language="en_us")["phones"])
+        call = next(c for c in bucketed._fake.calls if c["name"].startswith("g2p"))
+        self.assertEqual((call["name"], call["text"].shape), ("g2p_16", (1, 16)))
+        bucketed.phonemize("hello hello hello hello", language="en_us")
+        self.assertEqual(bucketed._fake.calls[-1]["name"], "g2p_32")
+
     def test_overlong(self):
         engine = _fake_engine(frames_per_phone=9.0)
         sentence = Sentence(phones=["<sil>", "a", "b", "a", "<sil>"], word_starts=[])
@@ -190,8 +216,10 @@ class _FakeGraphs:
         class Session:
             def run(self, feeds):
                 graphs.calls.append(dict(feeds, name=name))
-                if name == "g2p":
+                if name.startswith("g2p"):
                     return _fake_g2p_logits(feeds["text"])
+                if name.startswith("vector_flow"):
+                    return feeds["noise"] * 0.5
                 if name == "duration_predictor":
                     return np.full((1, feeds["span_phone_ids"].shape[1]), graphs.frames_per_phone, np.float32)
                 if name == "vector_context_encoder":
@@ -227,7 +255,8 @@ def _fake_g2p_logits(encoded: np.ndarray) -> np.ndarray:
     return logits
 
 
-def _fake_bundle(root: Path) -> Path:
+def _fake_bundle(root: Path, *, apple: bool = False) -> Path:
+    """``apple``: also the optional fused-flow graphs and narrower G2P inputs of the Core ML and Core AI bundles."""
     bundle = root / "bundle"
     (bundle / "assets/g2p").mkdir(parents=True)
     (bundle / "onnx").mkdir()
@@ -256,13 +285,23 @@ def _fake_bundle(root: Path) -> Path:
                                   prefix_conditioning=dict(max_frames=6), decoding=dict(context_frames=4),
                                   target_buckets=dict(buckets=[dict(latent_frames=8, vector_estimator="vector_estimator_8", vocoder="vocoder_8"),
                                                                dict(latent_frames=16, vector_estimator="vector_estimator", vocoder="vocoder")])))
+    if apple:
+        flow_inputs = [n for n in VECTOR_INPUTS if n != "time"]
+        for name, inputs in (("vector_flow_8", flow_inputs), ("vector_flow", flow_inputs), ("g2p_16", ["text"]), ("g2p_32", ["text"])):
+            (bundle / f"onnx/{name}.onnx").write_bytes(b"")
+            components[name] = dict(artifacts=dict(onnx=dict(path=f"onnx/{name}.onnx", format="onnx")), inputs=inputs, outputs=["out"])
+        controls = manifest["controls"]
+        controls["fused_flow"] = dict(sampler="heun", steps=8)
+        controls["g2p_buckets"] = [dict(text_tokens=16, component="g2p_16"), dict(text_tokens=32, component="g2p_32")]
+        for entry, flow in zip(controls["target_buckets"]["buckets"], ("vector_flow_8", "vector_flow")):
+            entry["vector_flow"] = flow
     write("manifest.json", manifest)
     return bundle
 
 
-def _fake_engine(frames_per_phone: float = 1.0) -> Engine:
+def _fake_engine(frames_per_phone: float = 1.0, *, apple: bool = False) -> Engine:
     tmp = tempfile.TemporaryDirectory()
-    bundle = _fake_bundle(Path(tmp.name))
+    bundle = _fake_bundle(Path(tmp.name), apple=apple)
     graphs = _FakeGraphs(frames_per_phone)
     engine = Engine(bundle, session_factory=graphs.factory)
     engine._fake, engine._tmp = graphs, tmp

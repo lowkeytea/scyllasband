@@ -117,6 +117,7 @@ private:
     struct Bucket {
         int64_t frames;
         std::string vector_estimator, vocoder;
+        std::string vector_flow;  // optional: every flow step in one graph, for fused_sampler_/fused_steps_
     };
     Graph& graph(const std::string& component);
     GraphOutput run(const std::string& component, const std::vector<TensorView>& inputs);
@@ -131,6 +132,9 @@ private:
     std::map<std::string, int64_t> voice_to_id_, language_to_id_, bits_;
     std::vector<Voice> voices_;
     std::vector<Bucket> buckets_;
+    std::vector<std::pair<int64_t, std::string>> g2p_buckets_;  // optional narrower G2P inputs (text tokens, component), smallest first
+    std::string fused_sampler_;
+    int fused_steps_ = 0;
     std::size_t span_width_ = 512, context_phones_ = 180;
     int prefix_frames_ = 96, decode_context_ = 48, latent_dim_ = 24, latent_hop_ = 512, sample_rate_ = 24000;
     int default_steps_ = 8;

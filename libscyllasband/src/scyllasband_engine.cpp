@@ -116,17 +116,33 @@ Engine::Engine(const BackendOptions& options) : backend_(make_backend(options)),
     default_steps_ = static_cast<int>(controls.get("steps").get("default").integer(8));
     default_sampler_ = controls.get("sampler").get("default").str("heun");
     for (const Json& b : controls.get("target_buckets").get("buckets").elements()) {
-        buckets_.push_back(Bucket{b.get("latent_frames").integer(), b.get("vector_estimator").str(), b.get("vocoder").str()});
+        buckets_.push_back(Bucket{b.get("latent_frames").integer(), b.get("vector_estimator").str(), b.get("vocoder").str(),
+                                  b.get("vector_flow").str()});
     }
     std::sort(buckets_.begin(), buckets_.end(), [](const Bucket& a, const Bucket& b) { return a.frames < b.frames; });
+    // Optional (Apple bundles): fused flow graphs for one sampler and step count, and narrower G2P inputs.
+    fused_sampler_ = controls.get("fused_flow").get("sampler").str();
+    fused_steps_ = static_cast<int>(controls.get("fused_flow").get("steps").integer(0));
+    for (const Json& b : controls.get("g2p_buckets").elements()) g2p_buckets_.emplace_back(b.get("text_tokens").integer(), b.get("component").str());
+    std::sort(g2p_buckets_.begin(), g2p_buckets_.end());
     for (const Json& v : manifest_.get("voices").elements()) {
         Voice voice{v.get("id").str(), {}, v.get("default_language").str()};
         for (const Json& language : v.get("languages").elements()) voice.languages.push_back(language.str());
         voices_.push_back(std::move(voice));
     }
     g2p_ = std::make_unique<G2P>(bundle_dir_, manifest_, phone_to_id_, [this](const std::vector<int64_t>& ids, int64_t& symbols) {
-        int64_t length = static_cast<int64_t>(ids.size());
-        GraphOutput out = run("g2p", {view(DType::i64, {1, length}, ids.data())});
+        // Padding is masked, so the narrowest G2P graph that holds the text gives the same logits.
+        int64_t length = static_cast<int64_t>(ids.size()), used = length;
+        while (used > 1 && ids[static_cast<std::size_t>(used - 1)] == g2p_->text_pad()) --used;
+        std::string component = "g2p";
+        for (const auto& [tokens, name] : g2p_buckets_) {
+            if (tokens >= used && tokens < length) {
+                component = name;
+                length = tokens;
+                break;
+            }
+        }
+        GraphOutput out = run(component, {view(DType::i64, {1, length}, ids.data())});
         symbols = out.shape.empty() ? 0 : out.shape.back();
         return std::move(out.values);
     });
@@ -355,8 +371,19 @@ SentenceResult Engine::synthesize_sentence(const Sentence& sentence, const std::
             .values;
     };
     const bool heun = sampler == "heun";
+    const bool fused = !chosen.vector_flow.empty() && sampler == fused_sampler_ && steps == fused_steps_;
+    if (fused) {
+        x = run(chosen.vector_flow,
+                {view(DType::f32, {1, latent_dim_, frames}, x.data()), view(DType::i64, {1, frames}, expanded.data()), view(DType::i64, {1}, &voice_id),
+                 view(DType::i64, {1}, &language_id), view(DType::f32, {1, 5}, delivery.values), view(DType::b8, {1, 5}, delivery.present),
+                 view(DType::b8, {1, frames}, latent_mask.data()), view(DType::f32, hidden.shape, hidden.values.data()),
+                 view(DType::f32, {1, latent_dim_, prefix_frames_}, prefix_latents.data()), view(DType::b8, {1, prefix_frames_}, prefix_mask.data()),
+                 view(DType::i64, {1, frames}, boundary.data()), view(DType::i64, {1, frames}, modifier.data()), view(DType::f32, {1, frames}, phase.data()),
+                 view(DType::f32, {1, frames}, log_duration.data()), view(DType::i64, {1, frames}, sentence_type.data())})
+                .values;
+    }
     const float n = static_cast<float>(steps), n2 = static_cast<float>(2 * steps);
-    for (int step = 0; step < steps; ++step) {
+    for (int step = 0; step < (fused ? 0 : steps); ++step) {
         std::vector<float> a = velocity(x, static_cast<float>(static_cast<double>(step) / steps));
         if (heun) {
             for (std::size_t i = 0; i < x.size(); ++i) probe[i] = x[i] + a[i] / n;
@@ -386,6 +413,7 @@ SentenceResult Engine::synthesize_sentence(const Sentence& sentence, const std::
     metadata.set("bucket", Json(frames));
     metadata.set("steps", Json(steps));
     metadata.set("sampler", Json(sampler));
+    metadata.set("fused_flow", Json(fused));
     metadata.set("prefix_frames", Json(static_cast<int64_t>(kept)));
     metadata.set("context_before", Json(std::min(sentence.before_ids.size(), context_phones_)));
     metadata.set("context_after", Json(std::min(sentence.after_ids.size(), context_phones_)));

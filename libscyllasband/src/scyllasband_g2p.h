@@ -30,6 +30,7 @@ struct Phonemized {
 
 class G2P {
 public:
+    int64_t text_pad() const { return text_pad_; }
     // Runs the G2P graph on padded text ids [1, tokens]; returns logits [1, frames, symbols] and sets `symbols`.
     using Infer = std::function<std::vector<float>(const std::vector<int64_t>& ids, int64_t& symbols)>;
 
