@@ -5,8 +5,11 @@ from __future__ import annotations
 
 import sys
 
-from scyllasband.cli import speak_main
+from scyllasband.bootstrap import ensure_environment
 
 
 if __name__ == "__main__":
+    ensure_environment(["speak", *sys.argv[1:]], relaunch=[__file__, *sys.argv[1:]])
+    from scyllasband.cli import speak_main
+
     raise SystemExit(speak_main(sys.argv[1:]))

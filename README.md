@@ -6,18 +6,23 @@ Delivery is controlled with **energy, tension, valence and assertiveness**, each
 
 ## Quick start
 
-From this repository:
+```bash
+git clone https://github.com/lowkeytea/scyllasband
+cd scyllasband
+
+python3 -m scyllasband download
+python3 -m scyllasband list-voices
+python3 -m scyllasband speak --voice scylla -o hello.wav "Hello from Scylla's Band."
+```
+
+The first command offers to create a virtual environment in `.venv` and install the runtime into it, then carries on. Later commands run from the checkout use that environment automatically, with or without activating it; `python3 speak.py` and `python3 groupSpeak.py` behave the same way. `--backend onnx` adds ONNX Runtime to the environment the first time it is used.
+
+Requirements: Python 3.10–3.14 on macOS with Apple silicon, Linux (x86_64 or aarch64) or Windows (x86_64). To set the environment up yourself instead:
 
 ```bash
 python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .
-
-python -m scyllasband download --yes
-python -m scyllasband list-voices
-python -m scyllasband speak --voice scylla --language en_us \
-    --delivery energy=2,tension=2,valence=2,assertiveness=2,whisper=off \
-    -o hello.wav "Hello from Scylla's Band."
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -e .                   # pip install -e ".[onnx]" for ONNX Runtime
 ```
 
 The model is downloaded from [`spybyscript/scyllasband`](https://huggingface.co/spybyscript/scyllasband), pinned to release `v2-20261005`, into `scyllasband/models/litert`. Voice conditioning is embedded in the graphs; no separate voice files are needed.
