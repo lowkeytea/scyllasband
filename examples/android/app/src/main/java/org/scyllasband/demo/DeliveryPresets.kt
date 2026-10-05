@@ -22,7 +22,7 @@ enum class DeliveryPreset(val titleResource: Int, val delivery: ScyllasBandDeliv
     NEUTRAL(R.string.preset_neutral, ScyllasBandDelivery()),
     CALM(R.string.preset_calm, ScyllasBandDelivery(energy = 1.8f, tension = 1f, valence = 2.5f, assertiveness = 2.1f)),
     ASSERTIVE(R.string.preset_assertive, ScyllasBandDelivery(energy = 2.6f, tension = 2.4f, valence = 2.1f, assertiveness = 2.8f)),
-    JOYFUL(R.string.preset_joyful, ScyllasBandDelivery(energy = 2.7f, tension = 2.1f, valence = 3.1f, assertiveness = 2.3f)),
+    JOYFUL(R.string.preset_joyful, ScyllasBandDelivery(energy = 2.4f, tension = 2f, valence = 2.8f, assertiveness = 2.2f)),
     ANGRY(
         R.string.preset_angry,
         ScyllasBandDelivery(energy = 2.7f, tension = 3.1f, valence = 1.3f, assertiveness = 2.5f),

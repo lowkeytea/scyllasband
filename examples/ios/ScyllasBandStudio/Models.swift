@@ -105,7 +105,7 @@ enum DeliveryPreset: String, CaseIterable, Identifiable {
         case .assertive:
             return DeliverySettings(energy: 2.6, tension: 2.4, valence: 2.1, assertiveness: 2.8)
         case .joyful:
-            return DeliverySettings(energy: 2.7, tension: 2.1, valence: 3.1, assertiveness: 2.3)
+            return DeliverySettings(energy: 2.4, tension: 2, valence: 2.8, assertiveness: 2.2)
         case .angry:
             return DeliverySettings(energy: 2.7, tension: 3.1, valence: 1.3, assertiveness: 2.5)
         case .sad:

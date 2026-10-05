@@ -18,7 +18,7 @@ class DeliveryPresetsTest {
             DeliveryPreset.ASSERTIVE.delivery.spec(),
         )
         assertEquals(
-            "energy=2.7,tension=2.1,valence=3.1,assertiveness=2.3,whisper=off",
+            "energy=2.4,tension=2,valence=2.8,assertiveness=2.2,whisper=off",
             DeliveryPreset.JOYFUL.delivery.spec(),
         )
         assertEquals(
@@ -54,7 +54,7 @@ class DeliveryPresetsTest {
     @Test
     fun summaryListsOnlyNonNeutralAxes() {
         assertEquals("neutral", ScyllasBandDelivery().summary())
-        assertEquals("E 2.7 T 2.1 V 3.1 A 2.3", DeliveryPreset.JOYFUL.delivery.summary())
+        assertEquals("E 2.4 V 2.8 A 2.2", DeliveryPreset.JOYFUL.delivery.summary())
         assertEquals("whisper", DeliveryPreset.WHISPER.delivery.summary())
     }
 }

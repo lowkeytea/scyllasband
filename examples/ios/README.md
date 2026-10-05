@@ -14,7 +14,7 @@ this app keeps them between 0.5 and 3.1: the training data thins out past
 about 3, and pushing further distorts the voice. The segment settings also
 offer the Neutral, Calm, Assertive, Joyful, Angry, Sad, and Whisper presets,
 the same as the main README's (for example, Joyful is
-`energy=2.7,tension=2.1,valence=3.1,assertiveness=2.3`). **Load
+`energy=2.4,tension=2,valence=2.8,assertiveness=2.2`). **Load
 example** imports the repository's `data/` documents: `walkthrough_demo.txt`
 (the first-launch document, a tagged dialogue across voices and languages),
 `test_document.txt` (long narration), and `emotional_text.txt` (energetic
