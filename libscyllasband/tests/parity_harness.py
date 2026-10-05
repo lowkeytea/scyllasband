@@ -32,6 +32,15 @@ TEXTS = (
     ("question", "Did you really leave the gate open all night? What were you thinking?"),
     ("statement", "Please put the small blue box beside the kitchen window, then close the door behind you."),
 )
+# Long-form only, as paragraphs of their own: short sentences the streaming loop joins, and one sentence longer than the
+# model was trained on, which it splits at clauses.
+LONG_FORM_EXTRA = (
+    "Hey. Hey! You, with the headphones. Come closer... the others don't know you're here yet.",
+    "When the caravan finally reached the old stone bridge at the edge of the valley, where the river widened into a slow "
+    "brown mirror and the herons stood like forgotten statues among the reeds, the travellers set down their packs and "
+    "argued for an hour about whether to cross before dark or wait for the ferryman who had promised, three days earlier "
+    "and with considerable ceremony, to meet them there at noon.",
+)
 VOICES = ("scylla", "ink", "max")
 SEED = 2027
 
@@ -340,7 +349,7 @@ def check_sentences(native: Native, runtime, report: dict, failures: list[str], 
 
 def check_long_form(native: Native, runtime, report: dict, failures: list[str], args) -> None:
     from scyllasband.runtime import SynthesisRequest
-    text = " ".join(t for _, t in TEXTS)
+    text = "\n\n".join([" ".join(t for _, t in TEXTS), *LONG_FORM_EXTRA])
     out = dict()
     # Built-in noise: runs end to end with a fixed seed and is reproducible.
     started = time.perf_counter()
@@ -366,6 +375,15 @@ def check_long_form(native: Native, runtime, report: dict, failures: list[str], 
     out["reference_samples"] = int(reference.audio.size)
     out["injected_samples"] = int(injected.size)
     out["durations_identical"] = python_durations == native_durations
+    python_chunks = [(c["chunk"]["chunk_id"], c["chunk"]["text"]) for c in reference.metadata["chunks"]]
+    native_chunks = [(c["chunk"]["chunk_id"], c["chunk"]["text"]) for c in injected_meta["chunks"]]
+    out["chunks_identical"] = python_chunks == native_chunks
+    frames = [sum(d) for d in python_durations]
+    out["target_frames"] = [min(frames), max(frames)]
+    out["joined"] = sum("+" in chunk_id for chunk_id, _ in python_chunks)
+    out["split"] = sum("_" in chunk_id.removeprefix("chunk_") for chunk_id, _ in python_chunks)
+    if not out["chunks_identical"]:
+        failures.append("long-form chunks differ from the reference")
     out["snr_db"] = snr_db(reference.audio, injected)
     out["latent_dim"] = latent_dim
     if not out["durations_identical"]:

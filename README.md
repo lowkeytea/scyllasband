@@ -208,7 +208,7 @@ All ten also support `es`, `it`, `fr`, `de`, and `vi`: 60 trained voice/locale p
 
 - Spoken-text normalization expands numbers, decimals, dates, times, currency, percentages, ordinals, fractions, initialisms and common abbreviations for each language.
 - The Scylla's Band G2P model in the bundle converts each phrase to phones; punctuation is kept as pause and intonation cues, and word boundaries become optional silences.
-- Text is split into sentences after normalization; a sentence too long for one pass is split again at clause punctuation.
+- Text is split into sentences after normalization. Each pass speaks 64 to 420 latent frames (about 1.4 to 9 seconds), the lengths the model was trained on: a very short sentence is spoken together with its neighbours in the same paragraph, and a sentence too long for one pass is split at clause punctuation.
 
 `--no-normalize-text` skips normalization when the text is already in spoken form.
 

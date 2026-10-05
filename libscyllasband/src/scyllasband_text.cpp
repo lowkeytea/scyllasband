@@ -1123,14 +1123,16 @@ std::vector<Text> split_sentences(const Text& text) {
     return out;
 }
 
-std::vector<Text> split_for_retry(const Text& text) {
+std::vector<Text> split_for_retry(const Text& text, double min_share) {
     Text value = strip(text);
     double middle = static_cast<double>(value.size()) / 2.0;
+    const double least = min_share * static_cast<double>(value.size());
     std::vector<std::size_t> cuts;
-    for (std::size_t p = 0; p < value.size(); ++p) {  // [,;:—-]\s+
+    for (std::size_t p = 0; p < value.size(); ++p) {  // [,;:—-]\s+, leaving each piece at least min_share of the text
         if (!in_set(value[p], U",;:—-")) continue;
         std::size_t e = run_end(value, p + 1, is_space);
-        if (e > p + 1 && e > 0 && e < value.size()) cuts.push_back(e);
+        const double end = static_cast<double>(e);
+        if (e > p + 1 && e > 0 && e < value.size() && least <= end && end <= static_cast<double>(value.size()) - least) cuts.push_back(e);
         if (e > p + 1) p = e - 1;
     }
     if (cuts.empty()) {

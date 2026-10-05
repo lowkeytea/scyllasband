@@ -75,12 +75,13 @@ Controls are **global within each request**. This release does not support contr
 | Duration model | Hidden size 320; 8 layers; reads the neighbouring text as context |
 | Vector model | Hidden size 512; 12 layers; adaptive layer normalization and QK normalization |
 | Maximum graph phones per sentence | 512 |
+| Trained target length | 64–420 latent frames (about 1.4–9 s) per pass |
 | Latent buckets | 128, 256, 384, 512, 768, 1024 frames |
 | Reference sampler | Heun, 8 steps |
 | Voice conditioning | Fixed per-voice/per-locale identity and prosody references embedded in the graphs |
 | Text frontend | Trained Scylla's Band G2P with its matched tokenizer and vocabulary |
 
-Long text is spoken one sentence at a time. Each sentence sees the neighbouring sentences as context and continues from the acoustics of the sentence before it, and consecutive sentences are decoded as one continuous waveform. Durations are predicted deterministically; different controls can alter them.
+Long text is spoken one sentence at a time, within the trained target lengths: very short sentences are spoken together with their neighbours, and longer ones are split at clause punctuation. Each sentence sees the neighbouring sentences as context and continues from the acoustics of the sentence before it, and consecutive sentences are decoded as one continuous waveform. Durations are predicted deterministically; different controls can alter them.
 
 ## Voices and language coverage
 

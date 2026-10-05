@@ -85,6 +85,9 @@ public:
     int prefix_frames() const { return prefix_frames_; }
     int decode_context() const { return decode_context_; }
     std::size_t context_phones() const { return context_phones_; }
+    // Target lengths the model was trained on, in latent frames; the streaming loop keeps every sentence it synthesizes within them.
+    int64_t min_target_frames() const { return min_target_frames_; }
+    int64_t max_target_frames() const { return max_target_frames_; }
     int default_steps() const { return default_steps_; }
     const std::string& default_sampler() const { return default_sampler_; }
     std::string release() const;
@@ -138,6 +141,7 @@ private:
     std::size_t span_width_ = 512, context_phones_ = 180;
     int prefix_frames_ = 96, decode_context_ = 48, latent_dim_ = 24, latent_hop_ = 512, sample_rate_ = 24000;
     int default_steps_ = 8;
+    int64_t min_target_frames_ = 64, max_target_frames_ = 420;
     std::string default_sampler_ = "heun";
     std::unique_ptr<G2P> g2p_;
     std::mutex graphs_mutex_;

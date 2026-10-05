@@ -27,6 +27,9 @@ from .g2p import SILENCE, G2PFrontend
 
 GRAPH_CONTRACT = "scyllasband_measured_delivery_v2"
 LATENT_HOP = 512
+# Target lengths v2 was trained on, in latent frames (about 1.4 to 9 seconds): shorter targets lose their prosody and
+# longer ones their intelligibility. A bundle can state its own as controls.chunking.min/max_target_frames.
+MIN_TARGET_FRAMES, MAX_TARGET_FRAMES = 64, 420
 
 
 def balanced_context(before: Sequence[int], target: Sequence[int], after: Sequence[int], max_phones: int) -> tuple[list[int], list[int]]:
@@ -116,6 +119,9 @@ class Engine:
         fused = controls.get("fused_flow") or {}
         self.fused_flow = (str(fused.get("sampler", "")).lower(), int(fused.get("steps", 0)))
         self.flow_graphs = {int(b["latent_frames"]): str(b["vector_flow"]) for b in buckets if b.get("vector_flow")}
+        chunking = controls.get("chunking") or {}
+        self.min_target_frames = int(chunking.get("min_target_frames", MIN_TARGET_FRAMES))
+        self.max_target_frames = min(int(chunking.get("max_target_frames", MAX_TARGET_FRAMES)), self.buckets[-1][0])
         # Optional narrower G2P inputs, smallest first: a phrase runs at the smallest width that holds it.
         self.g2p_buckets = sorted((int(b["text_tokens"]), str(b["component"])) for b in controls.get("g2p_buckets") or [])
         self._session_factory = session_factory or self._onnx_session

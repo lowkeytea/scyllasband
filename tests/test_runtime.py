@@ -15,7 +15,8 @@ from scyllasband.delivery import delivery_tensors, resolve_delivery
 from scyllasband.engine import Engine, OverlongError, Sentence, balanced_context
 from scyllasband.events import frame_events, frames_to_durations, modifier_bits, sentence_types
 from scyllasband.g2p import punctuated_segments
-from scyllasband.planner import parse_group_lines, plan_records, split_for_retry, split_sentences
+from scyllasband.planner import parse_group_lines, plan_records, records_from_text, split_for_retry, split_sentences
+from scyllasband.streaming import StreamOptions, synthesize_plan_stream
 
 VOCAB = ["<pad>", "<unk>", "<sil>", "<pause_comma>", "<pause_semicolon>", "<pause_colon>", "<pause_dash>", "<ellipsis>", "<end_stmt>",
          "<end_question>", "<end_exclaim>", "a", "b", "h", "l", "o", "w", "ˈ", "ː"]
@@ -114,6 +115,10 @@ class PlannerTest(unittest.TestCase):
     def test_retry_split_prefers_clause_punctuation(self):
         self.assertEqual(split_for_retry("one two three, four five six seven"), ["one two three,", "four five six seven"])
 
+    def test_retry_split_leaves_each_piece_a_minimum_share(self):
+        self.assertEqual(split_for_retry("Well, one two three four five six"), ["Well,", "one two three four five six"])
+        self.assertEqual(split_for_retry("Well, one two three four five six", min_share=0.25), ["Well, one two", "three four five six"])
+
     def test_chains_follow_voice_language_and_delivery(self):
         records = parse_group_lines("[scylla:en_us] Hi there. How are you?\n[ink:en_gb:energy=3] Fine. [scylla] Good.",
                                     default_voice=None, default_language=None)
@@ -203,6 +208,38 @@ class EngineTest(unittest.TestCase):
             engine.synthesize_sentence(sentence, voice="scylla", language="en_us", delivery=delivery_tensors(None)[:2], steps=1)
 
 
+class StreamingTargetTest(unittest.TestCase):
+    """Fake durations: one frame per phone and silence, none for punctuation ("ab." 4 frames, "ab ab." 7); trained
+    target range 6 to 12 frames."""
+
+    def targets(self, records):
+        engine = _fake_engine(chunking=dict(min_target_frames=6, max_target_frames=12),
+                              span_conditioning=dict(context_max_phones=64, context_phones_each_side=8))
+        plan = plan_records(records, resolve_language=lambda voice, language: "en_us")
+        events = [e for e in synthesize_plan_stream(engine, plan, StreamOptions(steps=1, seed=0)) if e.type == "audio_chunk"]
+        return [(e.chunk.chunk_id, e.chunk.text, e.metadata["latent_frames"]) for e in events]
+
+    def test_short_sentences_join_the_following_ones_until_long_enough(self):
+        self.assertEqual(self.targets(records_from_text("ab. ab. ab ab ab. ab ab.", voice="scylla", language=None)),
+                         [("chunk_0001+chunk_0002", "ab. ab.", 7), ("chunk_0003", "ab ab ab.", 10), ("chunk_0004", "ab ab.", 7)])
+
+    def test_a_short_last_sentence_joins_the_one_before(self):
+        self.assertEqual(self.targets(records_from_text("ab ab. ab.", voice="scylla", language=None)),
+                         [("chunk_0001+chunk_0002", "ab ab. ab.", 10)])
+
+    def test_targets_never_exceed_the_trained_maximum(self):
+        # "ab." cannot join 13 frames; those split between words and do not join back.
+        self.assertEqual(self.targets(records_from_text("ab. ab ab ab ab.", voice="scylla", language=None)),
+                         [("chunk_0001", "ab.", 4), ("chunk_0002_1", "ab ab", 7), ("chunk_0002_2", "ab ab.", 7)])
+
+    def test_joins_stay_within_a_paragraph_a_record_and_a_chain(self):
+        paragraphs = records_from_text("ab.\n\nab.", voice="scylla", language=None)
+        records = [dict(text="ab.", voice="scylla"), dict(text="ab.", voice="scylla")]
+        chains = [dict(text="ab.", voice="scylla"), dict(text="ab.", voice="scylla", delivery="whisper=on")]
+        for case in (paragraphs, records, chains):
+            self.assertEqual([text for _, text, _ in self.targets(case)], ["ab.", "ab."])
+
+
 # --- fakes --------------------------------------------------------------------------------------------------------------
 class _FakeGraphs:
     """Graph stand-ins with the bundle's input names. The vocoder returns frames * 512 - 256 samples, like the real one."""
@@ -255,8 +292,9 @@ def _fake_g2p_logits(encoded: np.ndarray) -> np.ndarray:
     return logits
 
 
-def _fake_bundle(root: Path, *, apple: bool = False) -> Path:
-    """``apple``: also the optional fused-flow graphs and narrower G2P inputs of the Core ML and Core AI bundles."""
+def _fake_bundle(root: Path, *, apple: bool = False, controls: dict | None = None) -> Path:
+    """``apple``: also the optional fused-flow graphs and narrower G2P inputs of the Core ML and Core AI bundles.
+    ``controls``: manifest controls to replace."""
     bundle = root / "bundle"
     (bundle / "assets/g2p").mkdir(parents=True)
     (bundle / "onnx").mkdir()
@@ -295,13 +333,14 @@ def _fake_bundle(root: Path, *, apple: bool = False) -> Path:
         controls["g2p_buckets"] = [dict(text_tokens=16, component="g2p_16"), dict(text_tokens=32, component="g2p_32")]
         for entry, flow in zip(controls["target_buckets"]["buckets"], ("vector_flow_8", "vector_flow")):
             entry["vector_flow"] = flow
+    manifest["controls"].update(controls or {})
     write("manifest.json", manifest)
     return bundle
 
 
-def _fake_engine(frames_per_phone: float = 1.0, *, apple: bool = False) -> Engine:
+def _fake_engine(frames_per_phone: float = 1.0, *, apple: bool = False, **controls) -> Engine:
     tmp = tempfile.TemporaryDirectory()
-    bundle = _fake_bundle(Path(tmp.name), apple=apple)
+    bundle = _fake_bundle(Path(tmp.name), apple=apple, controls=controls)
     graphs = _FakeGraphs(frames_per_phone)
     engine = Engine(bundle, session_factory=graphs.factory)
     engine._fake, engine._tmp = graphs, tmp

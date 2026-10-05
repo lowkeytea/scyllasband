@@ -37,8 +37,11 @@ For each sentence:
 5. the vocoder decodes the sentence with up to 48 frames of the preceding latents as left context, so
    consecutive sentences form one continuous waveform with no inserted pauses or crossfades.
 
-A sentence that needs more frames than the largest bucket holds is split at the clause punctuation (or word
-break) nearest its middle and retried.
+Every pass stays within the 64 to 420 latent frames (about 1.4 to 9 seconds) the model was trained on. A
+sentence shorter than that takes in the following sentences of its paragraph, and a short last sentence of a
+paragraph joins the one before it, as long as the joined text stays within the maximum. A sentence longer than
+the maximum is split at the clause punctuation nearest its middle (or, without usable punctuation, the word
+break) and retried.
 
 ## C API
 

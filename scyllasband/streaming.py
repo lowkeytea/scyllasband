@@ -3,6 +3,9 @@
 Within a chain, every sentence gets the neighbouring sentences' phones as context, the last latent frames
 already spoken as its acoustic prefix, and the preceding latents as the vocoder's left context, so the
 emitted pieces join into one continuous waveform with no added pauses or crossfades.
+
+Each synthesized target stays within the lengths the model was trained on: a sentence too short to speak well alone
+is joined with its neighbours in the same paragraph, and one too long is split at a clause.
 """
 
 from __future__ import annotations
@@ -63,22 +66,25 @@ def synthesize_plan_stream(engine: Engine, plan: SynthesisPlan, options: StreamO
     previous_chain: str | None = None
     while pending:
         chunk = pending.popleft()
-        sentence = _sentence(engine, chunk, spoken, list(pending))
         values, present, _ = delivery_tensors(chunk.delivery)
-        seed = None if options.seed is None else int(options.seed) + chunk.index
-        tail = tails.get(chunk.chain_id)
-        yield StreamingEvent(type="chunk_started", chunk=chunk)
-        _progress(progress, f"[scyllasband] {chunk.chunk_id} {chunk.voice}/{chunk.language}: {chunk.text[:80]}")
         try:
-            result = engine.synthesize_sentence(sentence, voice=chunk.voice, language=chunk.language, delivery=(values, present),
-                                                prefix=tail, steps=options.steps, sampler=options.sampler, speed=options.speed,
-                                                noise_scale=options.temperature, rng=np.random.default_rng(seed))
-        except OverlongError:
-            pieces = split_for_retry(chunk.text)
+            chunk, sentence, durations = _target(engine, chunk, spoken, pending, (values, present), options.speed)
+            frames: int | None = sum(durations)
+        except OverlongError:          # more phones than the duration predictor's span holds
+            frames = None
+        pieces = _retry_pieces(engine, chunk.text, frames)
+        if pieces:
             for offset, piece in enumerate(reversed(pieces)):
                 pending.appendleft(replace(chunk, chunk_id=f"{chunk.chunk_id}_{len(pieces) - offset}", text=piece))
             _progress(progress, f"[scyllasband] {chunk.chunk_id} too long for one pass; split in {len(pieces)}")
             continue
+        seed = None if options.seed is None else int(options.seed) + chunk.index
+        tail = tails.get(chunk.chain_id)
+        yield StreamingEvent(type="chunk_started", chunk=chunk)
+        _progress(progress, f"[scyllasband] {chunk.chunk_id} {chunk.voice}/{chunk.language}: {chunk.text[:80]}")
+        result = engine.synthesize_sentence(sentence, voice=chunk.voice, language=chunk.language, delivery=(values, present),
+                                            prefix=tail, steps=options.steps, sampler=options.sampler, speed=options.speed,
+                                            noise_scale=options.temperature, rng=np.random.default_rng(seed), durations=durations)
         audio = engine.decode(result.latents, voice=chunk.voice, language=chunk.language, left=tail)
         if previous_chain is not None and previous_chain != chunk.chain_id and options.pause_ms > 0:
             audio = np.concatenate([np.zeros(int(sample_rate * options.pause_ms / 1000), np.float32), audio])
@@ -93,6 +99,58 @@ def synthesize_plan_stream(engine: Engine, plan: SynthesisPlan, options: StreamO
     yield StreamingEvent(type="done", sample_rate=sample_rate,
                          metadata=dict(chunks=len(spoken), first_audio_ms=None if first_audio_ms is None else round(first_audio_ms, 1),
                                        elapsed_ms=round((time.perf_counter() - started) * 1000, 1)))
+
+
+def _target(engine: Engine, chunk: PlanChunk, spoken: list[PlanChunk], pending: deque[PlanChunk],
+            delivery: tuple[np.ndarray, np.ndarray], speed: float) -> tuple[PlanChunk, Sentence, list[int]]:
+    """The next target to synthesize, its sentence and durations. A target shorter than the model was trained on takes in
+    the following sentences of its paragraph, and a short last sentence of a paragraph joins the target before it, while
+    the joined target stays within the trained maximum. Joined sentences leave ``pending``; the joined chunk keeps the
+    last one's index."""
+    shortest, longest = engine.min_target_frames, engine.max_target_frames
+    sentence, durations = _measure(engine, chunk, spoken, list(pending), delivery, speed)
+    while pending and _joinable(chunk, pending[0]):
+        frames = sum(durations)
+        last = len(pending) == 1 or not _joinable(pending[0], pending[1])
+        if frames > longest or (frames >= shortest and not last):
+            break
+        following = pending[0]
+        joined = replace(following, chunk_id=f"{chunk.chunk_id}+{following.chunk_id}", text=f"{chunk.text} {following.text}")
+        try:
+            joined_sentence, joined_durations = _measure(engine, joined, spoken, list(pending)[1:], delivery, speed)
+        except OverlongError:
+            break
+        total = sum(joined_durations)
+        if total > longest or (frames >= shortest and total - frames >= shortest):
+            break
+        chunk, sentence, durations = joined, joined_sentence, joined_durations
+        pending.popleft()
+    return chunk, sentence, durations
+
+
+def _joinable(chunk: PlanChunk, following: PlanChunk) -> bool:
+    return chunk.chain_id == following.chain_id and chunk.record_index == following.record_index and not chunk.paragraph_end
+
+
+def _measure(engine: Engine, chunk: PlanChunk, spoken: list[PlanChunk], pending: list[PlanChunk],
+             delivery: tuple[np.ndarray, np.ndarray], speed: float) -> tuple[Sentence, list[int]]:
+    sentence = _sentence(engine, chunk, spoken, pending)
+    durations = engine.durations(sentence, voice=engine.voice_index(chunk.voice), language=engine.language_index(chunk.language),
+                                 delivery=delivery, speed=speed)
+    return sentence, durations
+
+
+def _retry_pieces(engine: Engine, text: str, frames: int | None) -> list[str] | None:
+    """The pieces to speak instead of ``text`` when it is longer than the model was trained on (``frames`` None: more
+    phones than the span holds); None to speak it as it is."""
+    if frames is not None and frames <= engine.max_target_frames:
+        return None
+    try:
+        return split_for_retry(text, min_share=engine.min_target_frames / frames if frames else 0.0)
+    except ValueError:                 # one word: the largest bucket still takes it
+        if frames is None:
+            raise
+        return None
 
 
 def _sentence(engine: Engine, chunk: PlanChunk, spoken: list[PlanChunk], pending: list[PlanChunk]) -> Sentence:

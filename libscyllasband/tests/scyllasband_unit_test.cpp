@@ -133,7 +133,7 @@ void sentences_suite(const Json& fixture) {
         bool error = false;
         std::vector<std::string> got;
         try {
-            got = encode_all(split_for_retry(unicode::decode(c.get("text").str())));
+            got = encode_all(split_for_retry(unicode::decode(c.get("text").str()), c.get("min_share").num(0.0)));
         } catch (const std::exception&) {
             error = true;
         }

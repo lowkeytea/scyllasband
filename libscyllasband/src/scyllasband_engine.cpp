@@ -120,6 +120,11 @@ Engine::Engine(const BackendOptions& options) : backend_(make_backend(options)),
                                   b.get("vector_flow").str()});
     }
     std::sort(buckets_.begin(), buckets_.end(), [](const Bucket& a, const Bucket& b) { return a.frames < b.frames; });
+    // v2 was trained on targets of 64 to 420 latent frames (about 1.4 to 9 seconds): shorter targets lose their prosody and
+    // longer ones their intelligibility. A bundle can state its own as controls.chunking.min/max_target_frames.
+    min_target_frames_ = controls.get("chunking").get("min_target_frames").integer(64);
+    max_target_frames_ = controls.get("chunking").get("max_target_frames").integer(420);
+    if (!buckets_.empty()) max_target_frames_ = std::min(max_target_frames_, buckets_.back().frames);
     // Optional (Apple bundles): fused flow graphs for one sampler and step count, and narrower G2P inputs.
     fused_sampler_ = controls.get("fused_flow").get("sampler").str();
     fused_steps_ = static_cast<int>(controls.get("fused_flow").get("steps").integer(0));
@@ -513,6 +518,93 @@ Plan plan_text(Engine& engine, const SynthesisOptions& options) {
     return plan;
 }
 
+namespace {
+
+// The phones of `chunk` plus up to the context budget of neighbouring phones from the same chain: from the spoken chunks
+// before it and the pending chunks after the first `skip`.
+Sentence chunk_sentence(Engine& engine, const PlanChunk& chunk, const std::vector<PlanChunk>& spoken, const std::deque<PlanChunk>& pending,
+                        std::size_t skip) {
+    Phonemized phonemized = engine.phonemize(chunk.text, chunk.language);
+    Sentence sentence{phonemized.phones, phonemized.word_starts, {}, {}};
+    for (auto it = spoken.rbegin(); it != spoken.rend(); ++it) {
+        if (it->chain_id != chunk.chain_id) continue;
+        if (sentence.before_ids.size() >= engine.context_phones()) break;
+        std::vector<int64_t> ids = engine.context_ids(engine.phonemize(it->text, it->language).phones);
+        sentence.before_ids.insert(sentence.before_ids.begin(), ids.begin(), ids.end());
+    }
+    for (std::size_t i = skip; i < pending.size(); ++i) {
+        const PlanChunk& next = pending[i];
+        if (next.chain_id != chunk.chain_id) continue;
+        if (sentence.after_ids.size() >= engine.context_phones()) break;
+        std::vector<int64_t> ids = engine.context_ids(engine.phonemize(next.text, next.language).phones);
+        sentence.after_ids.insert(sentence.after_ids.end(), ids.begin(), ids.end());
+    }
+    return sentence;
+}
+
+int64_t total_frames(const std::vector<int>& durations) {
+    int64_t frames = 0;
+    for (int value : durations) frames += value;
+    return frames;
+}
+
+bool joinable(const PlanChunk& chunk, const PlanChunk& following) {
+    return chunk.chain_id == following.chain_id && chunk.record_index == following.record_index && !chunk.paragraph_end;
+}
+
+struct Target {
+    PlanChunk chunk;
+    Sentence sentence;
+    std::vector<int> durations;
+};
+
+// The next target to synthesize, its sentence and durations. A target shorter than the model was trained on takes in the
+// following sentences of its paragraph, and a short last sentence of a paragraph joins the target before it, while the
+// joined target stays within the trained maximum. Joined sentences leave `pending`; the joined chunk keeps the last one's index.
+Target next_target(Engine& engine, const PlanChunk& chunk, const std::vector<PlanChunk>& spoken, std::deque<PlanChunk>& pending,
+                   const DeliveryTensors& delivery, double speed) {
+    const int64_t shortest = engine.min_target_frames(), longest = engine.max_target_frames();
+    auto measure = [&](Target& target, std::size_t skip) {
+        target.sentence = chunk_sentence(engine, target.chunk, spoken, pending, skip);
+        target.durations = engine.durations(target.sentence, engine.voice_index(target.chunk.voice), engine.language_index(target.chunk.language),
+                                            delivery, speed);
+    };
+    Target target{chunk, {}, {}};
+    measure(target, 0);
+    while (!pending.empty() && joinable(target.chunk, pending.front())) {
+        const int64_t frames = total_frames(target.durations);
+        const bool last = pending.size() == 1 || !joinable(pending[0], pending[1]);
+        if (frames > longest || (frames >= shortest && !last)) break;
+        Target joined{pending.front(), {}, {}};
+        joined.chunk.chunk_id = target.chunk.chunk_id + "+" + joined.chunk.chunk_id;
+        joined.chunk.text = target.chunk.text + " " + joined.chunk.text;
+        try {
+            measure(joined, 1);
+        } catch (const OverlongError&) {
+            break;
+        }
+        const int64_t total = total_frames(joined.durations);
+        if (total > longest || (frames >= shortest && total - frames >= shortest)) break;
+        target = std::move(joined);
+        pending.pop_front();
+    }
+    return target;
+}
+
+// The pieces to speak instead of `text` when it is longer than the model was trained on (`frames` -1: more phones than
+// the span holds); empty to speak it as it is.
+std::vector<Text> retry_pieces(const Engine& engine, const std::string& text, int64_t frames) {
+    if (frames >= 0 && frames <= engine.max_target_frames()) return {};
+    try {
+        return split_for_retry(unicode::decode(text), frames > 0 ? static_cast<double>(engine.min_target_frames()) / static_cast<double>(frames) : 0.0);
+    } catch (const std::runtime_error&) {  // one word: the largest bucket still takes it
+        if (frames < 0) throw;
+        return {};
+    }
+}
+
+}  // namespace
+
 Json synthesize_stream(Engine& engine, const SynthesisOptions& options, const std::function<bool(const StreamEvent&)>& emit,
                        const ChunkNoiseFn& chunk_noise) {
     std::string sampler = unicode::encode(unicode::lower(unicode::decode(options.sampler.empty() ? engine.default_sampler() : options.sampler)));
@@ -541,25 +633,28 @@ Json synthesize_stream(Engine& engine, const SynthesisOptions& options, const st
     std::random_device entropy;
 
     while (!pending.empty()) {
-        PlanChunk chunk = pending.front();
+        PlanChunk next = pending.front();
         pending.pop_front();
-        // The sentence's phones plus up to the context budget of neighbouring phones from the same chain.
-        Phonemized phonemized = engine.phonemize(chunk.text, chunk.language);
-        Sentence sentence{phonemized.phones, phonemized.word_starts, {}, {}};
-        for (auto it = spoken.rbegin(); it != spoken.rend(); ++it) {
-            if (it->chain_id != chunk.chain_id) continue;
-            if (sentence.before_ids.size() >= engine.context_phones()) break;
-            std::vector<int64_t> ids = engine.context_ids(engine.phonemize(it->text, it->language).phones);
-            sentence.before_ids.insert(sentence.before_ids.begin(), ids.begin(), ids.end());
-        }
-        for (const PlanChunk& next : pending) {
-            if (next.chain_id != chunk.chain_id) continue;
-            if (sentence.after_ids.size() >= engine.context_phones()) break;
-            std::vector<int64_t> ids = engine.context_ids(engine.phonemize(next.text, next.language).phones);
-            sentence.after_ids.insert(sentence.after_ids.end(), ids.begin(), ids.end());
-        }
         DeliveryTensors delivery{};
-        chunk.delivery.tensors(delivery.values, delivery.present);
+        next.delivery.tensors(delivery.values, delivery.present);
+        Target target{next, {}, {}};
+        int64_t target_frames = -1;
+        try {
+            target = next_target(engine, next, spoken, pending, delivery, options.speed);
+            target_frames = total_frames(target.durations);
+        } catch (const OverlongError&) {  // more phones than the duration predictor's span holds
+        }
+        const PlanChunk& chunk = target.chunk;
+        std::vector<Text> pieces = retry_pieces(engine, chunk.text, target_frames);
+        if (!pieces.empty()) {
+            for (std::size_t offset = 0; offset < pieces.size(); ++offset) {
+                PlanChunk piece = chunk;
+                piece.chunk_id = chunk.chunk_id + "_" + std::to_string(pieces.size() - offset);
+                piece.text = unicode::encode(pieces[pieces.size() - 1 - offset]);
+                pending.push_front(std::move(piece));
+            }
+            continue;
+        }
         const std::optional<uint64_t> seed = options.seed ? std::optional<uint64_t>(*options.seed + static_cast<uint64_t>(chunk.index)) : std::nullopt;
         static const std::pair<std::vector<float>, int64_t> no_tail{{}, 0};
         auto tail_it = tails.find(chunk.chain_id);
@@ -571,19 +666,8 @@ Json synthesize_stream(Engine& engine, const SynthesisOptions& options, const st
             if (chunk_noise) chunk_noise(chunk.index, seed.value_or(0), seed.has_value(), frames, out);
             else gaussian_noise(draw_seed, static_cast<int64_t>(D) * frames, static_cast<float>(options.temperature), out);
         };
-        SentenceResult result;
-        try {
-            result = engine.synthesize_sentence(sentence, chunk.voice, chunk.language, delivery, tail.first, tail.second, steps, sampler, options.speed, noise);
-        } catch (const OverlongError&) {
-            std::vector<Text> pieces = split_for_retry(unicode::decode(chunk.text));
-            for (std::size_t offset = 0; offset < pieces.size(); ++offset) {
-                PlanChunk piece = chunk;
-                piece.chunk_id = chunk.chunk_id + "_" + std::to_string(pieces.size() - offset);
-                piece.text = unicode::encode(pieces[pieces.size() - 1 - offset]);
-                pending.push_front(std::move(piece));
-            }
-            continue;
-        }
+        SentenceResult result = engine.synthesize_sentence(target.sentence, chunk.voice, chunk.language, delivery, tail.first, tail.second, steps,
+                                                           sampler, options.speed, noise, &target.durations);
         std::vector<float> audio = engine.decode(result.latents, result.frames, chunk.voice, chunk.language, tail.first, tail.second);
         // Keep the last frames of the chain's latents for the next sentence's prefix and decode context.
         const int64_t joined_frames = tail.second + result.frames, kept = std::min(joined_frames, keep);
