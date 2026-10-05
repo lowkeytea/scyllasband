@@ -17,7 +17,7 @@ VECTOR_INPUTS = ("noise", "time", "expanded_phone_ids", "voice_id", "language_id
 VOCODER_INPUTS = ("latents", "latent_mask", "voice_id", "language_id", "emotion_id")
 COMPONENT_INPUTS = {"g2p": ("text",), "duration_predictor": DURATION_INPUTS, "vector_context_encoder": CONTEXT_INPUTS}
 REQUIRED_ASSETS = ("phone_vocab", "voice_index", "language_index", "g2p_config", "g2p_tokenizer", "g2p_language_map")
-BACKEND_FORMATS = {"onnx": "onnx", "litert": "litert"}
+BACKEND_FORMATS = {"onnx": "onnx", "litert": "litert", "coreml": "coreml", "coreai": "coreai"}
 
 
 class BundleError(ValueError):
@@ -55,7 +55,7 @@ def validate_bundle_layout(bundle_dir: str | Path) -> dict[str, Any]:
         expected[str(bucket["vocoder"])] = VOCODER_INPUTS
     backends = sorted({fmt for spec in components.values() for fmt in (spec.get("artifacts") or {}) if fmt in BACKEND_FORMATS})
     if not backends:
-        raise BundleError("Bundle components declare no onnx or litert artifacts")
+        raise BundleError(f"Bundle components declare no {', '.join(BACKEND_FORMATS)} artifacts")
     for name, inputs in expected.items():
         spec = components.get(name)
         if spec is None:
@@ -64,7 +64,7 @@ def validate_bundle_layout(bundle_dir: str | Path) -> dict[str, Any]:
             raise BundleError(f"Bundle component {name!r} inputs {spec.get('inputs')} differ from the contract {list(inputs)}")
         for backend in backends:
             artifact = (spec.get("artifacts") or {}).get(backend)
-            if not artifact or not (bundle_dir / artifact["path"]).is_file():
+            if not artifact or not (bundle_dir / artifact["path"]).exists():   # Core ML/Core AI assets are directories
                 raise BundleError(f"Bundle component {name!r} has no {backend} artifact at {artifact and artifact.get('path')}")
     voices = manifest.get("voices") or []
     if not voices or any(not v.get("languages") for v in voices):

@@ -14,7 +14,7 @@ from .planner import SynthesisPlan, plan_records, records_from_text
 from .streaming import StreamingEvent, StreamOptions, render_plan, synthesize_plan_stream
 from .text_normalizer import normalize_spoken_text
 
-SUPPORTED_BACKENDS = ("onnx", "litert")
+SUPPORTED_BACKENDS = ("onnx", "litert", "coreml", "coreai")
 SUPPORTED_SAMPLERS = ("heun", "euler")
 
 
@@ -60,7 +60,10 @@ class ScyllasBandRuntime:
 
     @classmethod
     def from_bundle(cls, bundle_dir: str | Path, *, backend: str | None = None, backends: Sequence[str] | None = None,
-                    threads: int | None = None, validate: bool = True, **_: Any) -> "ScyllasBandRuntime":
+                    threads: int | None = None, compute_units: str | Mapping[str, str] | None = None, validate: bool = True,
+                    **_: Any) -> "ScyllasBandRuntime":
+        """``compute_units`` (Core ML and Core AI): auto (the bundle's recommendation), cpu, gpu, ane (the graphs the bundle
+        lists as accurate on the Neural Engine, the rest on the CPU), or per asset ("gpu,g2p=cpu")."""
         bundle_dir = Path(bundle_dir)
         if validate:
             validate_bundle_layout(bundle_dir)
@@ -71,6 +74,14 @@ class ScyllasBandRuntime:
         if chosen == "litert":
             from .litert import litert_session_factory
             factory = litert_session_factory(bundle_dir, threads=threads)
+        elif chosen in ("coreml", "coreai"):
+            units = _compute_units(bundle_dir, chosen, compute_units)
+            if chosen == "coreml":
+                from .coreml import coreml_session_factory
+                factory = coreml_session_factory(bundle_dir, compute_units=units)
+            else:
+                from .coreai import coreai_session_factory
+                factory = coreai_session_factory(bundle_dir, compute_units=units)
         return cls(Engine(bundle_dir, backend=chosen, threads=threads, session_factory=factory), bundle_dir=bundle_dir, backend=chosen)
 
     # --- voices and text ----------------------------------------------------------------------------------------------
@@ -148,6 +159,24 @@ class ScyllasBandRuntime:
     def runtime_status(self) -> dict[str, Any]:
         return dict(backend=self.backend, bundle_dir=str(self.bundle_dir), voices=self.available_voices(),
                     buckets=[b[0] for b in self.engine.buckets], sessions=sorted(self.engine._sessions))
+
+
+def _compute_units(bundle_dir: Path, backend: str, requested: str | Mapping[str, str] | None) -> str | Mapping[str, str]:
+    """``auto`` (or None): SCYLLASBAND_COMPUTE_UNITS, else the bundle's recommendation, else the GPU — as the native runtime does."""
+    import json
+    import os
+    if requested == "ane":
+        # Only the graphs the bundle lists as accurate on the Neural Engine run there; the rest use the CPU.
+        manifest = json.loads((bundle_dir / "manifest.json").read_text(encoding="utf-8"))
+        assets = (manifest.get("controls", {}).get(backend) or {}).get("neural_engine_assets") or []
+        return ",".join(["cpu", *(f"{asset}=ane" for asset in assets)])
+    if requested not in (None, "", "auto"):
+        return requested
+    override = os.environ.get("SCYLLASBAND_COMPUTE_UNITS")
+    if override:
+        return override
+    manifest = json.loads((bundle_dir / "manifest.json").read_text(encoding="utf-8"))
+    return (manifest.get("controls", {}).get(backend) or {}).get("compute_units") or "gpu"
 
 
 def _bundle_backend(bundle_dir: Path) -> str:

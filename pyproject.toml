@@ -11,6 +11,8 @@ dependencies = ["numpy>=1.24", "ai-edge-litert>=2.2", "huggingface_hub>=0.23"]
 
 [project.optional-dependencies]
 onnx = ["onnxruntime>=1.18"]
+coreml = ["coremltools>=8.3"]
+coreai = ["coreai-core>=1.0.0b3"]
 
 [project.scripts]
 scyllasband = "scyllasband.cli:main"

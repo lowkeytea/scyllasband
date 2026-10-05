@@ -71,6 +71,9 @@ def _add_synthesis_args(parser: argparse.ArgumentParser, *, group: bool) -> None
     parser.add_argument("--models-dir", type=Path, default=DEFAULT_MODELS_DIR)
     parser.add_argument("--backend", choices=SUPPORTED_BACKENDS)
     parser.add_argument("--threads", type=int, help="CPU threads per graph")
+    parser.add_argument("--compute-units", help="Core ML / Core AI: auto (default: the bundle's recommendation), gpu, cpu, ane "
+                                                "(the graphs the bundle marks for the Neural Engine, the rest on the CPU), or "
+                                                "per graph, e.g. gpu,g2p=cpu")
     parser.add_argument("--voice", default=None if group else "scylla")
     parser.add_argument("--language")
     parser.add_argument("--delivery", help="e.g. energy=2.5,tension=2,valence=3,assertiveness=2,whisper=off; neutral; auto")
@@ -175,7 +178,7 @@ def _default_bundle(args: argparse.Namespace) -> Path:
 
 def _runtime(args: argparse.Namespace) -> ScyllasBandRuntime:
     return ScyllasBandRuntime.from_bundle(args.bundle or _default_bundle(args), backend=args.backend, threads=args.threads,
-                                          validate=not args.no_validate_bundle)
+                                          compute_units=args.compute_units, validate=not args.no_validate_bundle)
 
 
 def _options(args: argparse.Namespace) -> dict:
