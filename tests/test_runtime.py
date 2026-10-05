@@ -130,6 +130,7 @@ class DeliveryTest(unittest.TestCase):
         values, present, _ = delivery_tensors("auto")
         self.assertFalse(present.any())
         self.assertEqual(resolve_delivery("energy=3")["energy"], 3.0)
+        self.assertEqual(resolve_delivery(""), resolve_delivery(None))
 
 
 class ContractTest(unittest.TestCase):
@@ -159,6 +160,15 @@ class EngineTest(unittest.TestCase):
         self.assertTrue(all(call["noise"].shape == (1, 24, 8) for call in calls if call["name"] == "vector_estimator_8"))
         audio = engine.decode(result.latents, voice="scylla", language="en_us", left=np.zeros((24, 20), np.float32))
         self.assertEqual(audio.shape, (result.latents.shape[1] * 512,))
+
+    def test_decode_gives_left_context_way_to_long_sentences(self):
+        engine = _fake_engine()
+        left = np.zeros((24, 20), np.float32)
+        for frames in (15, 16):   # 16 fills the largest bucket, so its last 256 samples are padding
+            audio = engine.decode(np.zeros((24, frames), np.float32), voice="scylla", language="en_us", left=left)
+            self.assertEqual(audio.shape, (frames * 512,))
+            self.assertEqual(engine._fake.calls[-1]["latents"].shape, (1, 24, 16))
+            self.assertEqual(int(engine._fake.calls[-1]["latent_mask"].sum()), frames)
 
     def test_overlong(self):
         engine = _fake_engine(frames_per_phone=9.0)

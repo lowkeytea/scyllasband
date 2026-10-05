@@ -17,7 +17,7 @@ def resolve_delivery(value: Mapping[str, Any] | str | None = None) -> dict[str, 
     if isinstance(value, str):
         if value.strip().lower() == "auto":
             return {**dict.fromkeys(DELIVERY_AXES), "whisper": "auto"}
-        if value.strip().lower() == "neutral":
+        if value.strip().lower() in ("", "neutral"):
             return defaults
         fields: dict[str, Any] = {}
         for part in value.split(","):

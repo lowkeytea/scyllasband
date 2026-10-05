@@ -227,18 +227,22 @@ class Engine:
         """Waveform for ``latents`` [24, T], decoded after up to ``decoding.context_frames`` frames of ``left`` context."""
         latents = np.asarray(latents, np.float32).reshape(self.latent_dim, -1)
         context = np.zeros((self.latent_dim, 0), np.float32) if left is None else np.asarray(left, np.float32).reshape(self.latent_dim, -1)
-        context = context[:, max(0, context.shape[-1] - self.decode_context):]
+        # Left context gives way to the sentence itself when both do not fit the largest bucket.
+        keep = min(self.decode_context, max(0, self.max_frames - 1 - latents.shape[-1]))
+        context = context[:, context.shape[-1] - min(keep, context.shape[-1]):]
         joined = np.concatenate([context, latents], -1)
-        # The vocoder returns frames * 512 - 256 samples, so keep one spare frame to emit the sentence's last frame in full.
-        frames, _, vocoder_name = self.bucket(joined.shape[-1] + 1)
+        # The vocoder returns frames * 512 - 256 samples, so keep one spare frame to emit the sentence's last frame in full;
+        # a sentence that fills the largest bucket has its last 256 samples padded with silence instead.
+        frames, _, vocoder_name = self.bucket(min(joined.shape[-1] + 1, self.max_frames))
         padded = np.zeros((1, self.latent_dim, frames), np.float32)
         padded[0, :, :joined.shape[-1]] = joined
         audio = self._run(vocoder_name, latents=padded, latent_mask=_pad([True] * joined.shape[-1], frames, False),
                           voice_id=_scalar(self.voice_index(voice)), language_id=_scalar(self.language_index(language)),
                           emotion_id=_scalar(0))
         audio = np.asarray(audio, np.float32).reshape(-1)
-        start = context.shape[-1] * LATENT_HOP
-        return np.clip(audio[start:start + latents.shape[-1] * LATENT_HOP], -1.0, 1.0)
+        start, length = context.shape[-1] * LATENT_HOP, latents.shape[-1] * LATENT_HOP
+        audio = audio[start:start + length]
+        return np.clip(np.pad(audio, (0, length - audio.size)), -1.0, 1.0)
 
     def _id_to_token(self, index: int) -> str:
         if not hasattr(self, "_tokens"):
