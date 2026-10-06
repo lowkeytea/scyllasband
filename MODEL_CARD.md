@@ -83,29 +83,31 @@ Long text is spoken as passages within the trained target lengths (64 to 420 lat
 
 ## Performance
 
-Measured through the native runtime with the default sampler (Euler, 4 steps): `scyllasband_speak` from [libscyllasband](https://github.com/lowkeytea/scyllasband/tree/main/libscyllasband) on the Mac and Android, and the [iOS sample](https://github.com/lowkeytea/scyllasband/tree/main/examples/ios)'s benchmark mode on the iPhone. The text is three sentences, 11.6 s of audio: "The last train leaves at midnight, so pack light. Bring a warm coat, and don't forget the map. If we miss it, we walk, and nobody wants to walk that far in the rain." (voice Scylla, seed 7). Each configuration runs four requests in a fresh process. Warm first audio and the real-time factor (generation time divided by audio duration; lower is faster) are medians of requests two to four. Launch to first audio runs from process start, including loading the bundle, to the first audio of the first request, on a launch after the first. Speed-up compares the real-time factor with v2-20261005 (Heun, 8 steps), measured the same way on the same device and runtime.
+Measured with the default sampler (Euler, 4 steps) through the native runtime: `scyllasband_speak` from [libscyllasband](https://github.com/lowkeytea/scyllasband/tree/main/libscyllasband) on the Mac and Android, and the [iOS sample](https://github.com/lowkeytea/scyllasband/tree/main/examples/ios)'s benchmark mode on the iPhone. The text is three sentences, 11.6 s of audio: "The last train leaves at midnight, so pack light. Bring a warm coat, and don't forget the map. If we miss it, we walk, and nobody wants to walk that far in the rain." (voice Scylla, seed 7).
 
-| Device | Bundle | Compute | Warm first audio | Launch to first audio | Real-time factor | Peak memory | Speed-up |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| MacBook Pro, M5 Max (macOS 27) | Core ML | GPU (default) | 24 ms | 1.29 s | 0.0045 | 356 MB | 2.6× |
-| | Core ML | CPU | 192 ms | 0.29 s | 0.040 | 559 MB | 3.0× |
-| | Core AI | GPU (default) | 28 ms | 0.43 s | 0.0050 | 452 MB | 2.4× |
-| | Core AI | Neural Engine | 310 ms | 0.50 s | 0.055 | 184 MB | 1.3× |
-| | Core AI | CPU | 746 ms | 0.82 s | 0.16 | 52 MB | 3.1× |
-| | LiteRT | CPU | 142 ms | 0.74 s | 0.029 | 799 MB | 2.8× |
-| | ONNX Runtime | CPU | 200 ms | 0.89 s | 0.041 | 781 MB | 2.8× |
-| iPhone 17 Pro Max (iOS 27.0.1) | Core ML | GPU (default) | 63 ms | 1.43 s | 0.012 | 244 MB | 2.7× |
-| | Core ML | CPU | 240 ms | 0.35 s | 0.051 | 556 MB | 3.1× |
-| | Core AI | GPU (default) | 58 ms | 0.42 s | 0.011 | 327 MB | 2.9× |
-| | Core AI | Neural Engine | 370 ms | 0.59 s | 0.066 | 214 MB | 1.3× |
-| | Core AI | CPU | 882 ms | 0.96 s | 0.19 | 53 MB | 3.1× |
-| Galaxy Z Fold 8, Snapdragon SM8850 (Android 17) | LiteRT | CPU | 178 ms | 1.32 s | 0.037 | 938 MB | 2.7× |
-| | ONNX Runtime | CPU | 375 ms | 1.48 s | 0.082 | 1,019 MB | 2.6× |
+- **First run**: from launch to first audio on the first launch after installing the bundle. Core AI specializes its graphs for the device then and caches them until the next OS update.
+- **Cold start**: from launch to first audio on a later launch, including loading the bundle.
+- **Warm first audio**: from a request to its first audio in a process that has already spoken (median of three requests).
+- **Real-time speed**: seconds of audio generated per second when warm, rounded.
 
-- Compared with v2-20261005, first audio arrives 2.4 to 3 times sooner. For example, Core AI on the iPhone's GPU went from 172 to 58 ms, and LiteRT on the Fold from 461 to 178 ms.
-- The Neural Engine placement runs the flow on the Neural Engine and the other graphs on the CPU. It is meant for apps that speak in the background, where iOS does not allow GPU work. Its CPU graphs dominate, so the shorter flow helps it less.
-- The first launch after installing the app or updating the OS is slower. Core AI specializes its graphs for the device and caches them: first audio took 6.5 s on the iPhone's GPU and 28 s with the Neural Engine placement, and 5.3 s and 25 s on the Mac. Core ML's first launch took 2.8 s on the iPhone and 2.4 s on the Mac. Core ML also reloads its graphs on every launch, about 1.3 to 1.4 s on the GPU.
-- Peak memory is the process's peak footprint on Apple platforms and its peak resident memory on Android, which counts the mapped model files.
+| Device | Bundle | Compute | First run | Cold start | Warm first audio | Real-time speed |
+| --- | --- | --- | --- | --- | --- | --- |
+| MacBook Pro, M5 Max (macOS 27) | Core ML | GPU (default) | 2.44 s | 1.29 s | 24 ms | ~220× |
+|  | Core ML | CPU | 1.82 s | 0.28 s | 192 ms | ~25× |
+|  | Core AI | GPU (default) | 5.33 s | 0.42 s | 28 ms | ~200× |
+|  | Core AI | Neural Engine | 25.3 s | 0.50 s | 310 ms | ~18× |
+|  | Core AI | CPU | 2.49 s | 0.82 s | 746 ms | ~6.3× |
+|  | LiteRT | CPU | 0.76 s | 0.74 s | 142 ms | ~34× |
+|  | ONNX Runtime | CPU | 0.84 s | 0.89 s | 200 ms | ~24× |
+| iPhone 17 Pro Max (iOS 27.0.1) | Core ML | GPU (default) | 2.79 s | 1.43 s | 63 ms | ~85× |
+|  | Core ML | CPU | 2.04 s | 0.35 s | 240 ms | ~20× |
+|  | Core AI | GPU (default) | 6.49 s | 0.42 s | 58 ms | ~92× |
+|  | Core AI | Neural Engine | 27.8 s | 0.58 s | 370 ms | ~15× |
+|  | Core AI | CPU | 3.30 s | 0.96 s | 882 ms | ~5.2× |
+| Galaxy Z Fold 8, Snapdragon SM8850 (Android 17) | LiteRT | CPU | 1.60 s | 1.32 s | 178 ms | ~27× |
+|  | ONNX Runtime | CPU | 1.90 s | 1.48 s | 375 ms | ~12× |
+
+The GPU is the default on Apple platforms. The Neural Engine placement runs the flow on the Neural Engine and the other graphs on the CPU, for apps that speak in the background, where iOS does not allow GPU work. Core ML reloads its graphs on every launch, which accounts for most of its cold start on the GPU.
 
 ## Voices and language coverage
 
