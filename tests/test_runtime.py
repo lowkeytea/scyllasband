@@ -221,8 +221,8 @@ class StreamingTargetTest(unittest.TestCase):
     """Fake durations: one frame per phone and silence, none for punctuation ("ab." 4 frames, "ab ab." 7); trained
     target range 6 to 12 frames."""
 
-    def targets(self, records):
-        engine = _fake_engine(chunking=dict(min_target_frames=6, max_target_frames=12),
+    def targets(self, records, frames_per_phone: float = 1.0):
+        engine = _fake_engine(frames_per_phone, chunking=dict(min_target_frames=6, max_target_frames=12),
                               span_conditioning=dict(context_max_phones=64, context_phones_each_side=8))
         plan = plan_records(records, resolve_language=lambda voice, language: "en_us")
         events = [e for e in synthesize_plan_stream(engine, plan, StreamOptions(steps=1, seed=0)) if e.type == "audio_chunk"]
@@ -236,17 +236,37 @@ class StreamingTargetTest(unittest.TestCase):
         self.assertEqual(self.targets(records_from_text("ab ab. ab.", voice="scylla", language=None)),
                          [("chunk_0001+chunk_0002", "ab ab. ab.", 10)])
 
-    def test_targets_never_exceed_the_trained_maximum(self):
-        # "ab." cannot join 13 frames; those split between words and do not join back.
+    def test_a_short_first_sentence_takes_the_next_word_rather_than_speak_alone(self):
+        # "ab." (4 frames) cannot take all of the next sentence (13); it takes its first word, and the rest is one target.
         self.assertEqual(self.targets(records_from_text("ab. ab ab ab ab.", voice="scylla", language=None)),
-                         [("chunk_0001", "ab.", 4), ("chunk_0002_1", "ab ab", 7), ("chunk_0002_2", "ab ab.", 7)])
+                         [("chunk_0001+chunk_0002.1", "ab. ab", 7), ("chunk_0002.2", "ab ab ab.", 10)])
 
-    def test_joins_stay_within_a_paragraph_a_record_and_a_chain(self):
+    def test_later_targets_fill_toward_the_trained_maximum(self):
+        self.assertEqual(self.targets(records_from_text("ab. ab. ab. ab. ab. ab. ab. ab.", voice="scylla", language=None)),
+                         [("chunk_0001+chunk_0002", "ab. ab.", 7), ("chunk_0003+chunk_0005", "ab. ab. ab.", 10),
+                          ("chunk_0006+chunk_0008", "ab. ab. ab.", 10)])
+
+    def test_text_without_punctuation_splits_between_words(self):
+        self.assertEqual(self.targets(records_from_text("ab ab ab ab ab ab ab ab", voice="scylla", language=None)),
+                         [("chunk_0001.1", "ab ab", 7), ("chunk_0001.2", "ab ab ab", 10), ("chunk_0001.3", "ab ab ab", 10)])
+
+    def test_slow_delivery_never_exceeds_the_trained_maximum(self):
+        frames = [f for _, _, f in self.targets(records_from_text("ab. ab. ab. ab. ab. ab.", voice="scylla", language=None),
+                                                frames_per_phone=2.0)]
+        self.assertEqual(frames, [8] * 6)
+
+    def test_short_paragraphs_and_records_join_and_chains_never_do(self):
         paragraphs = records_from_text("ab.\n\nab.", voice="scylla", language=None)
         records = [dict(text="ab.", voice="scylla"), dict(text="ab.", voice="scylla")]
         chains = [dict(text="ab.", voice="scylla"), dict(text="ab.", voice="scylla", delivery="whisper=on")]
-        for case in (paragraphs, records, chains):
-            self.assertEqual([text for _, text, _ in self.targets(case)], ["ab.", "ab."])
+        self.assertEqual([text for _, text, _ in self.targets(paragraphs)], ["ab. ab."])
+        self.assertEqual([text for _, text, _ in self.targets(records)], ["ab. ab."])
+        self.assertEqual([text for _, text, _ in self.targets(chains)], ["ab.", "ab."])
+
+    def test_a_long_enough_paragraph_ends_its_target(self):
+        self.assertEqual([text for _, text, _ in self.targets(records_from_text("ab ab. ab ab.\n\nab ab.", voice="scylla",
+                                                                                 language=None))],
+                         ["ab ab.", "ab ab.", "ab ab."])
 
 
 # --- fakes --------------------------------------------------------------------------------------------------------------

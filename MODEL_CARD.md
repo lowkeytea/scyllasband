@@ -81,7 +81,7 @@ Controls are **global within each request**. This release does not support contr
 | Voice conditioning | Fixed per-voice/per-locale identity and prosody references embedded in the graphs |
 | Text frontend | Trained Scylla's Band G2P with its matched tokenizer and vocabulary |
 
-Long text is spoken one sentence at a time, within the trained target lengths: very short sentences are spoken together with their neighbours, and longer ones are split at clause punctuation. Each sentence sees the neighbouring sentences as context and continues from the acoustics of the sentence before it, and consecutive sentences are decoded as one continuous waveform. Durations are predicted deterministically; different controls can alter them.
+Long text is spoken as passages within the trained target lengths (64 to 420 latent frames, about 1.4 to 9 seconds): a short first passage so audio starts quickly, then passages as long as the text allows, cut at a sentence end, else a clause, else between words, and measured with the requested delivery. Each passage sees the surrounding text as context and continues from the acoustics of the one before it, and consecutive passages are decoded as one continuous waveform. Durations are predicted deterministically; different controls can alter them.
 
 ## Voices and language coverage
 

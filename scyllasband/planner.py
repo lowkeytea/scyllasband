@@ -1,8 +1,8 @@
 """Long-form planning: text records -> sentences, grouped into chains that are spoken continuously.
 
-The model speaks one sentence at a time. Consecutive sentences with the same voice, language and delivery
-form a chain: each sentence sees the neighbouring sentences' text as context, continues from the previous
-sentence's acoustics, and is decoded as part of one continuous waveform.
+Consecutive sentences with the same voice, language and delivery form a chain, spoken continuously: the streaming
+loop reads a chain's sentences as one stream of phones and cuts it into synthesis targets, each seeing the text around
+it as context, continuing from the previous target's acoustics and decoded as part of one continuous waveform.
 """
 
 from __future__ import annotations
