@@ -9,8 +9,8 @@ EXTERNAL SOURCES:
     :path: "../../libscyllasband"
 
 SPEC CHECKSUMS:
-  ScyllasBandKit: 724ebd84c631df9797b8f59e4fdbbf4b69413b38
+  ScyllasBandKit: 7fcf9b98c9d4cbbbdc2a97f9b33748bae43b5673
 
-PODFILE CHECKSUM: e77fab87c9e0038cf86ea143a6dbe5053d722eef
+PODFILE CHECKSUM: 2c5702b8af2745fd64733accd5d97e0f08c5922d
 
 COCOAPODS: 1.16.2

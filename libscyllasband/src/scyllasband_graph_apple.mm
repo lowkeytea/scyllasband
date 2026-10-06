@@ -254,7 +254,7 @@ private:
                                          : unit == kAcceleratorNeuralEngine ? MLComputeUnitsCPUAndNeuralEngine
                                                                             : MLComputeUnitsAll;
             if (!function.empty()) {
-                if (@available(iOS 18.0, macOS 15.0, *)) {
+                if (@available(iOS 18.0, macOS 15.0, visionOS 2.0, *)) {
                     configuration.functionName = [NSString stringWithUTF8String:function.c_str()];
                 } else {
                     throw std::runtime_error("Core ML bundles need iOS 18 or macOS 15");
@@ -317,7 +317,7 @@ std::unique_ptr<Backend> make_backend(const BackendOptions& options) {
         throw std::invalid_argument("Core AI bundles need iOS 27 or macOS 27; use the Core ML bundle on this system");
     }
     if (backend == "coreml") {
-        if (@available(iOS 18.0, macOS 15.0, *)) {
+        if (@available(iOS 18.0, macOS 15.0, visionOS 2.0, *)) {
         } else {
             throw std::invalid_argument("Core ML bundles need iOS 18 or macOS 15");
         }
