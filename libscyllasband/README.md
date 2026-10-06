@@ -10,7 +10,7 @@ Each build links one graph runtime:
 | --- | --- | --- |
 | LiteRT 2.2 (default) | `scyllasband/models/litert` | `python -m scyllasband download --flavor litert` |
 | ONNX Runtime 1.20+ | `scyllasband/models/onnx` | `python -m scyllasband download --flavor onnx` |
-| Apple: Core AI (iOS/macOS 27) and Core ML (iOS 18 / macOS 15) | `scyllasband/models/coreai`, `scyllasband/models/coreml` | `python -m scyllasband download --flavor coreai` (or `coreml`) |
+| Apple: Core AI (iOS/visionOS/macOS 27) and Core ML (iOS 18 / visionOS 2 / macOS 15) | `scyllasband/models/coreai`, `scyllasband/models/coreml` | `python -m scyllasband download --flavor coreai` (or `coreml`) |
 
 `scyllasband_backend()` reports the linked runtime (`litert`, `onnx` or `apple`), and a runtime only opens bundles with
 artifacts for it. The Apple build runs whichever of Core AI or Core ML the bundle is for; Core AI is weak-linked, so the

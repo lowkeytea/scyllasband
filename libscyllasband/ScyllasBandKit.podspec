@@ -1,10 +1,10 @@
 Pod::Spec.new do |spec|
   spec.name = 'ScyllasBandKit'
   spec.version = '2.0.0'
-  spec.summary = "Scylla's Band text-to-speech for iOS on Core ML and Core AI."
+  spec.summary = "Scylla's Band text-to-speech for iOS and visionOS on Core ML and Core AI."
   spec.description = <<-DESC
-    ScyllasBandKit packages libscyllasband with its Apple graph backend: Core ML bundles on iOS 18 and later and
-    Core AI bundles on iOS 27 and later. A small Objective-C API (usable from Swift) loads a bundle, warms it and
+    ScyllasBandKit packages libscyllasband with its Apple graph backend: Core ML bundles on iOS 18 and visionOS 2
+    and later, and Core AI bundles on iOS and visionOS 27 and later. A small Objective-C API (usable from Swift) loads a bundle, warms it and
     streams long-form speech as mono Float32 PCM, one sentence at a time.
   DESC
   spec.homepage = 'https://github.com/lowkeytea/scyllasband'
@@ -13,6 +13,7 @@ Pod::Spec.new do |spec|
   spec.source = { :git => 'https://github.com/lowkeytea/scyllasband.git', :tag => "v#{spec.version}" }
 
   spec.ios.deployment_target = '18.0'
+  spec.visionos.deployment_target = '2.0'
   spec.static_framework = true
   spec.requires_arc = true
   spec.module_name = 'ScyllasBandKit'
@@ -30,9 +31,12 @@ Pod::Spec.new do |spec|
   spec.header_mappings_dir = 'apple/Sources/include'
   spec.frameworks = 'Foundation', 'CoreML'
   spec.libraries = 'c++'
-  # Core AI (iOS 27 and later) is weak-linked, so the app still launches on iOS 18-26 and runs Core ML bundles there.
-  # Only the device SDK ships CoreAI.framework; Simulator builds use Core ML alone.
-  spec.user_target_xcconfig = { 'OTHER_LDFLAGS[sdk=iphoneos*]' => '$(inherited) -weak_framework CoreAI' }
+  # Core AI (iOS and visionOS 27 and later) is weak-linked, so the app still launches on earlier systems and runs Core ML
+  # bundles there. Only the device SDKs ship CoreAI.framework; Simulator builds use Core ML alone.
+  spec.user_target_xcconfig = {
+    'OTHER_LDFLAGS[sdk=iphoneos*]' => '$(inherited) -weak_framework CoreAI',
+    'OTHER_LDFLAGS[sdk=xros*]' => '$(inherited) -weak_framework CoreAI',
+  }
 
   spec.pod_target_xcconfig = {
     'CLANG_CXX_LANGUAGE_STANDARD' => 'c++17',

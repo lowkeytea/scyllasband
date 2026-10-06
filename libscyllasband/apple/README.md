@@ -1,34 +1,40 @@
 # ScyllasBandKit
 
 `ScyllasBandKit` is the Apple bridge for `libscyllasband`. It runs Core ML
-bundles on iOS 18 and later and Core AI bundles on iOS 27 and later, through
+bundles on iOS 18 and visionOS 2 and later, and Core AI bundles on iOS and
+visionOS 27 and later, through
 the Apple graph backend (`src/scyllasband_graph_apple.mm`, with the Core AI
 Swift bridge `Sources/ScyllasBandCoreAI.swift`). Apps use only the
 Objective-C API in `Sources/include/ScyllasBandKit.h`, which Swift can call,
 and never see C++.
 
-## Add it to an iOS app
+## Add it to an iOS or visionOS app
 
 Copy the whole `libscyllasband` directory into the destination repository and
 add the local pod:
 
 ```ruby
-platform :ios, '18.0'
+platform :ios, '18.0'        # or platform :visionos, '2.0'
 use_frameworks! :linkage => :static
 pod 'ScyllasBandKit', :path => '../path/to/libscyllasband'
 ```
 
 The pod links CoreML and libc++ and has no ONNX Runtime or LiteRT dependency.
-Device builds weak-link CoreAI, so the app still launches on iOS 18–26. The
-Simulator SDK has no CoreAI.framework, so Simulator builds run Core ML only
-(on the CPU).
+Device builds weak-link CoreAI, so the app still launches on iOS 18–26 and
+visionOS 2–26. The Simulator SDKs have no CoreAI.framework, so Simulator
+builds run Core ML only (on the CPU).
+
+CocoaPods builds pods for the Podfile's one platform. An app target that
+builds for both iPhone/iPad and Apple Vision (like the
+[sample](../../examples/ios/Podfile)) also needs the visionOS SDKs added to
+the pod targets in `post_install`.
 
 ## API
 
 | Type | Purpose |
 | --- | --- |
 | `SBScyllasBand` | One runtime over one bundle: `initWithBundleURL:computeUnit:error:`, `warmUpWithVoice:error:`, `synthesizeRequest:chunkStarted:audioChunk:error:`, `requestCancellation`. |
-| `+[SBScyllasBand preferredBundleURLInDirectory:]` | Picks `coreai/` on iOS 27 and later, otherwise `coreml/`, from a directory holding the bundle folders. |
+| `+[SBScyllasBand preferredBundleURLInDirectory:]` | Picks `coreai/` on iOS and visionOS 27 and later, otherwise `coreml/`, from a directory holding the bundle folders. |
 | `SBScyllasBandComputeUnit` | `Automatic` (the bundle's recommendation for each graph), `CPU`, `GPU`, `NeuralEngine`. |
 | `SBScyllasBandBundleInfo` | `backend` (`coreml` or `coreai`), `releaseIdentifier`, `sampleRate`, `voices` (identifier, languages, default language), `defaultVoice`. |
 | `SBScyllasBandRequest` | Text, voice, optional language, delivery, seed, flow steps, speed, text normalization. |

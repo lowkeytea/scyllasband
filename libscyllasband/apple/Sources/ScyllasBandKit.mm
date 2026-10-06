@@ -217,9 +217,9 @@ int32_t forward_event(const ScyllasBandEvent *event, void *user_data) {
 + (nullable NSURL *)preferredBundleURLInDirectory:(NSURL *)directory {
     NSMutableArray<NSString *> *order = [NSMutableArray array];
 #if !TARGET_OS_SIMULATOR   // Core AI runs on devices only
-    if (@available(iOS 27.0, macOS 27.0, *)) [order addObject:@"coreai"];
+    if (@available(iOS 27.0, macOS 27.0, visionOS 27.0, *)) [order addObject:@"coreai"];
 #endif
-    if (@available(iOS 18.0, macOS 15.0, *)) [order addObject:@"coreml"];
+    if (@available(iOS 18.0, macOS 15.0, visionOS 2.0, *)) [order addObject:@"coreml"];
     for (NSString *flavor in order) {
         NSURL *bundle = [directory URLByAppendingPathComponent:flavor isDirectory:YES];
         if ([NSFileManager.defaultManager fileExistsAtPath:[bundle URLByAppendingPathComponent:@"manifest.json"].path]) return bundle;

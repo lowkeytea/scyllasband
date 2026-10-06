@@ -37,13 +37,13 @@ private final class Blocking<Value>: @unchecked Sendable {
 
 #if canImport(CoreAI)
 
-@available(iOS 27.0, macOS 27.0, *)
+@available(iOS 27.0, macOS 27.0, visionOS 27.0, *)
 private final class CoreAIModel: @unchecked Sendable {
     let model: AIModel
     init(model: AIModel) { self.model = model }
 }
 
-@available(iOS 27.0, macOS 27.0, *)
+@available(iOS 27.0, macOS 27.0, visionOS 27.0, *)
 private final class CoreAIFunction: @unchecked Sendable {
     let function: InferenceFunction
     let inputTypes: [String: NDArray.ScalarType]
@@ -70,7 +70,7 @@ private enum BridgeError: Error, CustomStringConvertible {
 }
 
 // Input dtypes from libscyllasband (DType): 0 float32, 1 int64, 2 bool (one byte).
-@available(iOS 27.0, macOS 27.0, *)
+@available(iOS 27.0, macOS 27.0, visionOS 27.0, *)
 private func makeArray(_ data: UnsafeRawPointer?, dtype: Int32, shape: [Int], as target: NDArray.ScalarType) throws -> NDArray {
     let count = shape.reduce(1, *)
     func values<T>(_ convert: (Double) -> T) -> [T] {
@@ -92,7 +92,7 @@ private func makeArray(_ data: UnsafeRawPointer?, dtype: Int32, shape: [Int], as
 }
 
 /// Float32 copy of `array` in row-major order, honouring its strides (Neural Engine outputs can be padded or interleaved).
-@available(iOS 27.0, macOS 27.0, *)
+@available(iOS 27.0, macOS 27.0, visionOS 27.0, *)
 private func floats(_ array: NDArray) throws -> [Float] {
     func gather<T: BitwiseCopyable>(_ type: T.Type, _ convert: (T) -> Float) -> [Float] {
         array.view(as: type).withUnsafePointer { pointer, shapeSpan, strideSpan in
@@ -123,7 +123,7 @@ private func floats(_ array: NDArray) throws -> [Float] {
     }
 }
 
-@available(iOS 27.0, macOS 27.0, *)
+@available(iOS 27.0, macOS 27.0, visionOS 27.0, *)
 private func options(_ unit: Int32) -> SpecializationOptions {
     switch unit {   // ScyllasBandAccelerator: 0 cpu, 1 gpu, 2 auto, 3 neural engine
     case 0: return .cpuOnly
@@ -139,7 +139,7 @@ private func options(_ unit: Int32) -> SpecializationOptions {
 @_cdecl("scyllasband_coreai_available")
 public func scyllasbandCoreAIAvailable() -> Int32 {
     #if canImport(CoreAI)
-    if #available(iOS 27.0, macOS 27.0, *) { return 1 }
+    if #available(iOS 27.0, macOS 27.0, visionOS 27.0, *) { return 1 }
     #endif
     return 0
 }
@@ -148,7 +148,7 @@ public func scyllasbandCoreAIAvailable() -> Int32 {
 @_cdecl("scyllasband_coreai_open")
 public func scyllasbandCoreAIOpen(_ path: UnsafePointer<CChar>, _ unit: Int32, _ errorBuffer: UnsafeMutablePointer<CChar>?, _ errorLength: Int) -> UnsafeMutableRawPointer? {
     #if canImport(CoreAI)
-    if #available(iOS 27.0, macOS 27.0, *) {
+    if #available(iOS 27.0, macOS 27.0, visionOS 27.0, *) {
         let url = URL(fileURLWithPath: String(cString: path))
         let chosen = options(unit)
         do {
@@ -170,7 +170,7 @@ public func scyllasbandCoreAIOpen(_ path: UnsafePointer<CChar>, _ unit: Int32, _
 @_cdecl("scyllasband_coreai_function")
 public func scyllasbandCoreAIFunction(_ model: UnsafeMutableRawPointer, _ name: UnsafePointer<CChar>?, _ errorBuffer: UnsafeMutablePointer<CChar>?, _ errorLength: Int) -> UnsafeMutableRawPointer? {
     #if canImport(CoreAI)
-    if #available(iOS 27.0, macOS 27.0, *) {
+    if #available(iOS 27.0, macOS 27.0, visionOS 27.0, *) {
         let asset = Unmanaged<CoreAIModel>.fromOpaque(model).takeUnretainedValue().model
         let names = asset.functionNames
         let functionName = name.map { String(cString: $0) } ?? (names.count == 1 ? names[0] : "main")
@@ -199,7 +199,7 @@ public func scyllasbandCoreAIRun(_ handle: UnsafeMutableRawPointer, _ count: Int
                                  _ valueCount: UnsafeMutablePointer<Int64>, _ outShape: UnsafeMutablePointer<Int64>,
                                  _ outRank: UnsafeMutablePointer<Int32>, _ errorBuffer: UnsafeMutablePointer<CChar>?, _ errorLength: Int) -> Int32 {
     #if canImport(CoreAI)
-    if #available(iOS 27.0, macOS 27.0, *) {
+    if #available(iOS 27.0, macOS 27.0, visionOS 27.0, *) {
         let session = Unmanaged<CoreAIFunction>.fromOpaque(handle).takeUnretainedValue()
         do {
             var inputs: [String: NDArray] = [:]

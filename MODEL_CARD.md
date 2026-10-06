@@ -93,7 +93,7 @@ All ten have Spanish (`es`), Italian (`it`), French (`fr`), German (`de`) and Vi
 
 - `litert/` (164 MB): LiteRT bundle; default download. Transformer and vocoder weights are dynamic-range INT8; each size bucket is a signature of one model file, sharing weights.
 - `coreai/` (155 MB): Core AI bundle for apps on iOS, iPadOS and visionOS 27 (`.aimodel` assets); it also runs on macOS 27, where the runtime uses the Core ML bundle by default. INT8 weights per output channel with FP16 compute; size buckets are functions of one asset sharing weights. The flow also runs accurately on the Neural Engine (`controls.coreai.neural_engine_assets`), which is the placement for apps that speak in the background; the GPU is the default.
-- `coreml/` (142 MB): Core ML bundle for Apple silicon with iOS 18 / macOS 15 and later (compiled `.mlmodelc` assets), with INT8 weights and FP16 compute; GPU by default, CPU in background apps.
+- `coreml/` (142 MB): Core ML bundle for Apple silicon with iOS 18 / visionOS 2 / macOS 15 and later (compiled `.mlmodelc` assets), with INT8 weights and FP16 compute; GPU by default, CPU in background apps.
 - `onnx/`: ONNX Runtime bundle with dynamic INT8 transformer weights; the vocoder stays in full precision.
 - `pytorch/`: duration, vector, adapter/vocoder, autoencoder and G2P checkpoints, with the release configuration assets.
 - `SHA256SUMS.json`: published-file hashes.
