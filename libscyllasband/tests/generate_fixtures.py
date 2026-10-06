@@ -139,7 +139,8 @@ def normalizer_cases() -> list[dict]:
               "I paid $3.50, then £12 and 40€.", "On Jan. 5, 2024 we had 25% more; by 3/4/2025 it was 1/2.", "Call me at 10:30pm or 7:05 AM.",
               "She came 1st and 22nd.", "Email jane.doe+tts@example.co.uk or ping @scylla.", "Ok... OK?! ok!!", "Well -- that's it - right?",
               "e-mail, X-ray, T-shirt and A - B.", "Café café 2024-03-07.", "It's 3.14159 or 2,718.28 or 1,000,000.", "x = 5 and 20°",
-              "12345678901234567890123 and ٣٤"]
+              "12345678901234567890123 and ٣٤", "D.J. Stumpy charged $99.99. I met J.K. Rowling.", "He moved to the U.S. Then he left.",
+              "She lives in the U.S.", 'Call me at 9 a.m. "Sure," he said.']
     cases = []
     for language in ("en_us", "en_gb", "es", "it", "fr", "de", "vi"):
         for text in corpus:
