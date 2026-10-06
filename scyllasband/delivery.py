@@ -1,22 +1,22 @@
-"""Delivery requests: energy, tension, valence and assertiveness on 0-4 (2 = neutral), plus whisper."""
+"""Delivery requests: energy, tension, valence and assertiveness on 0-4 (2 = neutral).
+
+The graphs keep a fifth delivery input from training (whisper); it is always sent as off."""
 from __future__ import annotations
 
 import math
 from typing import Any, Mapping
 
 DELIVERY_AXES = ("energy", "tension", "valence", "assertiveness")
-DELIVERY_CHANNELS = (*DELIVERY_AXES, "whisper")
 
 
 def resolve_delivery(value: Mapping[str, Any] | str | None = None) -> dict[str, Any]:
     """Resolve defaults without conflating explicit neutral with omitted axes."""
     defaults = dict.fromkeys(DELIVERY_AXES, 2.0)
-    defaults["whisper"] = "off"
     if value is None:
         return defaults
     if isinstance(value, str):
         if value.strip().lower() == "auto":
-            return {**dict.fromkeys(DELIVERY_AXES), "whisper": "auto"}
+            return dict.fromkeys(DELIVERY_AXES)
         if value.strip().lower() in ("", "neutral"):
             return defaults
         fields: dict[str, Any] = {}
@@ -26,8 +26,10 @@ def resolve_delivery(value: Mapping[str, Any] | str | None = None) -> dict[str, 
                 raise ValueError("Delivery must contain unique axis=value entries or 'auto'")
             fields[key] = raw.strip()
         value = fields
-    if not isinstance(value, Mapping) or set(value) - set(DELIVERY_CHANNELS):
-        raise ValueError(f"Delivery accepts only {', '.join(DELIVERY_CHANNELS)}")
+    if isinstance(value, Mapping) and "whisper" in value:
+        raise ValueError("Whisper is not supported; remove whisper from the delivery")
+    if not isinstance(value, Mapping) or set(value) - set(DELIVERY_AXES):
+        raise ValueError(f"Delivery accepts only {', '.join(DELIVERY_AXES)}")
     result = {**defaults, **value}
     for axis in DELIVERY_AXES:
         raw = result[axis]
@@ -43,14 +45,6 @@ def resolve_delivery(value: Mapping[str, Any] | str | None = None) -> dict[str, 
         if not math.isfinite(number) or not 0 <= number <= 4:
             raise ValueError(f"Delivery {axis} must be finite and within [0, 4]")
         result[axis] = number
-    whisper = result["whisper"]
-    if isinstance(whisper, bool):
-        whisper = "on" if whisper else "off"
-    elif whisper is None:
-        whisper = "auto"
-    if whisper not in ("on", "off", "auto"):
-        raise ValueError("Delivery whisper must be on, off, or auto")
-    result["whisper"] = whisper
     return result
 
 
@@ -63,9 +57,7 @@ def delivery_tensors(value: Mapping[str, Any] | str | None = None):
         if resolved[axis] is not None:
             values[0, index] = (resolved[axis] - 2.0) / 4.0
             present[0, index] = True
-    if resolved["whisper"] != "auto":
-        values[0, 4] = float(resolved["whisper"] == "on")
-        present[0, 4] = True
+    present[0, 4] = True   # whisper: always off
     return values, present, resolved
 
 

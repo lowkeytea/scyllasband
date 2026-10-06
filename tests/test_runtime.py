@@ -142,9 +142,18 @@ class DeliveryTest(unittest.TestCase):
         self.assertTrue(present.all())
         self.assertEqual(values[0, :4].tolist(), [0, 0, 0, 0])
         values, present, _ = delivery_tensors("auto")
-        self.assertFalse(present.any())
+        self.assertFalse(present[0, :4].any())
         self.assertEqual(resolve_delivery("energy=3")["energy"], 3.0)
         self.assertEqual(resolve_delivery(""), resolve_delivery(None))
+
+    def test_whisper_input_is_always_off(self):
+        for spec in (None, "auto", "energy=3,valence=1"):
+            values, present, resolved = delivery_tensors(spec)
+            self.assertEqual((float(values[0, 4]), bool(present[0, 4])), (0.0, True))
+            self.assertNotIn("whisper", resolved)
+        for spec in ("whisper=on", "energy=2,whisper=off", {"whisper": False}):
+            with self.assertRaisesRegex(ValueError, "Whisper is not supported"):
+                resolve_delivery(spec)
 
 
 class ContractTest(unittest.TestCase):
@@ -258,7 +267,7 @@ class StreamingTargetTest(unittest.TestCase):
     def test_short_paragraphs_and_records_join_and_chains_never_do(self):
         paragraphs = records_from_text("ab.\n\nab.", voice="scylla", language=None)
         records = [dict(text="ab.", voice="scylla"), dict(text="ab.", voice="scylla")]
-        chains = [dict(text="ab.", voice="scylla"), dict(text="ab.", voice="scylla", delivery="whisper=on")]
+        chains = [dict(text="ab.", voice="scylla"), dict(text="ab.", voice="scylla", delivery="energy=3")]
         self.assertEqual([text for _, text, _ in self.targets(paragraphs)], ["ab. ab."])
         self.assertEqual([text for _, text, _ in self.targets(records)], ["ab. ab."])
         self.assertEqual([text for _, text, _ in self.targets(chains)], ["ab.", "ab."])

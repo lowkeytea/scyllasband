@@ -104,12 +104,12 @@
     <p class="eyebrow">Spybyscript presents</p>
     <h1>Scylla's Band<br>Voice Gallery</h1>
     <p class="lede">Ten voices speaking English, Spanish, Italian, French, German and Vietnamese, with delivery set by energy, tension, valence and
-      assertiveness on 0–4 scales, plus whisper.</p>
+      assertiveness on 0–4 scales.</p>
     <div class="metrics" aria-label="Gallery summary">
       <span class="metric"><strong>10</strong> voices</span>
       <span class="metric"><strong>6</strong> languages</span>
       <span class="metric"><strong>60</strong> language clips</span>
-      <span class="metric"><strong>70</strong> delivery clips</span>
+      <span class="metric"><strong>60</strong> delivery clips</span>
       <span class="metric"><strong>2</strong> long-form clips</span>
       <span class="metric"><strong>24 kHz</strong> output</span>
     </div>
@@ -122,8 +122,8 @@
     <a href="#long-form">Long form</a><a href="#languages">Languages</a><a href="#delivery">Delivery</a><a href="#ariadne">Ariadne</a><a href="#felix">Felix</a><a href="#gwen">Gwen</a><a href="#ink">Ink</a><a href="#max">Max</a><a href="#orpheus">Orpheus</a><a href="#rex">Rex</a><a href="#scylla">Scylla</a><a href="#stone">Stone</a><a href="#tuesday">Tuesday</a>
   </nav>
   <main class="shell">
-    <p class="render-note">Every clip was generated on CPU with the default LiteRT bundle (release v2-20261005),
-      Heun sampling with 8 steps and seed 2027. Audio loads when you press play.</p>
+    <p class="render-note">Every clip was generated on CPU with the default LiteRT bundle (release v2-20261006),
+      Euler sampling with 4 steps and seed 2027. Audio loads when you press play.</p>
     <section id="long-form">
       <div class="section-heading">
         <h2>Long form</h2>
@@ -140,7 +140,7 @@
         </article>
         <article class="long-form-card" id="dialogue">
           <div class="long-form-heading"><h3>Multi-voice multilingual dialogue</h3><span class="duration">1:42</span></div>
-          <p class="long-form-meta">10 voices · English (US) · English (UK) · German · French · Vietnamese · Spanish · Italian · 260 words</p>
+          <p class="long-form-meta">10 voices · English (US) · English (UK) · German · French · Vietnamese · Spanish · Italian · 263 words</p>
           <p class="line">All ten voices introduce the release, moving between English, German, French, Vietnamese, Spanish and Italian while the delivery changes line by line.</p>
           <audio controls preload="none" src="audio/dialogue.mp3" aria-label="Multi-voice multilingual dialogue"></audio><a class="audio-link" href="audio/dialogue.mp3">Open audio file</a>
           <a class="source-link" href="https://github.com/lowkeytea/scyllasband/blob/main/data/walkthrough_demo.txt">Read the source text &rarr;</a>
@@ -436,45 +436,39 @@
           <div class="demo-grid">
             <article class="demo-card" id="ariadne-neutral">
               <h4>Neutral (default)</h4>
-              <p class="delivery">energy=2, tension=2, valence=2, assertiveness=2, whisper=off</p>
+              <p class="delivery">energy=2, tension=2, valence=2, assertiveness=2</p>
               <p class="line">Please put the small blue box beside the kitchen window, then close the door behind you.</p>
               <audio controls preload="none" src="audio/ariadne_neutral.mp3" aria-label="Ariadne, neutral (default) delivery"></audio><a class="audio-link" href="audio/ariadne_neutral.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="ariadne-calm">
               <h4>Calm and soft</h4>
-              <p class="delivery">energy=1.8, tension=1, valence=2.5, assertiveness=2.1, whisper=off</p>
+              <p class="delivery">energy=1.8, tension=1, valence=2.5, assertiveness=2.1</p>
               <p class="line">Take a slow breath. There&#x27;s no rush tonight; the rain will keep the city quiet for a while.</p>
               <audio controls preload="none" src="audio/ariadne_calm.mp3" aria-label="Ariadne, calm and soft delivery"></audio><a class="audio-link" href="audio/ariadne_calm.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="ariadne-assertive">
               <h4>Assertive and quick</h4>
-              <p class="delivery">energy=2.6, tension=2.4, valence=2.1, assertiveness=2.8, whisper=off</p>
+              <p class="delivery">energy=2.6, tension=2.4, valence=2.1, assertiveness=2.8</p>
               <p class="line">Listen carefully. We leave at six, we stay together, and nobody goes back for the bags.</p>
               <audio controls preload="none" src="audio/ariadne_assertive.mp3" aria-label="Ariadne, assertive and quick delivery"></audio><a class="audio-link" href="audio/ariadne_assertive.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="ariadne-joyful">
               <h4>Joyful</h4>
-              <p class="delivery">energy=2.4, tension=2, valence=2.8, assertiveness=2.2, whisper=off</p>
+              <p class="delivery">energy=2.4, tension=2, valence=2.8, assertiveness=2.2</p>
               <p class="line">We actually did it! The whole street came out to watch, and nobody wanted the night to end!</p>
               <audio controls preload="none" src="audio/ariadne_joyful.mp3" aria-label="Ariadne, joyful delivery"></audio><a class="audio-link" href="audio/ariadne_joyful.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="ariadne-angry">
               <h4>Angry</h4>
-              <p class="delivery">energy=2.7, tension=3.1, valence=1.3, assertiveness=2.5, whisper=off</p>
+              <p class="delivery">energy=2.7, tension=3.1, valence=1.3, assertiveness=2.5</p>
               <p class="line">No. You don&#x27;t get to walk in here and change the rules again. Not after everything.</p>
               <audio controls preload="none" src="audio/ariadne_angry.mp3" aria-label="Ariadne, angry delivery"></audio><a class="audio-link" href="audio/ariadne_angry.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="ariadne-sad">
               <h4>Sad</h4>
-              <p class="delivery">energy=1.7, tension=1.7, valence=1.8, assertiveness=2, whisper=off</p>
+              <p class="delivery">energy=1.7, tension=1.5, valence=1.4, assertiveness=2</p>
               <p class="line">I kept the letter for years... I never opened it. Maybe I was afraid of what it would say.</p>
               <audio controls preload="none" src="audio/ariadne_sad.mp3" aria-label="Ariadne, sad delivery"></audio><a class="audio-link" href="audio/ariadne_sad.mp3">Open audio file</a>
-            </article>
-            <article class="demo-card" id="ariadne-whisper">
-              <h4>Whisper</h4>
-              <p class="delivery">energy=2, tension=2, valence=2, assertiveness=2, whisper=on</p>
-              <p class="line">Keep your voice down. The guard changes at four, and the side door is still unlocked.</p>
-              <audio controls preload="none" src="audio/ariadne_whisper.mp3" aria-label="Ariadne, whisper delivery"></audio><a class="audio-link" href="audio/ariadne_whisper.mp3">Open audio file</a>
             </article>
           </div>
         </section>
@@ -483,45 +477,39 @@
           <div class="demo-grid">
             <article class="demo-card" id="felix-neutral">
               <h4>Neutral (default)</h4>
-              <p class="delivery">energy=2, tension=2, valence=2, assertiveness=2, whisper=off</p>
+              <p class="delivery">energy=2, tension=2, valence=2, assertiveness=2</p>
               <p class="line">Please put the small blue box beside the kitchen window, then close the door behind you.</p>
               <audio controls preload="none" src="audio/felix_neutral.mp3" aria-label="Felix, neutral (default) delivery"></audio><a class="audio-link" href="audio/felix_neutral.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="felix-calm">
               <h4>Calm and soft</h4>
-              <p class="delivery">energy=1.8, tension=1, valence=2.5, assertiveness=2.1, whisper=off</p>
+              <p class="delivery">energy=1.8, tension=1, valence=2.5, assertiveness=2.1</p>
               <p class="line">Take a slow breath. There&#x27;s no rush tonight; the rain will keep the city quiet for a while.</p>
               <audio controls preload="none" src="audio/felix_calm.mp3" aria-label="Felix, calm and soft delivery"></audio><a class="audio-link" href="audio/felix_calm.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="felix-assertive">
               <h4>Assertive and quick</h4>
-              <p class="delivery">energy=2.6, tension=2.4, valence=2.1, assertiveness=2.8, whisper=off</p>
+              <p class="delivery">energy=2.6, tension=2.4, valence=2.1, assertiveness=2.8</p>
               <p class="line">Listen carefully. We leave at six, we stay together, and nobody goes back for the bags.</p>
               <audio controls preload="none" src="audio/felix_assertive.mp3" aria-label="Felix, assertive and quick delivery"></audio><a class="audio-link" href="audio/felix_assertive.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="felix-joyful">
               <h4>Joyful</h4>
-              <p class="delivery">energy=2.4, tension=2, valence=2.8, assertiveness=2.2, whisper=off</p>
+              <p class="delivery">energy=2.4, tension=2, valence=2.8, assertiveness=2.2</p>
               <p class="line">We actually did it! The whole street came out to watch, and nobody wanted the night to end!</p>
               <audio controls preload="none" src="audio/felix_joyful.mp3" aria-label="Felix, joyful delivery"></audio><a class="audio-link" href="audio/felix_joyful.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="felix-angry">
               <h4>Angry</h4>
-              <p class="delivery">energy=2.7, tension=3.1, valence=1.3, assertiveness=2.5, whisper=off</p>
+              <p class="delivery">energy=2.7, tension=3.1, valence=1.3, assertiveness=2.5</p>
               <p class="line">No. You don&#x27;t get to walk in here and change the rules again. Not after everything.</p>
               <audio controls preload="none" src="audio/felix_angry.mp3" aria-label="Felix, angry delivery"></audio><a class="audio-link" href="audio/felix_angry.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="felix-sad">
               <h4>Sad</h4>
-              <p class="delivery">energy=1.7, tension=1.7, valence=1.8, assertiveness=2, whisper=off</p>
+              <p class="delivery">energy=1.7, tension=1.5, valence=1.4, assertiveness=2</p>
               <p class="line">I kept the letter for years... I never opened it. Maybe I was afraid of what it would say.</p>
               <audio controls preload="none" src="audio/felix_sad.mp3" aria-label="Felix, sad delivery"></audio><a class="audio-link" href="audio/felix_sad.mp3">Open audio file</a>
-            </article>
-            <article class="demo-card" id="felix-whisper">
-              <h4>Whisper</h4>
-              <p class="delivery">energy=2, tension=2, valence=2, assertiveness=2, whisper=on</p>
-              <p class="line">Keep your voice down. The guard changes at four, and the side door is still unlocked.</p>
-              <audio controls preload="none" src="audio/felix_whisper.mp3" aria-label="Felix, whisper delivery"></audio><a class="audio-link" href="audio/felix_whisper.mp3">Open audio file</a>
             </article>
           </div>
         </section>
@@ -530,45 +518,39 @@
           <div class="demo-grid">
             <article class="demo-card" id="gwen-neutral">
               <h4>Neutral (default)</h4>
-              <p class="delivery">energy=2, tension=2, valence=2, assertiveness=2, whisper=off</p>
+              <p class="delivery">energy=2, tension=2, valence=2, assertiveness=2</p>
               <p class="line">Please put the small blue box beside the kitchen window, then close the door behind you.</p>
               <audio controls preload="none" src="audio/gwen_neutral.mp3" aria-label="Gwen, neutral (default) delivery"></audio><a class="audio-link" href="audio/gwen_neutral.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="gwen-calm">
               <h4>Calm and soft</h4>
-              <p class="delivery">energy=1.8, tension=1, valence=2.5, assertiveness=2.1, whisper=off</p>
+              <p class="delivery">energy=1.8, tension=1, valence=2.5, assertiveness=2.1</p>
               <p class="line">Take a slow breath. There&#x27;s no rush tonight; the rain will keep the city quiet for a while.</p>
               <audio controls preload="none" src="audio/gwen_calm.mp3" aria-label="Gwen, calm and soft delivery"></audio><a class="audio-link" href="audio/gwen_calm.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="gwen-assertive">
               <h4>Assertive and quick</h4>
-              <p class="delivery">energy=2.6, tension=2.4, valence=2.1, assertiveness=2.8, whisper=off</p>
+              <p class="delivery">energy=2.6, tension=2.4, valence=2.1, assertiveness=2.8</p>
               <p class="line">Listen carefully. We leave at six, we stay together, and nobody goes back for the bags.</p>
               <audio controls preload="none" src="audio/gwen_assertive.mp3" aria-label="Gwen, assertive and quick delivery"></audio><a class="audio-link" href="audio/gwen_assertive.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="gwen-joyful">
               <h4>Joyful</h4>
-              <p class="delivery">energy=2.4, tension=2, valence=2.8, assertiveness=2.2, whisper=off</p>
+              <p class="delivery">energy=2.4, tension=2, valence=2.8, assertiveness=2.2</p>
               <p class="line">We actually did it! The whole street came out to watch, and nobody wanted the night to end!</p>
               <audio controls preload="none" src="audio/gwen_joyful.mp3" aria-label="Gwen, joyful delivery"></audio><a class="audio-link" href="audio/gwen_joyful.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="gwen-angry">
               <h4>Angry</h4>
-              <p class="delivery">energy=2.7, tension=3.1, valence=1.3, assertiveness=2.5, whisper=off</p>
+              <p class="delivery">energy=2.7, tension=3.1, valence=1.3, assertiveness=2.5</p>
               <p class="line">No. You don&#x27;t get to walk in here and change the rules again. Not after everything.</p>
               <audio controls preload="none" src="audio/gwen_angry.mp3" aria-label="Gwen, angry delivery"></audio><a class="audio-link" href="audio/gwen_angry.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="gwen-sad">
               <h4>Sad</h4>
-              <p class="delivery">energy=1.7, tension=1.7, valence=1.8, assertiveness=2, whisper=off</p>
+              <p class="delivery">energy=1.7, tension=1.5, valence=1.4, assertiveness=2</p>
               <p class="line">I kept the letter for years... I never opened it. Maybe I was afraid of what it would say.</p>
               <audio controls preload="none" src="audio/gwen_sad.mp3" aria-label="Gwen, sad delivery"></audio><a class="audio-link" href="audio/gwen_sad.mp3">Open audio file</a>
-            </article>
-            <article class="demo-card" id="gwen-whisper">
-              <h4>Whisper</h4>
-              <p class="delivery">energy=2, tension=2, valence=2, assertiveness=2, whisper=on</p>
-              <p class="line">Keep your voice down. The guard changes at four, and the side door is still unlocked.</p>
-              <audio controls preload="none" src="audio/gwen_whisper.mp3" aria-label="Gwen, whisper delivery"></audio><a class="audio-link" href="audio/gwen_whisper.mp3">Open audio file</a>
             </article>
           </div>
         </section>
@@ -577,45 +559,39 @@
           <div class="demo-grid">
             <article class="demo-card" id="ink-neutral">
               <h4>Neutral (default)</h4>
-              <p class="delivery">energy=2, tension=2, valence=2, assertiveness=2, whisper=off</p>
+              <p class="delivery">energy=2, tension=2, valence=2, assertiveness=2</p>
               <p class="line">Please put the small blue box beside the kitchen window, then close the door behind you.</p>
               <audio controls preload="none" src="audio/ink_neutral.mp3" aria-label="Ink, neutral (default) delivery"></audio><a class="audio-link" href="audio/ink_neutral.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="ink-calm">
               <h4>Calm and soft</h4>
-              <p class="delivery">energy=1.8, tension=1, valence=2.5, assertiveness=2.1, whisper=off</p>
+              <p class="delivery">energy=1.8, tension=1, valence=2.5, assertiveness=2.1</p>
               <p class="line">Take a slow breath. There&#x27;s no rush tonight; the rain will keep the city quiet for a while.</p>
               <audio controls preload="none" src="audio/ink_calm.mp3" aria-label="Ink, calm and soft delivery"></audio><a class="audio-link" href="audio/ink_calm.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="ink-assertive">
               <h4>Assertive and quick</h4>
-              <p class="delivery">energy=2.6, tension=2.4, valence=2.1, assertiveness=2.8, whisper=off</p>
+              <p class="delivery">energy=2.6, tension=2.4, valence=2.1, assertiveness=2.8</p>
               <p class="line">Listen carefully. We leave at six, we stay together, and nobody goes back for the bags.</p>
               <audio controls preload="none" src="audio/ink_assertive.mp3" aria-label="Ink, assertive and quick delivery"></audio><a class="audio-link" href="audio/ink_assertive.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="ink-joyful">
               <h4>Joyful</h4>
-              <p class="delivery">energy=2.4, tension=2, valence=2.8, assertiveness=2.2, whisper=off</p>
+              <p class="delivery">energy=2.4, tension=2, valence=2.8, assertiveness=2.2</p>
               <p class="line">We actually did it! The whole street came out to watch, and nobody wanted the night to end!</p>
               <audio controls preload="none" src="audio/ink_joyful.mp3" aria-label="Ink, joyful delivery"></audio><a class="audio-link" href="audio/ink_joyful.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="ink-angry">
               <h4>Angry</h4>
-              <p class="delivery">energy=2.7, tension=3.1, valence=1.3, assertiveness=2.5, whisper=off</p>
+              <p class="delivery">energy=2.7, tension=3.1, valence=1.3, assertiveness=2.5</p>
               <p class="line">No. You don&#x27;t get to walk in here and change the rules again. Not after everything.</p>
               <audio controls preload="none" src="audio/ink_angry.mp3" aria-label="Ink, angry delivery"></audio><a class="audio-link" href="audio/ink_angry.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="ink-sad">
               <h4>Sad</h4>
-              <p class="delivery">energy=1.7, tension=1.7, valence=1.8, assertiveness=2, whisper=off</p>
+              <p class="delivery">energy=1.7, tension=1.5, valence=1.4, assertiveness=2</p>
               <p class="line">I kept the letter for years... I never opened it. Maybe I was afraid of what it would say.</p>
               <audio controls preload="none" src="audio/ink_sad.mp3" aria-label="Ink, sad delivery"></audio><a class="audio-link" href="audio/ink_sad.mp3">Open audio file</a>
-            </article>
-            <article class="demo-card" id="ink-whisper">
-              <h4>Whisper</h4>
-              <p class="delivery">energy=2, tension=2, valence=2, assertiveness=2, whisper=on</p>
-              <p class="line">Keep your voice down. The guard changes at four, and the side door is still unlocked.</p>
-              <audio controls preload="none" src="audio/ink_whisper.mp3" aria-label="Ink, whisper delivery"></audio><a class="audio-link" href="audio/ink_whisper.mp3">Open audio file</a>
             </article>
           </div>
         </section>
@@ -624,45 +600,39 @@
           <div class="demo-grid">
             <article class="demo-card" id="max-neutral">
               <h4>Neutral (default)</h4>
-              <p class="delivery">energy=2, tension=2, valence=2, assertiveness=2, whisper=off</p>
+              <p class="delivery">energy=2, tension=2, valence=2, assertiveness=2</p>
               <p class="line">Please put the small blue box beside the kitchen window, then close the door behind you.</p>
               <audio controls preload="none" src="audio/max_neutral.mp3" aria-label="Max, neutral (default) delivery"></audio><a class="audio-link" href="audio/max_neutral.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="max-calm">
               <h4>Calm and soft</h4>
-              <p class="delivery">energy=1.8, tension=1, valence=2.5, assertiveness=2.1, whisper=off</p>
+              <p class="delivery">energy=1.8, tension=1, valence=2.5, assertiveness=2.1</p>
               <p class="line">Take a slow breath. There&#x27;s no rush tonight; the rain will keep the city quiet for a while.</p>
               <audio controls preload="none" src="audio/max_calm.mp3" aria-label="Max, calm and soft delivery"></audio><a class="audio-link" href="audio/max_calm.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="max-assertive">
               <h4>Assertive and quick</h4>
-              <p class="delivery">energy=2.6, tension=2.4, valence=2.1, assertiveness=2.8, whisper=off</p>
+              <p class="delivery">energy=2.6, tension=2.4, valence=2.1, assertiveness=2.8</p>
               <p class="line">Listen carefully. We leave at six, we stay together, and nobody goes back for the bags.</p>
               <audio controls preload="none" src="audio/max_assertive.mp3" aria-label="Max, assertive and quick delivery"></audio><a class="audio-link" href="audio/max_assertive.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="max-joyful">
               <h4>Joyful</h4>
-              <p class="delivery">energy=2.4, tension=2, valence=2.8, assertiveness=2.2, whisper=off</p>
+              <p class="delivery">energy=2.4, tension=2, valence=2.8, assertiveness=2.2</p>
               <p class="line">We actually did it! The whole street came out to watch, and nobody wanted the night to end!</p>
               <audio controls preload="none" src="audio/max_joyful.mp3" aria-label="Max, joyful delivery"></audio><a class="audio-link" href="audio/max_joyful.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="max-angry">
               <h4>Angry</h4>
-              <p class="delivery">energy=2.7, tension=3.1, valence=1.3, assertiveness=2.5, whisper=off</p>
+              <p class="delivery">energy=2.7, tension=3.1, valence=1.3, assertiveness=2.5</p>
               <p class="line">No. You don&#x27;t get to walk in here and change the rules again. Not after everything.</p>
               <audio controls preload="none" src="audio/max_angry.mp3" aria-label="Max, angry delivery"></audio><a class="audio-link" href="audio/max_angry.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="max-sad">
               <h4>Sad</h4>
-              <p class="delivery">energy=1.7, tension=1.7, valence=1.8, assertiveness=2, whisper=off</p>
+              <p class="delivery">energy=1.7, tension=1.5, valence=1.4, assertiveness=2</p>
               <p class="line">I kept the letter for years... I never opened it. Maybe I was afraid of what it would say.</p>
               <audio controls preload="none" src="audio/max_sad.mp3" aria-label="Max, sad delivery"></audio><a class="audio-link" href="audio/max_sad.mp3">Open audio file</a>
-            </article>
-            <article class="demo-card" id="max-whisper">
-              <h4>Whisper</h4>
-              <p class="delivery">energy=2, tension=2, valence=2, assertiveness=2, whisper=on</p>
-              <p class="line">Keep your voice down. The guard changes at four, and the side door is still unlocked.</p>
-              <audio controls preload="none" src="audio/max_whisper.mp3" aria-label="Max, whisper delivery"></audio><a class="audio-link" href="audio/max_whisper.mp3">Open audio file</a>
             </article>
           </div>
         </section>
@@ -671,45 +641,39 @@
           <div class="demo-grid">
             <article class="demo-card" id="orpheus-neutral">
               <h4>Neutral (default)</h4>
-              <p class="delivery">energy=2, tension=2, valence=2, assertiveness=2, whisper=off</p>
+              <p class="delivery">energy=2, tension=2, valence=2, assertiveness=2</p>
               <p class="line">Please put the small blue box beside the kitchen window, then close the door behind you.</p>
               <audio controls preload="none" src="audio/orpheus_neutral.mp3" aria-label="Orpheus, neutral (default) delivery"></audio><a class="audio-link" href="audio/orpheus_neutral.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="orpheus-calm">
               <h4>Calm and soft</h4>
-              <p class="delivery">energy=1.8, tension=1, valence=2.5, assertiveness=2.1, whisper=off</p>
+              <p class="delivery">energy=1.8, tension=1, valence=2.5, assertiveness=2.1</p>
               <p class="line">Take a slow breath. There&#x27;s no rush tonight; the rain will keep the city quiet for a while.</p>
               <audio controls preload="none" src="audio/orpheus_calm.mp3" aria-label="Orpheus, calm and soft delivery"></audio><a class="audio-link" href="audio/orpheus_calm.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="orpheus-assertive">
               <h4>Assertive and quick</h4>
-              <p class="delivery">energy=2.6, tension=2.4, valence=2.1, assertiveness=2.8, whisper=off</p>
+              <p class="delivery">energy=2.6, tension=2.4, valence=2.1, assertiveness=2.8</p>
               <p class="line">Listen carefully. We leave at six, we stay together, and nobody goes back for the bags.</p>
               <audio controls preload="none" src="audio/orpheus_assertive.mp3" aria-label="Orpheus, assertive and quick delivery"></audio><a class="audio-link" href="audio/orpheus_assertive.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="orpheus-joyful">
               <h4>Joyful</h4>
-              <p class="delivery">energy=2.4, tension=2, valence=2.8, assertiveness=2.2, whisper=off</p>
+              <p class="delivery">energy=2.4, tension=2, valence=2.8, assertiveness=2.2</p>
               <p class="line">We actually did it! The whole street came out to watch, and nobody wanted the night to end!</p>
               <audio controls preload="none" src="audio/orpheus_joyful.mp3" aria-label="Orpheus, joyful delivery"></audio><a class="audio-link" href="audio/orpheus_joyful.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="orpheus-angry">
               <h4>Angry</h4>
-              <p class="delivery">energy=2.7, tension=3.1, valence=1.3, assertiveness=2.5, whisper=off</p>
+              <p class="delivery">energy=2.7, tension=3.1, valence=1.3, assertiveness=2.5</p>
               <p class="line">No. You don&#x27;t get to walk in here and change the rules again. Not after everything.</p>
               <audio controls preload="none" src="audio/orpheus_angry.mp3" aria-label="Orpheus, angry delivery"></audio><a class="audio-link" href="audio/orpheus_angry.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="orpheus-sad">
               <h4>Sad</h4>
-              <p class="delivery">energy=1.7, tension=1.7, valence=1.8, assertiveness=2, whisper=off</p>
+              <p class="delivery">energy=1.7, tension=1.5, valence=1.4, assertiveness=2</p>
               <p class="line">I kept the letter for years... I never opened it. Maybe I was afraid of what it would say.</p>
               <audio controls preload="none" src="audio/orpheus_sad.mp3" aria-label="Orpheus, sad delivery"></audio><a class="audio-link" href="audio/orpheus_sad.mp3">Open audio file</a>
-            </article>
-            <article class="demo-card" id="orpheus-whisper">
-              <h4>Whisper</h4>
-              <p class="delivery">energy=2, tension=2, valence=2, assertiveness=2, whisper=on</p>
-              <p class="line">Keep your voice down. The guard changes at four, and the side door is still unlocked.</p>
-              <audio controls preload="none" src="audio/orpheus_whisper.mp3" aria-label="Orpheus, whisper delivery"></audio><a class="audio-link" href="audio/orpheus_whisper.mp3">Open audio file</a>
             </article>
           </div>
         </section>
@@ -718,45 +682,39 @@
           <div class="demo-grid">
             <article class="demo-card" id="rex-neutral">
               <h4>Neutral (default)</h4>
-              <p class="delivery">energy=2, tension=2, valence=2, assertiveness=2, whisper=off</p>
+              <p class="delivery">energy=2, tension=2, valence=2, assertiveness=2</p>
               <p class="line">Please put the small blue box beside the kitchen window, then close the door behind you.</p>
               <audio controls preload="none" src="audio/rex_neutral.mp3" aria-label="Rex, neutral (default) delivery"></audio><a class="audio-link" href="audio/rex_neutral.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="rex-calm">
               <h4>Calm and soft</h4>
-              <p class="delivery">energy=1.8, tension=1, valence=2.5, assertiveness=2.1, whisper=off</p>
+              <p class="delivery">energy=1.8, tension=1, valence=2.5, assertiveness=2.1</p>
               <p class="line">Take a slow breath. There&#x27;s no rush tonight; the rain will keep the city quiet for a while.</p>
               <audio controls preload="none" src="audio/rex_calm.mp3" aria-label="Rex, calm and soft delivery"></audio><a class="audio-link" href="audio/rex_calm.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="rex-assertive">
               <h4>Assertive and quick</h4>
-              <p class="delivery">energy=2.6, tension=2.4, valence=2.1, assertiveness=2.8, whisper=off</p>
+              <p class="delivery">energy=2.6, tension=2.4, valence=2.1, assertiveness=2.8</p>
               <p class="line">Listen carefully. We leave at six, we stay together, and nobody goes back for the bags.</p>
               <audio controls preload="none" src="audio/rex_assertive.mp3" aria-label="Rex, assertive and quick delivery"></audio><a class="audio-link" href="audio/rex_assertive.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="rex-joyful">
               <h4>Joyful</h4>
-              <p class="delivery">energy=2.4, tension=2, valence=2.8, assertiveness=2.2, whisper=off</p>
+              <p class="delivery">energy=2.4, tension=2, valence=2.8, assertiveness=2.2</p>
               <p class="line">We actually did it! The whole street came out to watch, and nobody wanted the night to end!</p>
               <audio controls preload="none" src="audio/rex_joyful.mp3" aria-label="Rex, joyful delivery"></audio><a class="audio-link" href="audio/rex_joyful.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="rex-angry">
               <h4>Angry</h4>
-              <p class="delivery">energy=2.7, tension=3.1, valence=1.3, assertiveness=2.5, whisper=off</p>
+              <p class="delivery">energy=2.7, tension=3.1, valence=1.3, assertiveness=2.5</p>
               <p class="line">No. You don&#x27;t get to walk in here and change the rules again. Not after everything.</p>
               <audio controls preload="none" src="audio/rex_angry.mp3" aria-label="Rex, angry delivery"></audio><a class="audio-link" href="audio/rex_angry.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="rex-sad">
               <h4>Sad</h4>
-              <p class="delivery">energy=1.7, tension=1.7, valence=1.8, assertiveness=2, whisper=off</p>
+              <p class="delivery">energy=1.7, tension=1.5, valence=1.4, assertiveness=2</p>
               <p class="line">I kept the letter for years... I never opened it. Maybe I was afraid of what it would say.</p>
               <audio controls preload="none" src="audio/rex_sad.mp3" aria-label="Rex, sad delivery"></audio><a class="audio-link" href="audio/rex_sad.mp3">Open audio file</a>
-            </article>
-            <article class="demo-card" id="rex-whisper">
-              <h4>Whisper</h4>
-              <p class="delivery">energy=2, tension=2, valence=2, assertiveness=2, whisper=on</p>
-              <p class="line">Keep your voice down. The guard changes at four, and the side door is still unlocked.</p>
-              <audio controls preload="none" src="audio/rex_whisper.mp3" aria-label="Rex, whisper delivery"></audio><a class="audio-link" href="audio/rex_whisper.mp3">Open audio file</a>
             </article>
           </div>
         </section>
@@ -765,45 +723,39 @@
           <div class="demo-grid">
             <article class="demo-card" id="scylla-neutral">
               <h4>Neutral (default)</h4>
-              <p class="delivery">energy=2, tension=2, valence=2, assertiveness=2, whisper=off</p>
+              <p class="delivery">energy=2, tension=2, valence=2, assertiveness=2</p>
               <p class="line">Please put the small blue box beside the kitchen window, then close the door behind you.</p>
               <audio controls preload="none" src="audio/scylla_neutral.mp3" aria-label="Scylla, neutral (default) delivery"></audio><a class="audio-link" href="audio/scylla_neutral.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="scylla-calm">
               <h4>Calm and soft</h4>
-              <p class="delivery">energy=1.8, tension=1, valence=2.5, assertiveness=2.1, whisper=off</p>
+              <p class="delivery">energy=1.8, tension=1, valence=2.5, assertiveness=2.1</p>
               <p class="line">Take a slow breath. There&#x27;s no rush tonight; the rain will keep the city quiet for a while.</p>
               <audio controls preload="none" src="audio/scylla_calm.mp3" aria-label="Scylla, calm and soft delivery"></audio><a class="audio-link" href="audio/scylla_calm.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="scylla-assertive">
               <h4>Assertive and quick</h4>
-              <p class="delivery">energy=2.6, tension=2.4, valence=2.1, assertiveness=2.8, whisper=off</p>
+              <p class="delivery">energy=2.6, tension=2.4, valence=2.1, assertiveness=2.8</p>
               <p class="line">Listen carefully. We leave at six, we stay together, and nobody goes back for the bags.</p>
               <audio controls preload="none" src="audio/scylla_assertive.mp3" aria-label="Scylla, assertive and quick delivery"></audio><a class="audio-link" href="audio/scylla_assertive.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="scylla-joyful">
               <h4>Joyful</h4>
-              <p class="delivery">energy=2.4, tension=2, valence=2.8, assertiveness=2.2, whisper=off</p>
+              <p class="delivery">energy=2.4, tension=2, valence=2.8, assertiveness=2.2</p>
               <p class="line">We actually did it! The whole street came out to watch, and nobody wanted the night to end!</p>
               <audio controls preload="none" src="audio/scylla_joyful.mp3" aria-label="Scylla, joyful delivery"></audio><a class="audio-link" href="audio/scylla_joyful.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="scylla-angry">
               <h4>Angry</h4>
-              <p class="delivery">energy=2.7, tension=3.1, valence=1.3, assertiveness=2.5, whisper=off</p>
+              <p class="delivery">energy=2.7, tension=3.1, valence=1.3, assertiveness=2.5</p>
               <p class="line">No. You don&#x27;t get to walk in here and change the rules again. Not after everything.</p>
               <audio controls preload="none" src="audio/scylla_angry.mp3" aria-label="Scylla, angry delivery"></audio><a class="audio-link" href="audio/scylla_angry.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="scylla-sad">
               <h4>Sad</h4>
-              <p class="delivery">energy=1.7, tension=1.7, valence=1.8, assertiveness=2, whisper=off</p>
+              <p class="delivery">energy=1.7, tension=1.5, valence=1.4, assertiveness=2</p>
               <p class="line">I kept the letter for years... I never opened it. Maybe I was afraid of what it would say.</p>
               <audio controls preload="none" src="audio/scylla_sad.mp3" aria-label="Scylla, sad delivery"></audio><a class="audio-link" href="audio/scylla_sad.mp3">Open audio file</a>
-            </article>
-            <article class="demo-card" id="scylla-whisper">
-              <h4>Whisper</h4>
-              <p class="delivery">energy=2, tension=2, valence=2, assertiveness=2, whisper=on</p>
-              <p class="line">Keep your voice down. The guard changes at four, and the side door is still unlocked.</p>
-              <audio controls preload="none" src="audio/scylla_whisper.mp3" aria-label="Scylla, whisper delivery"></audio><a class="audio-link" href="audio/scylla_whisper.mp3">Open audio file</a>
             </article>
           </div>
         </section>
@@ -812,45 +764,39 @@
           <div class="demo-grid">
             <article class="demo-card" id="stone-neutral">
               <h4>Neutral (default)</h4>
-              <p class="delivery">energy=2, tension=2, valence=2, assertiveness=2, whisper=off</p>
+              <p class="delivery">energy=2, tension=2, valence=2, assertiveness=2</p>
               <p class="line">Please put the small blue box beside the kitchen window, then close the door behind you.</p>
               <audio controls preload="none" src="audio/stone_neutral.mp3" aria-label="Stone, neutral (default) delivery"></audio><a class="audio-link" href="audio/stone_neutral.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="stone-calm">
               <h4>Calm and soft</h4>
-              <p class="delivery">energy=1.8, tension=1, valence=2.5, assertiveness=2.1, whisper=off</p>
+              <p class="delivery">energy=1.8, tension=1, valence=2.5, assertiveness=2.1</p>
               <p class="line">Take a slow breath. There&#x27;s no rush tonight; the rain will keep the city quiet for a while.</p>
               <audio controls preload="none" src="audio/stone_calm.mp3" aria-label="Stone, calm and soft delivery"></audio><a class="audio-link" href="audio/stone_calm.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="stone-assertive">
               <h4>Assertive and quick</h4>
-              <p class="delivery">energy=2.6, tension=2.4, valence=2.1, assertiveness=2.8, whisper=off</p>
+              <p class="delivery">energy=2.6, tension=2.4, valence=2.1, assertiveness=2.8</p>
               <p class="line">Listen carefully. We leave at six, we stay together, and nobody goes back for the bags.</p>
               <audio controls preload="none" src="audio/stone_assertive.mp3" aria-label="Stone, assertive and quick delivery"></audio><a class="audio-link" href="audio/stone_assertive.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="stone-joyful">
               <h4>Joyful</h4>
-              <p class="delivery">energy=2.4, tension=2, valence=2.8, assertiveness=2.2, whisper=off</p>
+              <p class="delivery">energy=2.4, tension=2, valence=2.8, assertiveness=2.2</p>
               <p class="line">We actually did it! The whole street came out to watch, and nobody wanted the night to end!</p>
               <audio controls preload="none" src="audio/stone_joyful.mp3" aria-label="Stone, joyful delivery"></audio><a class="audio-link" href="audio/stone_joyful.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="stone-angry">
               <h4>Angry</h4>
-              <p class="delivery">energy=2.7, tension=3.1, valence=1.3, assertiveness=2.5, whisper=off</p>
+              <p class="delivery">energy=2.7, tension=3.1, valence=1.3, assertiveness=2.5</p>
               <p class="line">No. You don&#x27;t get to walk in here and change the rules again. Not after everything.</p>
               <audio controls preload="none" src="audio/stone_angry.mp3" aria-label="Stone, angry delivery"></audio><a class="audio-link" href="audio/stone_angry.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="stone-sad">
               <h4>Sad</h4>
-              <p class="delivery">energy=1.7, tension=1.7, valence=1.8, assertiveness=2, whisper=off</p>
+              <p class="delivery">energy=1.7, tension=1.5, valence=1.4, assertiveness=2</p>
               <p class="line">I kept the letter for years... I never opened it. Maybe I was afraid of what it would say.</p>
               <audio controls preload="none" src="audio/stone_sad.mp3" aria-label="Stone, sad delivery"></audio><a class="audio-link" href="audio/stone_sad.mp3">Open audio file</a>
-            </article>
-            <article class="demo-card" id="stone-whisper">
-              <h4>Whisper</h4>
-              <p class="delivery">energy=2, tension=2, valence=2, assertiveness=2, whisper=on</p>
-              <p class="line">Keep your voice down. The guard changes at four, and the side door is still unlocked.</p>
-              <audio controls preload="none" src="audio/stone_whisper.mp3" aria-label="Stone, whisper delivery"></audio><a class="audio-link" href="audio/stone_whisper.mp3">Open audio file</a>
             </article>
           </div>
         </section>
@@ -859,45 +805,39 @@
           <div class="demo-grid">
             <article class="demo-card" id="tuesday-neutral">
               <h4>Neutral (default)</h4>
-              <p class="delivery">energy=2, tension=2, valence=2, assertiveness=2, whisper=off</p>
+              <p class="delivery">energy=2, tension=2, valence=2, assertiveness=2</p>
               <p class="line">Please put the small blue box beside the kitchen window, then close the door behind you.</p>
               <audio controls preload="none" src="audio/tuesday_neutral.mp3" aria-label="Tuesday, neutral (default) delivery"></audio><a class="audio-link" href="audio/tuesday_neutral.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="tuesday-calm">
               <h4>Calm and soft</h4>
-              <p class="delivery">energy=1.8, tension=1, valence=2.5, assertiveness=2.1, whisper=off</p>
+              <p class="delivery">energy=1.8, tension=1, valence=2.5, assertiveness=2.1</p>
               <p class="line">Take a slow breath. There&#x27;s no rush tonight; the rain will keep the city quiet for a while.</p>
               <audio controls preload="none" src="audio/tuesday_calm.mp3" aria-label="Tuesday, calm and soft delivery"></audio><a class="audio-link" href="audio/tuesday_calm.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="tuesday-assertive">
               <h4>Assertive and quick</h4>
-              <p class="delivery">energy=2.6, tension=2.4, valence=2.1, assertiveness=2.8, whisper=off</p>
+              <p class="delivery">energy=2.6, tension=2.4, valence=2.1, assertiveness=2.8</p>
               <p class="line">Listen carefully. We leave at six, we stay together, and nobody goes back for the bags.</p>
               <audio controls preload="none" src="audio/tuesday_assertive.mp3" aria-label="Tuesday, assertive and quick delivery"></audio><a class="audio-link" href="audio/tuesday_assertive.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="tuesday-joyful">
               <h4>Joyful</h4>
-              <p class="delivery">energy=2.4, tension=2, valence=2.8, assertiveness=2.2, whisper=off</p>
+              <p class="delivery">energy=2.4, tension=2, valence=2.8, assertiveness=2.2</p>
               <p class="line">We actually did it! The whole street came out to watch, and nobody wanted the night to end!</p>
               <audio controls preload="none" src="audio/tuesday_joyful.mp3" aria-label="Tuesday, joyful delivery"></audio><a class="audio-link" href="audio/tuesday_joyful.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="tuesday-angry">
               <h4>Angry</h4>
-              <p class="delivery">energy=2.7, tension=3.1, valence=1.3, assertiveness=2.5, whisper=off</p>
+              <p class="delivery">energy=2.7, tension=3.1, valence=1.3, assertiveness=2.5</p>
               <p class="line">No. You don&#x27;t get to walk in here and change the rules again. Not after everything.</p>
               <audio controls preload="none" src="audio/tuesday_angry.mp3" aria-label="Tuesday, angry delivery"></audio><a class="audio-link" href="audio/tuesday_angry.mp3">Open audio file</a>
             </article>
             <article class="demo-card" id="tuesday-sad">
               <h4>Sad</h4>
-              <p class="delivery">energy=1.7, tension=1.7, valence=1.8, assertiveness=2, whisper=off</p>
+              <p class="delivery">energy=1.7, tension=1.5, valence=1.4, assertiveness=2</p>
               <p class="line">I kept the letter for years... I never opened it. Maybe I was afraid of what it would say.</p>
               <audio controls preload="none" src="audio/tuesday_sad.mp3" aria-label="Tuesday, sad delivery"></audio><a class="audio-link" href="audio/tuesday_sad.mp3">Open audio file</a>
-            </article>
-            <article class="demo-card" id="tuesday-whisper">
-              <h4>Whisper</h4>
-              <p class="delivery">energy=2, tension=2, valence=2, assertiveness=2, whisper=on</p>
-              <p class="line">Keep your voice down. The guard changes at four, and the side door is still unlocked.</p>
-              <audio controls preload="none" src="audio/tuesday_whisper.mp3" aria-label="Tuesday, whisper delivery"></audio><a class="audio-link" href="audio/tuesday_whisper.mp3">Open audio file</a>
             </article>
           </div>
         </section>

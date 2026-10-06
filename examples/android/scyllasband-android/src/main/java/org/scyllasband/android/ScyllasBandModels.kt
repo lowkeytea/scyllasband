@@ -29,7 +29,8 @@ enum class ScyllasBandAccelerator(internal val code: Int) {
 }
 
 /**
- * Four continuous delivery axes on 0-4 (2 is neutral) plus whisper. [spec] is the ABI delivery string.
+ * Four continuous delivery axes on 0-4 (2 is neutral). [spec] is the ABI delivery string. [whisper] is no longer supported by
+ * the runtime and is ignored.
  */
 data class ScyllasBandDelivery(
     val energy: Float = NEUTRAL,
@@ -46,12 +47,11 @@ data class ScyllasBandDelivery(
 
     fun spec(): String = String.format(
         Locale.US,
-        "energy=%s,tension=%s,valence=%s,assertiveness=%s,whisper=%s",
+        "energy=%s,tension=%s,valence=%s,assertiveness=%s",
         format(energy),
         format(tension),
         format(valence),
         format(assertiveness),
-        if (whisper) "on" else "off",
     )
 
     companion object {

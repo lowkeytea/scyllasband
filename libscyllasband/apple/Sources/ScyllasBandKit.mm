@@ -115,9 +115,8 @@ NSString *format_value(float value) {
 }
 
 - (NSString *)specification {
-    return [NSString stringWithFormat:@"energy=%@,tension=%@,valence=%@,assertiveness=%@,whisper=%@", format_value(self.energy),
-                                      format_value(self.tension), format_value(self.valence), format_value(self.assertiveness),
-                                      self.whisper ? @"on" : @"off"];
+    return [NSString stringWithFormat:@"energy=%@,tension=%@,valence=%@,assertiveness=%@", format_value(self.energy),
+                                      format_value(self.tension), format_value(self.valence), format_value(self.assertiveness)];
 }
 
 - (id)copyWithZone:(NSZone *)zone {

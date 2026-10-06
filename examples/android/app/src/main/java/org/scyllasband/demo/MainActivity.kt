@@ -674,7 +674,7 @@ class MainActivity : AppCompatActivity() {
         const val MARKER_TEXT = "\uFFFC"
         const val PLAYBACK_SEED = 31_415L
 
-        // CPU: on the Galaxy Z Fold 8 it runs at about 0.11x real time, and LiteRT's GPU accelerator either
+        // CPU: on the Galaxy Z Fold 8 it runs about 27 times faster than real time, and LiteRT's GPU accelerator either
         // fails (AUTO falls back to the CPU) or hangs (GPU). See the README.
         val ACCELERATOR = ScyllasBandAccelerator.CPU
         const val STATE_DOCUMENT = "speaker_document"

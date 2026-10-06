@@ -177,7 +177,7 @@ def stream_cases() -> dict:
         ("slow", text("ab. ab. ab. ab. ab. ab."), 2.0),
         ("short paragraphs", text("ab.\n\nab."), 1.0),
         ("short records", [dict(text="ab.", voice="scylla"), dict(text="ab.", voice="scylla")], 1.0),
-        ("chains", [dict(text="ab.", voice="scylla"), dict(text="ab.", voice="scylla", delivery="whisper=on")], 1.0),
+        ("chains", [dict(text="ab.", voice="scylla"), dict(text="ab.", voice="scylla", delivery="energy=3")], 1.0),
         ("long paragraph", text("ab ab. ab ab.\n\nab ab."), 1.0),
         ("clauses", text("ab ab, ab ab ab; ab ab: ab ab ab, ab. ab ab ab ab, ab ab ab ab ab. ab, ab ab ab ab ab ab, ab ab."), 1.0),
         ("clauses fast", text("ab ab, ab ab ab; ab ab: ab ab ab, ab. ab ab ab ab, ab ab ab ab ab. ab, ab ab ab ab ab ab, ab ab."), 0.5),

@@ -25,8 +25,8 @@ class SynthesisRequest:
     language: str | None = None
     delivery: Mapping[str, Any] | str | None = None
     speed: float = 1.0
-    steps: int | None = None          # bundle default (8)
-    sampler: str | None = None        # bundle default (heun)
+    steps: int | None = None          # bundle default (4)
+    sampler: str | None = None        # bundle default (euler)
     seed: int | None = None
     temperature: float = 1.0
     normalize_text: bool = True

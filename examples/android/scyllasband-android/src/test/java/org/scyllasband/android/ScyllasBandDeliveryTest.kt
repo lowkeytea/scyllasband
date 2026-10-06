@@ -6,9 +6,9 @@ import org.junit.Test
 
 class ScyllasBandDeliveryTest {
     @Test
-    fun neutralSpecIsAllTwosWithWhisperOff() {
+    fun neutralSpecIsAllTwos() {
         assertEquals(
-            "energy=2,tension=2,valence=2,assertiveness=2,whisper=off",
+            "energy=2,tension=2,valence=2,assertiveness=2",
             ScyllasBandDelivery().spec(),
         )
     }
@@ -18,7 +18,7 @@ class ScyllasBandDeliveryTest {
         val delivery = ScyllasBandDelivery(energy = 3.3f, tension = 0.8f, valence = 3.5f, assertiveness = 4f, whisper = true)
 
         assertEquals(
-            "energy=3.3,tension=0.8,valence=3.5,assertiveness=4,whisper=on",
+            "energy=3.3,tension=0.8,valence=3.5,assertiveness=4",
             delivery.spec(),
         )
     }

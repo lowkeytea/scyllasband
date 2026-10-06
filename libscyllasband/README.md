@@ -33,7 +33,7 @@ to another. For each target:
    each side from the neighbouring text, and the target's frames are rounded to integers;
 2. per-frame phone ids and text events (punctuation, word starts, stress and length marks, phone phase,
    sentence type) are built;
-3. the flow integrates noise to latents with Heun (default) or Euler steps in the smallest fitting
+3. the flow integrates noise to latents with Euler (default, 4 steps) or Heun steps in the smallest fitting
    latent-frame bucket, conditioned on the span and on the last 96 latent frames already spoken;
 4. the vocoder decodes the target with up to 48 frames of the preceding latents as left context, so
    consecutive targets form one continuous waveform with no inserted pauses or crossfades.
@@ -64,7 +64,7 @@ ScyllasBandRequest request;
 scyllasband_request_init(&request);
 request.text = "Did you really leave the gate open all night?";
 request.voice_id = "scylla";
-request.delivery = "energy=2.5,tension=2,valence=2,assertiveness=2,whisper=off";
+request.delivery = "energy=2.5,tension=2,valence=2,assertiveness=2";
 request.seed = 2027;
 request.has_seed = 1;
 
@@ -92,9 +92,9 @@ Request fields:
 | --- | --- |
 | `text`, `voice_id` | Required. |
 | `language` | `NULL` or `en`: the voice's own English dialect; otherwise one of the voice's languages. |
-| `delivery` | `NULL`/`neutral`, `auto`, or `energy=…,tension=…,valence=…,assertiveness=…,whisper=on/off/auto`; axes 0–4, 2 neutral, `auto` per axis. Omitted axes stay neutral. |
+| `delivery` | `NULL`/`neutral`, `auto`, or `energy=…,tension=…,valence=…,assertiveness=…`; axes 0–4, 2 neutral, `auto` per axis. Omitted axes stay neutral. |
 | `speed` | Duration scale; 1 is the model's own pace. |
-| `steps`, `sampler` | Flow steps (0: bundle default 8) and Heun or Euler. |
+| `steps`, `sampler` | Flow steps (0: the bundle default, 4) and sampler (default: the bundle's, Euler). |
 | `seed`, `has_seed` | Sentence *i* of the plan draws its noise from `seed + i`; without a seed every request differs. |
 | `temperature` | Noise scale (1 = default). |
 | `normalize_text` | Expand numbers, dates, times, currency, symbols and abbreviations before G2P. |
@@ -160,7 +160,7 @@ library from the directory of `libLiteRt` and run the ops it supports on the GPU
 
 ```bash
 build/litert/scyllasband_speak --bundle ../scyllasband/models/litert --voice ink \
-    --delivery energy=2.4,whisper=off --seed 2027 \
+    --delivery energy=2.4 --seed 2027 \
     --text "Keep this between us." --output keep.wav --metadata keep.json
 ```
 

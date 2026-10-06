@@ -54,8 +54,8 @@ class StreamingEvent:
 
 @dataclass
 class StreamOptions:
-    steps: int = 8
-    sampler: str = "heun"
+    steps: int = 4                 # the released bundles' defaults; ScyllasBandRuntime.stream_options reads them from the manifest
+    sampler: str = "euler"
     speed: float = 1.0
     seed: int | None = None
     temperature: float = 1.0
