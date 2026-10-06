@@ -1,7 +1,7 @@
 # Scylla's Band iOS sample
 
 This SwiftUI sample speaks multi-voice, multilingual documents on iPhone,
-iPad and Apple Vision Pro with Scylla's Band v2 (release `v2-20261005`). It
+iPad and Apple Vision Pro with Scylla's Band v2 (release `v2-20261006`). It
 uses Apple's Core ML runtime on iOS 18–26 and visionOS 2–26, and Core AI on
 iOS and visionOS 27 and later. It keeps one warmed
 `SBScyllasBand` runtime, reads voices and languages from the bundle at run

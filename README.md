@@ -125,29 +125,33 @@ python -m scyllasband plan --voice scylla "Print the sentence plan as JSON."
 
 | Bundle | Used on | Download | Runtime package |
 | --- | --- | --- | --- |
-| Core ML | Apple silicon Macs (macOS 15 and later); iOS and iPadOS 18 apps | 142 MB | `coremltools`, installed the first time a Core ML bundle runs (or `pip install -e ".[coreml]"`) |
+| Core ML | Apple silicon Macs (macOS 15 and later); iOS and iPadOS 18 and visionOS 2 apps | 142 MB | `coremltools`, installed the first time a Core ML bundle runs (or `pip install -e ".[coreml]"`) |
 | Core AI | iOS, iPadOS and visionOS 27 apps; also runs on macOS 27 | 155 MB | `coreai-core`, installed the first time a Core AI bundle runs (or `pip install -e ".[coreai]"`) |
 | LiteRT | Linux, Windows, Android and Intel Macs | 164 MB | `ai-edge-litert` (installed with this package) |
-| ONNX Runtime | anywhere ONNX Runtime runs | 250 MB | `onnxruntime`, installed the first time you use `--backend onnx` (or `pip install -e ".[onnx]"`) |
+| ONNX Runtime | anywhere ONNX Runtime runs | 262 MB | `onnxruntime`, installed the first time you use `--backend onnx` (or `pip install -e ".[onnx]"`) |
 
-`python -m scyllasband download` fetches the Core ML bundle on an Apple silicon Mac and the LiteRT bundle elsewhere. A Mac that can build apps for iOS, iPadOS or visionOS 27 (macOS 27, or an Xcode with those SDKs) is also offered the Core AI bundle those apps use; the Mac itself keeps running Core ML. `--flavor` downloads a particular bundle. Commands use the installed bundle for the machine; `--backend` and `--bundle` select another, for example `--backend coreai` on macOS 27. Every bundle holds INT8 weights for the transformers and the G2P; LiteRT, Core ML and Core AI also quantize the vocoder. `--threads` sets the CPU threads per graph. Sampling uses Heun with 8 steps by default (`--sampler`, `--steps`).
+`python -m scyllasband download` fetches the Core ML bundle on an Apple silicon Mac and the LiteRT bundle elsewhere. A Mac that can build apps for iOS, iPadOS or visionOS 27 (macOS 27, or an Xcode with those SDKs) is also offered the Core AI bundle those apps use; the Mac itself keeps running Core ML. `--flavor` downloads a particular bundle. Commands use the installed bundle for the machine; `--backend` and `--bundle` select another, for example `--backend coreai` on macOS 27. Every bundle holds INT8 weights for the transformers and the G2P; LiteRT, Core ML and Core AI also quantize the vocoder. `--threads` sets the CPU threads per graph. Sampling uses Euler with 4 steps by default (`--sampler`, `--steps`).
 
 On Core ML and Core AI, `--compute-units` chooses where the graphs run: `auto` (the bundle's recommendation: the GPU), `gpu`, `cpu`, or `ane`, which runs the graphs the bundle marks as accurate on the Neural Engine there (Core AI's flow) and the rest on the CPU. iOS does not allow GPU work from background apps, so an app that keeps speaking in the background uses `ane` (Core AI) or `cpu`. The first load of a Core AI bundle specializes its graphs for the device (a few seconds on the GPU, about half a minute for the Neural Engine); the system caches that until the next OS update.
 
-Measured with the native runtime on a three-sentence passage (11.6 s of speech); first audio is the first sentence:
+Measured with the native runtime on a three-sentence passage (11.6 s of speech) with the default sampler. First run is the first launch after installing the bundle (when Core AI specializes its graphs), cold start a later launch, warm first audio a later request on a loaded runtime, and real-time speed the seconds of audio generated per second when warm. The [model card](https://huggingface.co/spybyscript/scyllasband) describes the measurements.
 
-| Device | Bundle (compute units) | Launch to first audio | Warm first audio | Real-time factor | Peak memory |
-| --- | --- | --- | --- | --- | --- |
-| iPhone 17 Pro Max | Core AI (GPU) | 0.96 s | 244 ms | 0.063 | 320 MB |
-| iPhone 17 Pro Max | Core AI (Neural Engine + CPU) | 0.86 s | 390 ms | 0.10 | 215 MB |
-| iPhone 17 Pro Max | Core ML (GPU) | 1.9 s | 210 ms | 0.06 | 220 MB |
-| iPhone 17 Pro Max | Core ML (CPU) | 1.05 s | 760 ms | 0.20 | 330 MB |
-| Galaxy Z Fold 8 | LiteRT (CPU) | 1.6 s | 450 ms | 0.12 | |
-| M5 Max Mac | Core AI (GPU) | 0.43 s | 73 ms | 0.019 | 444 MB |
-| M5 Max Mac | Core ML (GPU) | 1.3 s | 59 ms | 0.015 | 350 MB |
-| M5 Max Mac | LiteRT (CPU) | 1.0 s | 371 ms | 0.098 | 768 MB |
-
-Launch to first audio is a new process with the Core AI specialization already cached; warm is a later request on a loaded runtime.
+| Device | Bundle | Compute | First run | Cold start | Warm first audio | Real-time speed |
+| --- | --- | --- | --- | --- | --- | --- |
+| MacBook Pro, M5 Max (macOS 27) | Core ML | GPU (default) | 2.44 s | 1.29 s | 24 ms | ~220× |
+|  | Core ML | CPU | 1.82 s | 0.28 s | 192 ms | ~25× |
+|  | Core AI | GPU (default) | 5.33 s | 0.42 s | 28 ms | ~200× |
+|  | Core AI | Neural Engine | 25.3 s | 0.50 s | 310 ms | ~18× |
+|  | Core AI | CPU | 2.49 s | 0.82 s | 746 ms | ~6.3× |
+|  | LiteRT | CPU | 0.76 s | 0.74 s | 142 ms | ~34× |
+|  | ONNX Runtime | CPU | 0.84 s | 0.89 s | 200 ms | ~24× |
+| iPhone 17 Pro Max (iOS 27.0.1) | Core ML | GPU (default) | 2.79 s | 1.43 s | 63 ms | ~85× |
+|  | Core ML | CPU | 2.04 s | 0.35 s | 240 ms | ~20× |
+|  | Core AI | GPU (default) | 6.49 s | 0.42 s | 58 ms | ~92× |
+|  | Core AI | Neural Engine | 27.8 s | 0.58 s | 370 ms | ~15× |
+|  | Core AI | CPU | 3.30 s | 0.96 s | 882 ms | ~5.2× |
+| Galaxy Z Fold 8, Snapdragon SM8850 (Android 17) | LiteRT | CPU | 1.60 s | 1.32 s | 178 ms | ~27× |
+|  | ONNX Runtime | CPU | 1.90 s | 1.48 s | 375 ms | ~12× |
 
 ## Python API
 

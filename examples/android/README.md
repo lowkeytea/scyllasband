@@ -70,7 +70,7 @@ This links `libscyllasband` against ONNX Runtime 1.30.0 (`onnxruntime-android`) 
 
 `ScyllasBand.initialize(threadCount, accelerator)` takes `CPU`, `GPU` or `AUTO`. The sample uses `CPU` (XNNPACK, up to 4 threads), the default.
 
-CPU is fast enough: on a Galaxy Z Fold 8 (Snapdragon SM8850) two fixed sentences synthesize in about 0.7 s each (6.2 s and 6.1 s of audio, first audio 0.3-0.7 s, real-time factor about 0.11-0.13). The LiteRT GPU accelerator (OpenCL/OpenGL, `libLiteRtClGlAccelerator.so`) did not help there with this model: it cannot run the INT64 `CAST`/`ADD` and `GATHER_ND` ops, so graphs are split across the GPU and CPU, and
+CPU is fast enough: on a Galaxy Z Fold 8 (Snapdragon SM8850) the native runtime speaks a three-sentence passage (11.6 s of audio) with first audio about 1.3 s after launch and 180 ms once warm, about 27 times faster than real time. The LiteRT GPU accelerator (OpenCL/OpenGL, `libLiteRtClGlAccelerator.so`) did not help there with this model: it cannot run the INT64 `CAST`/`ADD` and `GATHER_ND` ops, so graphs are split across the GPU and CPU, and
 - `AUTO` fails at the first invoke (`LITERT_OPENGL failed to invoke`, status 3, in the warmup). `initialize` then recreates the runtime on the CPU, so `AUTO` always ends up usable but only ever gives CPU speed here;
 - `GPU` failed to build a delegate kernel on the Adreno (`Unable to parse bc coord for BATCH axis`) and initialization never finished.
 
