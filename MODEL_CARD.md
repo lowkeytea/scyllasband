@@ -81,6 +81,32 @@ The flow is distilled for few-step sampling: it was trained to reproduce the bas
 
 Long text is spoken as passages within the trained target lengths (64 to 420 latent frames, about 1.4 to 9 seconds): a short first passage so audio starts quickly, then passages as long as the text allows, cut at a sentence end, else a clause, else between words, and measured with the requested delivery. Each passage sees the surrounding text as context and continues from the acoustics of the one before it, and consecutive passages are decoded as one continuous waveform. Durations are predicted deterministically; different controls can alter them.
 
+## Performance
+
+Measured through the native runtime with the default sampler (Euler, 4 steps): `scyllasband_speak` from [libscyllasband](https://github.com/lowkeytea/scyllasband/tree/main/libscyllasband) on the Mac and Android, and the [iOS sample](https://github.com/lowkeytea/scyllasband/tree/main/examples/ios)'s benchmark mode on the iPhone. The text is three sentences, 11.6 s of audio: "The last train leaves at midnight, so pack light. Bring a warm coat, and don't forget the map. If we miss it, we walk, and nobody wants to walk that far in the rain." (voice Scylla, seed 7). Each configuration runs four requests in a fresh process. Warm first audio and the real-time factor (generation time divided by audio duration; lower is faster) are medians of requests two to four. Launch to first audio runs from process start, including loading the bundle, to the first audio of the first request, on a launch after the first. Speed-up compares the real-time factor with v2-20261005 (Heun, 8 steps), measured the same way on the same device and runtime.
+
+| Device | Bundle | Compute | Warm first audio | Launch to first audio | Real-time factor | Peak memory | Speed-up |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| MacBook Pro, M5 Max (macOS 27) | Core ML | GPU (default) | 24 ms | 1.29 s | 0.0045 | 356 MB | 2.6× |
+| | Core ML | CPU | 192 ms | 0.29 s | 0.040 | 559 MB | 3.0× |
+| | Core AI | GPU (default) | 28 ms | 0.43 s | 0.0050 | 452 MB | 2.4× |
+| | Core AI | Neural Engine | 310 ms | 0.50 s | 0.055 | 184 MB | 1.3× |
+| | Core AI | CPU | 746 ms | 0.82 s | 0.16 | 52 MB | 3.1× |
+| | LiteRT | CPU | 142 ms | 0.74 s | 0.029 | 799 MB | 2.8× |
+| | ONNX Runtime | CPU | 200 ms | 0.89 s | 0.041 | 781 MB | 2.8× |
+| iPhone 17 Pro Max (iOS 27.0.1) | Core ML | GPU (default) | 63 ms | 1.43 s | 0.012 | 244 MB | 2.7× |
+| | Core ML | CPU | 240 ms | 0.35 s | 0.051 | 556 MB | 3.1× |
+| | Core AI | GPU (default) | 58 ms | 0.42 s | 0.011 | 327 MB | 2.9× |
+| | Core AI | Neural Engine | 370 ms | 0.59 s | 0.066 | 214 MB | 1.3× |
+| | Core AI | CPU | 882 ms | 0.96 s | 0.19 | 53 MB | 3.1× |
+| Galaxy Z Fold 8, Snapdragon SM8850 (Android 17) | LiteRT | CPU | 178 ms | 1.32 s | 0.037 | 938 MB | 2.7× |
+| | ONNX Runtime | CPU | 375 ms | 1.48 s | 0.082 | 1,019 MB | 2.6× |
+
+- Compared with v2-20261005, first audio arrives 2.4 to 3 times sooner. For example, Core AI on the iPhone's GPU went from 172 to 58 ms, and LiteRT on the Fold from 461 to 178 ms.
+- The Neural Engine placement runs the flow on the Neural Engine and the other graphs on the CPU. It is meant for apps that speak in the background, where iOS does not allow GPU work. Its CPU graphs dominate, so the shorter flow helps it less.
+- The first launch after installing the app or updating the OS is slower. Core AI specializes its graphs for the device and caches them: first audio took 6.5 s on the iPhone's GPU and 28 s with the Neural Engine placement, and 5.3 s and 25 s on the Mac. Core ML's first launch took 2.8 s on the iPhone and 2.4 s on the Mac. Core ML also reloads its graphs on every launch, about 1.3 to 1.4 s on the GPU.
+- Peak memory is the process's peak footprint on Apple platforms and its peak resident memory on Android, which counts the mapped model files.
+
 ## Voices and language coverage
 
 Ten voices: Ariadne, Felix, Gwen, Ink, Max, Orpheus, Rex, Scylla, Stone, Tuesday.
@@ -92,7 +118,7 @@ All ten have Spanish (`es`), Italian (`it`), French (`fr`), German (`de`) and Vi
 - `litert/` (164 MB): LiteRT bundle; default download. Transformer and vocoder weights are dynamic-range INT8; each size bucket is a signature of one model file, sharing weights.
 - `coreai/` (155 MB): Core AI bundle for apps on iOS, iPadOS and visionOS 27 (`.aimodel` assets); it also runs on macOS 27, where the runtime uses the Core ML bundle by default. INT8 weights per output channel with FP16 compute; size buckets are functions of one asset sharing weights. The flow also runs accurately on the Neural Engine (`controls.coreai.neural_engine_assets`), which is the placement for apps that speak in the background; the GPU is the default.
 - `coreml/` (142 MB): Core ML bundle for Apple silicon with iOS 18 / visionOS 2 / macOS 15 and later (compiled `.mlmodelc` assets), with INT8 weights and FP16 compute; GPU by default, CPU in background apps.
-- `onnx/`: ONNX Runtime bundle with dynamic INT8 transformer weights; the vocoder stays in full precision.
+- `onnx/` (262 MB): ONNX Runtime bundle with dynamic INT8 transformer weights; the vocoder stays in full precision.
 - `pytorch/`: duration, vector, adapter/vocoder and G2P weights (no training state), with the release configuration assets.
 - `SHA256SUMS.json`: published-file hashes.
 
