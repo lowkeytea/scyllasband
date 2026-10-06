@@ -81,7 +81,7 @@ cmake -S libscyllasband -B build/apple -G Ninja \
 cmake --build build/apple
 
 build/apple/scyllasband_speak --bundle scyllasband/models/coreml \
-  --voice ariadne --delivery energy=2.4,tension=2,valence=2.8,assertiveness=2.2 --accelerator gpu \
+  --voice ariadne --delivery energy=2.3,tension=2,valence=2.2,assertiveness=2.2 --accelerator gpu \
   --text "Hello from Core ML." --output /tmp/scyllasband.wav
 ```
 

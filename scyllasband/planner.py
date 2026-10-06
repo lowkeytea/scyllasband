@@ -117,7 +117,7 @@ def records_from_text(text: str, *, voice: str, language: str | None, delivery: 
     return [dict(text=text, voice=voice, language=language, delivery=delivery)]
 
 
-# --- group-speak markup: "[voice]", "[voice:language]", "[voice:language:energy=2.3,valence=2.8]", "[language]" ----
+# --- group-speak markup: "[voice]", "[voice:language]", "[voice:language:energy=2.3,valence=2.2]", "[language]" ----
 GROUP_TAG_RE = re.compile(r"\[([-A-Za-z0-9_.,:=]+)\]")
 GROUP_LANGUAGE_TAGS = frozenset({"en", "en_us", "en_gb", "es", "it", "de", "fr", "vi"})
 

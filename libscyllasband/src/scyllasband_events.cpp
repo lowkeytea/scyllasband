@@ -13,6 +13,7 @@ namespace scyllasband {
 
 const char* const kSilencePhone = "<sil>";
 const char* const kDeliveryAxes[4] = {"energy", "tension", "valence", "assertiveness"};
+const double kDeliveryRanges[4][2] = {{1.4, 2.3}, {1.0, 2.4}, {1.4, 2.2}, {1.8, 2.4}};
 
 namespace {
 
@@ -285,7 +286,7 @@ Delivery Delivery::parse(const char* spec) {
         double number = 0.0;
         if (!python_float(*raw, number)) throw std::invalid_argument("Delivery " + key + " must be a number in [0, 4] or auto");
         if (!std::isfinite(number) || number < 0.0 || number > 4.0) throw std::invalid_argument("Delivery " + key + " must be finite and within [0, 4]");
-        out.axes[index] = number;
+        out.axes[index] = std::min(std::max(number, kDeliveryRanges[index][0]), kDeliveryRanges[index][1]);
     }
     return out;
 }

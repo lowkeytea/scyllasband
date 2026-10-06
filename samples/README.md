@@ -13,8 +13,8 @@ The script reads `samples/gallery_script.json` and writes `docs/index.html`, `do
 
 ## Long form
 
-- [Single-voice narration](https://lowkeytea.github.io/scyllasband/#narration) (5:05), from `data/test_document.txt`
-- [Multi-voice multilingual dialogue](https://lowkeytea.github.io/scyllasband/#dialogue) (1:42), from `data/walkthrough_demo.txt`
+- [Single-voice narration](https://lowkeytea.github.io/scyllasband/#narration) (5:09), from `data/test_document.txt`
+- [Multi-voice multilingual dialogue](https://lowkeytea.github.io/scyllasband/#dialogue) (1:44), from `data/walkthrough_demo.txt`
 
 ## Languages
 
@@ -40,8 +40,8 @@ Every voice speaks each line below in its own English, with the settings shown.
 | Delivery | Settings | Line |
 | --- | --- | --- |
 | Neutral (default) | `energy=2,tension=2,valence=2,assertiveness=2` | Please put the small blue box beside the kitchen window, then close the door behind you. |
-| Calm and soft | `energy=1.8,tension=1,valence=2.5,assertiveness=2.1` | Take a slow breath. There's no rush tonight; the rain will keep the city quiet for a while. |
-| Assertive and quick | `energy=2.6,tension=2.4,valence=2.1,assertiveness=2.8` | Listen carefully. We leave at six, we stay together, and nobody goes back for the bags. |
-| Joyful | `energy=2.4,tension=2,valence=2.8,assertiveness=2.2` | We actually did it! The whole street came out to watch, and nobody wanted the night to end! |
-| Angry | `energy=2.7,tension=3.1,valence=1.3,assertiveness=2.5` | No. You don't get to walk in here and change the rules again. Not after everything. |
+| Calm and soft | `energy=1.8,tension=1,valence=2.2,assertiveness=2.1` | Take a slow breath. There's no rush tonight; the rain will keep the city quiet for a while. |
+| Assertive and quick | `energy=2.3,tension=2.4,valence=2.1,assertiveness=2.4` | Listen carefully. We leave at six, we stay together, and nobody goes back for the bags. |
+| Joyful | `energy=2.3,tension=2,valence=2.2,assertiveness=2.2` | We actually did it! The whole street came out to watch, and nobody wanted the night to end! |
+| Angry | `energy=2.3,tension=2.4,valence=1.4,assertiveness=2.4` | No. You don't get to walk in here and change the rules again. Not after everything. |
 | Sad | `energy=1.7,tension=1.5,valence=1.4,assertiveness=2` | I kept the letter for years... I never opened it. Maybe I was afraid of what it would say. |

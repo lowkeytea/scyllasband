@@ -79,7 +79,7 @@ def _add_synthesis_args(parser: argparse.ArgumentParser, *, group: bool) -> None
                                                 "per graph, e.g. gpu,g2p=cpu")
     parser.add_argument("--voice", default=None if group else "scylla")
     parser.add_argument("--language")
-    parser.add_argument("--delivery", help="e.g. energy=2.5,tension=2,valence=3,assertiveness=2; neutral; auto")
+    parser.add_argument("--delivery", help="e.g. energy=2.3,tension=2,valence=2.2,assertiveness=2; neutral; auto")
     parser.add_argument("--speed", type=float, default=1.0)
     parser.add_argument("--steps", type=int)
     parser.add_argument("--sampler", choices=SUPPORTED_SAMPLERS)
