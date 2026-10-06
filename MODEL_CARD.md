@@ -95,7 +95,7 @@ All ten have Spanish (`es`), Italian (`it`), French (`fr`), German (`de`) and Vi
 - `coreai/` (155 MB): Core AI bundle for apps on iOS, iPadOS and visionOS 27 (`.aimodel` assets); it also runs on macOS 27, where the runtime uses the Core ML bundle by default. INT8 weights per output channel with FP16 compute; size buckets are functions of one asset sharing weights. The flow also runs accurately on the Neural Engine (`controls.coreai.neural_engine_assets`), which is the placement for apps that speak in the background; the GPU is the default.
 - `coreml/` (142 MB): Core ML bundle for Apple silicon with iOS 18 / macOS 15 and later (compiled `.mlmodelc` assets), with INT8 weights and FP16 compute; GPU by default, CPU in background apps.
 - `onnx/`: ONNX Runtime bundle with dynamic INT8 transformer weights; the vocoder stays in full precision.
-- `pytorch/`: duration, vector, adapter/vocoder, autoencoder and G2P checkpoints, with the release configuration assets.
+- `pytorch/`: duration, vector, adapter/vocoder and G2P weights (no training state), with the release configuration assets.
 - `SHA256SUMS.json`: published-file hashes.
 
 Every runtime bundle includes the G2P model in a matching precision. The Apple bundles also give the G2P narrower input widths (64–512 tokens), so short phrases are converted faster.
@@ -117,4 +117,4 @@ The system supports managed voices, not arbitrary speaker cloning. Intended uses
 
 ## License and acknowledgments
 
-Apache 2.0. LiteRT and ONNX Runtime provide inference; Vocos (`charactr/vocos-mel-24khz`) is the base of the 24 kHz waveform decoder. DeepPhonemizer-derived tooling, Wiktionary-derived vocabulary, eSpeak phonemization and Montreal Forced Aligner contributed to the frontend and alignment workflow.
+Apache 2.0. LiteRT and ONNX Runtime provide inference; Vocos (`charactr/vocos-mel-24khz`) is the base of the 24 kHz waveform decoder. DeepPhonemizer-derived tooling, Wiktionary-derived vocabulary, eSpeak phonemization and Montreal Forced Aligner contributed to the frontend and alignment workflow. Vocos and DeepPhonemizer are MIT-licensed; their notices are in `THIRD_PARTY_NOTICES.md`.
