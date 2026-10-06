@@ -19,7 +19,7 @@ Install the [runtime](https://github.com/lowkeytea/scyllasband) (`pip install -e
 ```bash
 python -m scyllasband download --yes
 python -m scyllasband speak --voice ariadne --language en_us \
-    --delivery energy=2.3,tension=1.7,valence=2.6,assertiveness=2 \
+    --delivery energy=2.3,tension=1.7,valence=2.2,assertiveness=2 \
     -o hello.wav "It is a pleasure to meet you."
 ```
 
@@ -29,7 +29,10 @@ The default download is the Core ML bundle on an Apple silicon Mac and the LiteR
 
 | Input | Values | Default |
 | --- | --- | --- |
-| Energy, tension, valence, assertiveness | 0–4 or unspecified | 2 each |
+| Energy | 1.4–2.3 or unspecified | 2 |
+| Tension | 1.0–2.4 or unspecified | 2 |
+| Valence | 1.4–2.2 or unspecified | 2 |
+| Assertiveness | 1.8–2.4 or unspecified | 2 |
 
 With every control at 2, the default, voices speak in a calm, conversational delivery with a neutral tone. Raising or lowering a control changes the delivery:
 
@@ -40,19 +43,19 @@ With every control at 2, the default, voices speak in a calm, conversational del
 | Valence | Flatter, more downcast pitch | Livelier pitch, a little quicker, shorter pauses |
 | Assertiveness | More pauses between phrases | Faster and clipped with fewer pauses; the strongest control over pace |
 
-The model learned delivery mostly from settings between about 1.7 and 2.8 for energy, 1.9 and 3.0 for valence, 1.8 and 2.7 for assertiveness, and 1.0 and 3.1 for tension. The controls are most reliable inside those ranges; further out, voices can sound strained or a style can become ambiguous.
+Requests use the 0–4 scale, and the runtime clamps each control into its supported range, where the voices render most reliably: energy 1.4–2.3, tension 1.0–2.4, valence 1.4–2.2 and assertiveness 1.8–2.4. Small changes inside these ranges are clearly audible, and over longer text the voices vary their delivery with the content on their own.
 
 Combining the controls gives familiar deliveries:
 
 | Delivery | Settings |
 | --- | --- |
-| Calm and soft | `energy=1.8,tension=1,valence=2.5,assertiveness=2.1` |
-| Assertive and quick | `energy=2.6,tension=2.4,valence=2.1,assertiveness=2.8` |
-| Joyful | `energy=2.4,tension=2,valence=2.8,assertiveness=2.2` |
-| Angry | `energy=2.7,tension=3.1,valence=1.3,assertiveness=2.5` |
+| Calm and soft | `energy=1.8,tension=1,valence=2.2,assertiveness=2.1` |
+| Assertive and quick | `energy=2.3,tension=2.4,valence=2.1,assertiveness=2.4` |
+| Joyful | `energy=2.3,tension=2,valence=2.2,assertiveness=2.2` |
+| Angry | `energy=2.3,tension=2.4,valence=1.4,assertiveness=2.4` |
 | Sad | `energy=1.7,tension=1.5,valence=1.4,assertiveness=2` |
 
-Angry and sad take valence a little below the trained range so that they separate clearly from joyful and calm. These are moderate styles; how strongly each comes through varies with voice, language and text. The [voice gallery](https://lowkeytea.github.io/scyllasband/#delivery) plays each of them for all ten voices.
+These are moderate styles; how strongly each comes through varies with voice, language and text. The [voice gallery](https://lowkeytea.github.io/scyllasband/#delivery) plays each of them for all ten voices.
 
 `--delivery auto` omits all coordinates. A per-axis `auto` omits just that coordinate; other unspecified fields in a partial request use neutral defaults. Omission is represented by a separate mask, not by the value 2. It is not an automatic text-to-performance planner.
 

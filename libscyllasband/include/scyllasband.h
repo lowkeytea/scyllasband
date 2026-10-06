@@ -64,8 +64,8 @@ typedef struct {
     const char* voice_id;
     const char* language;     /* NULL or "": the voice's default language ("en" also selects it) */
     /* NULL, "" or "neutral": neutral delivery. "auto": unconditioned. Otherwise axis=value pairs, e.g.
-       "energy=2.5,tension=2,valence=2,assertiveness=2": axes on 0-4 (2 = neutral) or "auto";
-       omitted axes stay neutral. */
+       "energy=2.2,tension=2,valence=2,assertiveness=2": axes on 0-4 (2 = neutral) or "auto", clamped into the supported
+       ranges (energy 1.4-2.3, tension 1.0-2.4, valence 1.4-2.2, assertiveness 1.8-2.4); omitted axes stay neutral. */
     const char* delivery;
     float speed;              /* duration scale; 1.0 = the model's own pace; must be positive */
     int32_t steps;            /* flow steps; 0 = bundle default (8) */

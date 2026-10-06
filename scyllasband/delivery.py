@@ -1,12 +1,14 @@
 """Delivery requests: energy, tension, valence and assertiveness on 0-4 (2 = neutral).
 
-The graphs keep a fifth delivery input from training (whisper); it is always sent as off."""
+Requests on the 0-4 scale are clamped into each axis's supported range (DELIVERY_RANGES), where the model renders
+reliably. The graphs keep a fifth delivery input from training (whisper); it is always sent as off."""
 from __future__ import annotations
 
 import math
 from typing import Any, Mapping
 
 DELIVERY_AXES = ("energy", "tension", "valence", "assertiveness")
+DELIVERY_RANGES = {"energy": (1.4, 2.3), "tension": (1.0, 2.4), "valence": (1.4, 2.2), "assertiveness": (1.8, 2.4)}
 
 
 def resolve_delivery(value: Mapping[str, Any] | str | None = None) -> dict[str, Any]:
@@ -44,7 +46,8 @@ def resolve_delivery(value: Mapping[str, Any] | str | None = None) -> dict[str, 
             raise ValueError(f"Delivery {axis} must be a number in [0, 4] or auto") from exc
         if not math.isfinite(number) or not 0 <= number <= 4:
             raise ValueError(f"Delivery {axis} must be finite and within [0, 4]")
-        result[axis] = number
+        low, high = DELIVERY_RANGES[axis]
+        result[axis] = min(max(number, low), high)
     return result
 
 

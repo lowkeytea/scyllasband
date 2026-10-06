@@ -64,7 +64,7 @@ ScyllasBandRequest request;
 scyllasband_request_init(&request);
 request.text = "Did you really leave the gate open all night?";
 request.voice_id = "scylla";
-request.delivery = "energy=2.5,tension=2,valence=2,assertiveness=2";
+request.delivery = "energy=2.3,tension=2,valence=2,assertiveness=2";
 request.seed = 2027;
 request.has_seed = 1;
 
@@ -92,7 +92,7 @@ Request fields:
 | --- | --- |
 | `text`, `voice_id` | Required. |
 | `language` | `NULL` or `en`: the voice's own English dialect; otherwise one of the voice's languages. |
-| `delivery` | `NULL`/`neutral`, `auto`, or `energy=…,tension=…,valence=…,assertiveness=…`; axes 0–4, 2 neutral, `auto` per axis. Omitted axes stay neutral. |
+| `delivery` | `NULL`/`neutral`, `auto`, or `energy=…,tension=…,valence=…,assertiveness=…`; axes on the 0–4 scale (2 neutral), clamped into energy 1.4–2.3, tension 1.0–2.4, valence 1.4–2.2, assertiveness 1.8–2.4; `auto` per axis. Omitted axes stay neutral. |
 | `speed` | Duration scale; 1 is the model's own pace. |
 | `steps`, `sampler` | Flow steps (0: the bundle default, 4) and sampler (default: the bundle's, Euler). |
 | `seed`, `has_seed` | Sentence *i* of the plan draws its noise from `seed + i`; without a seed every request differs. |
@@ -160,7 +160,7 @@ library from the directory of `libLiteRt` and run the ops it supports on the GPU
 
 ```bash
 build/litert/scyllasband_speak --bundle ../scyllasband/models/litert --voice ink \
-    --delivery energy=2.4 --seed 2027 \
+    --delivery energy=2.3 --seed 2027 \
     --text "Keep this between us." --output keep.wav --metadata keep.json
 ```
 

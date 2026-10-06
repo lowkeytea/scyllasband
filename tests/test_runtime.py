@@ -11,7 +11,7 @@ import numpy as np
 
 from scyllasband.contract import (BundleError, CONTEXT_INPUTS, DURATION_INPUTS, GRAPH_CONTRACT, VECTOR_INPUTS, VOCODER_INPUTS,
                                   validate_bundle_layout)
-from scyllasband.delivery import delivery_tensors, resolve_delivery
+from scyllasband.delivery import DELIVERY_AXES, DELIVERY_RANGES, delivery_tensors, resolve_delivery
 from scyllasband.engine import Engine, OverlongError, Sentence, balanced_context
 from scyllasband.events import frame_events, frames_to_durations, modifier_bits, sentence_types
 from scyllasband.g2p import punctuated_segments
@@ -129,11 +129,11 @@ class PlannerTest(unittest.TestCase):
         self.assertEqual(split_for_retry("Well, one two three four five six", min_share=0.25), ["Well, one two", "three four five six"])
 
     def test_chains_follow_voice_language_and_delivery(self):
-        records = parse_group_lines("[scylla:en_us] Hi there. How are you?\n[ink:en_gb:energy=3] Fine. [scylla] Good.",
+        records = parse_group_lines("[scylla:en_us] Hi there. How are you?\n[ink:en_gb:energy=2.2] Fine. [scylla] Good.",
                                     default_voice=None, default_language=None)
         plan = plan_records(records, resolve_language=lambda voice, language: language or "en_us", normalize=False)
         self.assertEqual([c.chain_id for c in plan.chunks], ["chain_001", "chain_001", "chain_002", "chain_003"])
-        self.assertEqual(plan.chunks[2].delivery["energy"], 3.0)
+        self.assertEqual(plan.chunks[2].delivery["energy"], 2.2)
 
 
 class DeliveryTest(unittest.TestCase):
@@ -143,8 +143,19 @@ class DeliveryTest(unittest.TestCase):
         self.assertEqual(values[0, :4].tolist(), [0, 0, 0, 0])
         values, present, _ = delivery_tensors("auto")
         self.assertFalse(present[0, :4].any())
-        self.assertEqual(resolve_delivery("energy=3")["energy"], 3.0)
+        self.assertEqual(resolve_delivery("energy=2.1")["energy"], 2.1)
         self.assertEqual(resolve_delivery(""), resolve_delivery(None))
+
+    def test_requests_are_clamped_into_the_supported_ranges(self):
+        high = resolve_delivery("energy=4,tension=3.1,valence=2.8,assertiveness=2.5")
+        low = resolve_delivery("energy=0,tension=0.5,valence=1.3,assertiveness=1")
+        self.assertEqual([high[a] for a in DELIVERY_AXES], [DELIVERY_RANGES[a][1] for a in DELIVERY_AXES])
+        self.assertEqual([low[a] for a in DELIVERY_AXES], [DELIVERY_RANGES[a][0] for a in DELIVERY_AXES])
+        self.assertEqual(resolve_delivery("energy=auto")["energy"], None)
+        for low_value, high_value in DELIVERY_RANGES.values():
+            self.assertTrue(low_value <= 2.0 <= high_value)   # neutral stays reachable on every axis
+        with self.assertRaisesRegex(ValueError, "within \\[0, 4\\]"):
+            resolve_delivery("energy=5")
 
     def test_whisper_input_is_always_off(self):
         for spec in (None, "auto", "energy=3,valence=1"):

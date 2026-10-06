@@ -6,7 +6,7 @@ Delivery is controlled with **energy, tension, valence and assertiveness**, each
 
 ## Samples and community
 
-- **[Listen to the voice gallery](https://lowkeytea.github.io/scyllasband/)**: every voice in all six languages, six delivery styles per voice, a long-form narration and a ten-voice dialogue.
+- **[Listen to the voice gallery](https://lowkeytea.github.io/scyllasband/)**: every voice in all six languages, six delivery styles per voice, a long-form narration and a nine-voice dialogue.
 - The [sample index](samples/README.md) lists every clip with the settings used, and `samples/generate_gallery.py` regenerates them.
 - Join the [Scylla's Band Discord](https://discord.gg/cNdBuM3tS) for release updates, help, and community discussion.
 
@@ -48,12 +48,12 @@ The model is downloaded from [`spybyscript/scyllasband`](https://huggingface.co/
 
 ## Delivery controls
 
-| Control | Request | Default |
+| Control | Supported range | Default |
 | --- | --- | --- |
-| Energy | 0–4 or `auto` | 2 |
-| Tension | 0–4 or `auto` | 2 |
-| Valence | 0–4 or `auto` | 2 |
-| Assertiveness | 0–4 or `auto` | 2 |
+| Energy | 1.4–2.3 or `auto` | 2 |
+| Tension | 1.0–2.4 or `auto` | 2 |
+| Valence | 1.4–2.2 or `auto` | 2 |
+| Assertiveness | 1.8–2.4 or `auto` | 2 |
 
 With every control at 2, the default, voices speak in a calm, conversational delivery with a neutral tone. Raising or lowering a control changes the delivery:
 
@@ -64,23 +64,23 @@ With every control at 2, the default, voices speak in a calm, conversational del
 | Valence | Flatter, more downcast pitch | Livelier pitch, a little quicker, shorter pauses |
 | Assertiveness | More pauses between phrases | Faster and clipped with fewer pauses; the strongest control over pace |
 
-The model learned delivery mostly from settings between about 1.7 and 2.8 for energy, 1.9 and 3.0 for valence, 1.8 and 2.7 for assertiveness, and 1.0 and 3.1 for tension. The controls are most reliable inside those ranges; further out, voices can sound strained or a style can become ambiguous.
+Requests use the 0–4 scale, and the runtime clamps each control into its supported range, where the voices render most reliably: energy 1.4–2.3, tension 1.0–2.4, valence 1.4–2.2 and assertiveness 1.8–2.4. Small changes inside these ranges are clearly audible, and over longer text the voices vary their delivery with the content on their own.
 
 Combining the controls gives familiar deliveries:
 
 | Delivery | Settings |
 | --- | --- |
-| Calm and soft | `energy=1.8,tension=1,valence=2.5,assertiveness=2.1` |
-| Assertive and quick | `energy=2.6,tension=2.4,valence=2.1,assertiveness=2.8` |
-| Joyful | `energy=2.4,tension=2,valence=2.8,assertiveness=2.2` |
-| Angry | `energy=2.7,tension=3.1,valence=1.3,assertiveness=2.5` |
+| Calm and soft | `energy=1.8,tension=1,valence=2.2,assertiveness=2.1` |
+| Assertive and quick | `energy=2.3,tension=2.4,valence=2.1,assertiveness=2.4` |
+| Joyful | `energy=2.3,tension=2,valence=2.2,assertiveness=2.2` |
+| Angry | `energy=2.3,tension=2.4,valence=1.4,assertiveness=2.4` |
 | Sad | `energy=1.7,tension=1.5,valence=1.4,assertiveness=2` |
 
-Angry and sad take valence a little below the trained range so that they separate clearly from joyful and calm. These are moderate styles; how strongly each comes through varies with voice, language and text. The [voice gallery](https://lowkeytea.github.io/scyllasband/#delivery) plays each of them for all ten voices.
+These are moderate styles; how strongly each comes through varies with voice, language and text. The [voice gallery](https://lowkeytea.github.io/scyllasband/#delivery) plays each of them for all ten voices.
 
 ```bash
 python -m scyllasband speak --voice ariadne \
-    --delivery energy=2.4,tension=2,valence=2.8,assertiveness=2.2 \
+    --delivery energy=2.3,tension=2,valence=2.2,assertiveness=2.2 \
     -o joyful.wav "We actually did it! The whole street came out to watch!"
 
 python -m scyllasband speak --voice ink --language en_gb \
@@ -98,7 +98,7 @@ python -m scyllasband list-voices
 python -m scyllasband normalize-text --language es "Cuesta 12,50 € el 22/05/2026."
 
 python -m scyllasband speak --voice gwen --language en_us \
-    --delivery energy=1.8,tension=1,valence=2.5 -o calm.wav "Take a slow breath."
+    --delivery energy=1.8,tension=1,valence=2.2 -o calm.wav "Take a slow breath."
 python -m scyllasband speak --voice rex --file data/test_document.txt --metadata story.json -o story.wav
 python -m scyllasband group-speak --file data/walkthrough_demo.txt --pause-ms 250 -o dialogue.wav
 python -m scyllasband stream --voice scylla --file data/test_document.txt -o chunks/
@@ -163,7 +163,7 @@ result = runtime.synthesize(SynthesisRequest(
     text="It is a real pleasure to meet you.",
     voice_id="ariadne",
     language="en_us",
-    delivery={"energy": 2.3, "tension": 1.7, "valence": 2.6, "assertiveness": 2.0},
+    delivery={"energy": 2.3, "tension": 1.7, "valence": 2.2, "assertiveness": 2.0},
     seed=2027,
 ))
 # result.audio (float32 numpy array), result.sample_rate, result.metadata
@@ -177,7 +177,7 @@ Long text is spoken in passages. The first is short, ending at the first sentenc
 
 ```bash
 python -m scyllasband speak --voice ariadne --file story.txt \
-    --delivery energy=2.2,valence=2.3 --metadata story.json -o story.wav
+    --delivery energy=2.2,valence=2.2 --metadata story.json -o story.wav
 
 python -m scyllasband stream --voice scylla --file story.txt -o chunks/
 
@@ -187,9 +187,9 @@ python -m scyllasband group-speak --file dialogue.txt -o dialogue.wav
 A dialogue file sets the voice, language and controls per tagged span:
 
 ```text
-[ariadne:en_us:energy=2.3,valence=2.5] Good to see you. [es] Me alegra verte.
-[rex:en_us:tension=2.6,assertiveness=2.5] We should get going.
-[ink:en_gb:energy=1.8,tension=1,valence=2.5,assertiveness=2.1] Keep this between us.
+[ariadne:en_us:energy=2.3,valence=2.2] Good to see you. [es] Me alegra verte.
+[rex:en_us:tension=2.4,assertiveness=2.4] We should get going.
+[ink:en_gb:energy=1.8,tension=1,valence=2.2,assertiveness=2.1] Keep this between us.
 ```
 
 Language tags keep the active delivery request. A new delivery tag replaces it, with unspecified coordinates reset to neutral. `--pause-ms` adds silence where the voice, language or delivery changes.

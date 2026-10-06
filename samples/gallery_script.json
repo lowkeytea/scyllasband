@@ -44,25 +44,25 @@
     {
       "id": "calm",
       "title": "Calm and soft",
-      "delivery": "energy=1.8,tension=1,valence=2.5,assertiveness=2.1",
+      "delivery": "energy=1.8,tension=1,valence=2.2,assertiveness=2.1",
       "line": "Take a slow breath. There's no rush tonight; the rain will keep the city quiet for a while."
     },
     {
       "id": "assertive",
       "title": "Assertive and quick",
-      "delivery": "energy=2.6,tension=2.4,valence=2.1,assertiveness=2.8",
+      "delivery": "energy=2.3,tension=2.4,valence=2.1,assertiveness=2.4",
       "line": "Listen carefully. We leave at six, we stay together, and nobody goes back for the bags."
     },
     {
       "id": "joyful",
       "title": "Joyful",
-      "delivery": "energy=2.4,tension=2,valence=2.8,assertiveness=2.2",
+      "delivery": "energy=2.3,tension=2,valence=2.2,assertiveness=2.2",
       "line": "We actually did it! The whole street came out to watch, and nobody wanted the night to end!"
     },
     {
       "id": "angry",
       "title": "Angry",
-      "delivery": "energy=2.7,tension=3.1,valence=1.3,assertiveness=2.5",
+      "delivery": "energy=2.3,tension=2.4,valence=1.4,assertiveness=2.4",
       "line": "No. You don't get to walk in here and change the rules again. Not after everything."
     },
     {
@@ -78,17 +78,17 @@
       "title": "Single-voice narration",
       "voice": "scylla",
       "language": "en_us",
-      "delivery": "energy=2.3,tension=2,valence=2.6,assertiveness=2",
+      "delivery": "energy=2.3,tension=2,valence=2.2,assertiveness=2",
       "file": "data/test_document.txt",
       "summary": "Scratchwick the squirrel faces Shelley the racing snail in a woodland dance battle, with dates, prices, counts and tongue twisters carried through one continuous narration."
     },
     {
       "id": "dialogue",
       "title": "Multi-voice multilingual dialogue",
-      "file": "data/walkthrough_demo.txt",
+      "file": "data/walkthrough_2nd.txt",
       "group": true,
       "pause_ms": 250,
-      "summary": "All ten voices introduce the release, moving between English, German, French, Vietnamese, Spanish and Italian while the delivery changes line by line."
+      "summary": "Nine voices introduce the release and its speed on phones, then move between English, German, French, Vietnamese, Spanish and Italian while the delivery changes line by line."
     }
   ]
 }
