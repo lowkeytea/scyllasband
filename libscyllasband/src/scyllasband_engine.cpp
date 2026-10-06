@@ -6,9 +6,10 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
-#include <deque>
 #include <filesystem>
+#include <iterator>
 #include <random>
+#include <set>
 
 namespace scyllasband {
 
@@ -85,7 +86,9 @@ void gaussian_noise(uint64_t seed, int64_t count, float temperature, float* out)
 // ---------------------------------------------------------------------------------------------------------------
 // Engine
 
-Engine::Engine(const BackendOptions& options) : backend_(make_backend(options)), bundle_dir_(options.bundle_dir) {
+Engine::Engine(const BackendOptions& options) : Engine(options, make_backend(options)) {}
+
+Engine::Engine(const BackendOptions& options, std::unique_ptr<Backend> backend) : backend_(std::move(backend)), bundle_dir_(options.bundle_dir) {
     const std::filesystem::path manifest_path = std::filesystem::path(bundle_dir_) / "manifest.json";
     if (!std::filesystem::is_regular_file(manifest_path)) throw std::invalid_argument("No manifest.json in " + bundle_dir_);
     manifest_ = Json::parse_file(manifest_path.string());
@@ -520,27 +523,11 @@ Plan plan_text(Engine& engine, const SynthesisOptions& options) {
 
 namespace {
 
-// The phones of `chunk` plus up to the context budget of neighbouring phones from the same chain: from the spoken chunks
-// before it and the pending chunks after the first `skip`.
-Sentence chunk_sentence(Engine& engine, const PlanChunk& chunk, const std::vector<PlanChunk>& spoken, const std::deque<PlanChunk>& pending,
-                        std::size_t skip) {
-    Phonemized phonemized = engine.phonemize(chunk.text, chunk.language);
-    Sentence sentence{phonemized.phones, phonemized.word_starts, {}, {}};
-    for (auto it = spoken.rbegin(); it != spoken.rend(); ++it) {
-        if (it->chain_id != chunk.chain_id) continue;
-        if (sentence.before_ids.size() >= engine.context_phones()) break;
-        std::vector<int64_t> ids = engine.context_ids(engine.phonemize(it->text, it->language).phones);
-        sentence.before_ids.insert(sentence.before_ids.begin(), ids.begin(), ids.end());
-    }
-    for (std::size_t i = skip; i < pending.size(); ++i) {
-        const PlanChunk& next = pending[i];
-        if (next.chain_id != chunk.chain_id) continue;
-        if (sentence.after_ids.size() >= engine.context_phones()) break;
-        std::vector<int64_t> ids = engine.context_ids(engine.phonemize(next.text, next.language).phones);
-        sentence.after_ids.insert(sentence.after_ids.end(), ids.begin(), ids.end());
-    }
-    return sentence;
-}
+const std::set<std::string> kSentenceEnd = {"<end_stmt>", "<end_question>", "<end_exclaim>", "<ellipsis>"};
+const std::set<std::string> kClausePause = {"<pause_comma>", "<pause_semicolon>", "<pause_colon>", "<pause_dash>"};
+constexpr std::size_t kWindowPhones = 200;      // phones measured ahead to choose a target's end; past the trained maximum at any speed
+constexpr std::size_t kFirstWindowPhones = 48;  // the first target looks only this far ahead at first, so little text is phonemized early
+constexpr double kFillShare = 0.5;              // a later target prefers a sentence end in the upper half of the trained range
 
 int64_t total_frames(const std::vector<int>& durations) {
     int64_t frames = 0;
@@ -548,72 +535,285 @@ int64_t total_frames(const std::vector<int>& durations) {
     return frames;
 }
 
-bool joinable(const PlanChunk& chunk, const PlanChunk& following) {
-    return chunk.chain_id == following.chain_id && chunk.record_index == following.record_index && !chunk.paragraph_end;
-}
+// One plan sentence in its chain's phone stream.
+struct Piece {
+    const PlanChunk* chunk;
+    std::size_t start, end;                // stream positions of its leading and trailing silences
+    std::vector<std::size_t> word_phones;  // stream position of each word's first phone
+    int parts = 0;                         // targets that took part of the sentence so far
+};
+
+// One chain's sentences joined as connected text (one shared silence between sentences), phonemized only as far as the
+// targets and their context need. `cuts` maps the silences that can end a target to their kind.
+class ChainStream {
+public:
+    ChainStream(Engine& engine, std::vector<const PlanChunk*> chunks) : engine_(engine), chunks_(std::move(chunks)) {}
+
+    const PlanChunk& front() const { return *chunks_.front(); }
+    const std::vector<std::string>& phones() const { return phones_; }
+    const std::map<std::size_t, TargetCut>& cuts() const { return cuts_; }
+    bool complete() const { return pieces_.size() == chunks_.size(); }
+
+    void extend(std::size_t length) {
+        while (phones_.size() < length && !complete()) append(*chunks_[pieces_.size()]);
+    }
+
+    // Phonemizes until the context budget of phones (silences excluded) follows `end`, or the chain is complete.
+    void extend_context(std::size_t end) {
+        while (!complete() && spoken_after(end) < engine_.context_phones()) append(*chunks_[pieces_.size()]);
+    }
+
+    bool at_end(std::size_t index) {
+        extend(index + 2);
+        return complete() && index + 1 == phones_.size();
+    }
+
+    // The target [start, end] (silence to silence) with its context.
+    Sentence sentence(std::size_t start, std::size_t end) {
+        const std::size_t reach = engine_.context_phones();
+        extend_context(end);
+        std::size_t first_word = start;
+        while (first_word <= end && phones_[first_word] == kSilencePhone) ++first_word;
+        Sentence out;
+        out.phones.assign(phones_.begin() + static_cast<std::ptrdiff_t>(start), phones_.begin() + static_cast<std::ptrdiff_t>(end + 1));
+        for (std::size_t word : word_starts_) {
+            if (start < word && word <= end && word != first_word) out.word_starts.push_back(static_cast<int>(word - start));
+        }
+        out.before_ids = engine_.context_ids(slice(start > 3 * reach ? start - 3 * reach : 0, start));
+        if (out.before_ids.size() > reach) out.before_ids.erase(out.before_ids.begin(), out.before_ids.end() - static_cast<std::ptrdiff_t>(reach));
+        out.after_ids = engine_.context_ids(slice(end + 1, end + 1 + 3 * reach));
+        if (out.after_ids.size() > reach) out.after_ids.resize(reach);
+        return out;
+    }
+
+    // A plan chunk describing the target: its sentences' ids and text (part of a sentence gets `id.n`).
+    PlanChunk target_chunk(std::size_t start, std::size_t end) {
+        std::vector<std::string> labels, texts;
+        const Piece* last = nullptr;
+        for (Piece& piece : pieces_) {
+            if (piece.start >= end || piece.end <= start) continue;
+            last = &piece;
+            std::vector<std::size_t> inside;
+            for (std::size_t i = 0; i < piece.word_phones.size(); ++i) {
+                if (start < piece.word_phones[i] && piece.word_phones[i] < end) inside.push_back(i);
+            }
+            if (inside.size() == piece.word_phones.size()) {
+                labels.push_back(piece.chunk->chunk_id);
+                texts.push_back(piece.chunk->text);
+                continue;
+            }
+            piece.parts += 1;
+            labels.push_back(piece.chunk->chunk_id + "." + std::to_string(piece.parts));
+            const std::vector<Text> words = unicode::split_whitespace(unicode::decode(piece.chunk->text));
+            std::size_t from = 0, to = 0;
+            if (!inside.empty() && words.size() == piece.word_phones.size()) {
+                from = inside.front();
+                to = inside.back() + 1;
+            } else if (!inside.empty()) {  // the text's words do not line up with the G2P's: share them out evenly
+                const double share = static_cast<double>(words.size()) / static_cast<double>(std::max<std::size_t>(1, piece.word_phones.size()));
+                from = static_cast<std::size_t>(std::nearbyint(static_cast<double>(inside.front()) * share));
+                to = static_cast<std::size_t>(std::nearbyint(static_cast<double>(inside.back() + 1) * share));
+            }
+            std::string text;
+            for (std::size_t i = from; i < std::min(to, words.size()); ++i) text += (text.empty() ? "" : " ") + unicode::encode(words[i]);
+            texts.push_back(std::move(text));
+        }
+        if (last == nullptr) throw std::logic_error("Target outside its chain");
+        PlanChunk chunk = *last->chunk;
+        chunk.chunk_id = labels.size() == 1 ? labels.front() : labels.front() + "+" + labels.back();
+        chunk.text.clear();
+        for (const std::string& text : texts) {
+            if (!text.empty()) chunk.text += (chunk.text.empty() ? "" : " ") + text;
+        }
+        return chunk;
+    }
+
+private:
+    std::vector<std::string> slice(std::size_t from, std::size_t to) const {
+        to = std::min(to, phones_.size());
+        if (from >= to) return {};
+        return std::vector<std::string>(phones_.begin() + static_cast<std::ptrdiff_t>(from), phones_.begin() + static_cast<std::ptrdiff_t>(to));
+    }
+
+    std::size_t spoken_after(std::size_t end) const {
+        std::size_t count = 0;
+        for (std::size_t i = end + 1; i < phones_.size(); ++i) count += phones_[i] != kSilencePhone;
+        return count;
+    }
+
+    void append(const PlanChunk& chunk) {
+        const Phonemized result = engine_.phonemize(chunk.text, chunk.language);
+        const std::vector<std::string>& phones = result.phones;
+        const std::size_t base = phones_.empty() ? 0 : phones_.size() - 1;
+        if (!phones_.empty()) {
+            const PlanChunk& previous = *pieces_.back().chunk;
+            cuts_[base] = previous.paragraph_end || previous.record_index != chunk.record_index ? TargetCut::kParagraph : TargetCut::kSentence;
+            phones_.insert(phones_.end(), phones.begin() + 1, phones.end());
+        } else {
+            phones_.insert(phones_.end(), phones.begin(), phones.end());
+        }
+        std::size_t first = 0;
+        while (first < phones.size() && phones[first] == kSilencePhone) ++first;
+        Piece piece{&chunk, base, base + phones.size() - 1, {base + first}, 0};
+        if (!pieces_.empty()) word_starts_.push_back(base + first);
+        for (int word : result.word_starts) {
+            word_starts_.push_back(base + static_cast<std::size_t>(word));
+            piece.word_phones.push_back(base + static_cast<std::size_t>(word));
+        }
+        const std::set<int> candidates(result.word_boundary_candidates.begin(), result.word_boundary_candidates.end());
+        for (std::size_t j = 1; j + 1 < phones.size(); ++j) {
+            if (phones[j] != kSilencePhone) continue;
+            if (kSentenceEnd.count(phones[j - 1])) cuts_[base + j] = TargetCut::kSentence;
+            else if (kClausePause.count(phones[j - 1])) cuts_[base + j] = TargetCut::kClause;
+            else if (candidates.count(static_cast<int>(j))) cuts_[base + j] = TargetCut::kWord;
+        }
+        cuts_[base + phones.size() - 1] = TargetCut::kEnd;
+        pieces_.push_back(std::move(piece));
+    }
+
+    Engine& engine_;
+    std::vector<const PlanChunk*> chunks_;
+    std::vector<std::string> phones_;
+    std::vector<std::size_t> word_starts_;  // every word's first phone but the chain's first
+    std::map<std::size_t, TargetCut> cuts_;
+    std::vector<Piece> pieces_;
+};
 
 struct Target {
-    PlanChunk chunk;
+    std::size_t end = 0;
     Sentence sentence;
     std::vector<int> durations;
 };
 
-// The next target to synthesize, its sentence and durations. A target shorter than the model was trained on takes in the
-// following sentences of its paragraph, and a short last sentence of a paragraph joins the target before it, while the
-// joined target stays within the trained maximum. Joined sentences leave `pending`; the joined chunk keeps the last one's index.
-Target next_target(Engine& engine, const PlanChunk& chunk, const std::vector<PlanChunk>& spoken, std::deque<PlanChunk>& pending,
-                   const DeliveryTensors& delivery, double speed) {
+// The next target of `stream` from `start`: its end, sentence and durations.
+// A sentence end, a paragraph or record end, or the end of the chain: where the first target prefers to stop.
+bool ends_sentence(TargetCut kind) { return kind == TargetCut::kSentence || kind == TargetCut::kParagraph || kind == TargetCut::kEnd; }
+
+Target next_target(Engine& engine, ChainStream& stream, std::size_t start, bool first, const DeliveryTensors& delivery, double speed) {
     const int64_t shortest = engine.min_target_frames(), longest = engine.max_target_frames();
-    auto measure = [&](Target& target, std::size_t skip) {
-        target.sentence = chunk_sentence(engine, target.chunk, spoken, pending, skip);
-        target.durations = engine.durations(target.sentence, engine.voice_index(target.chunk.voice), engine.language_index(target.chunk.language),
-                                            delivery, speed);
+    const int64_t voice = engine.voice_index(stream.front().voice), language = engine.language_index(stream.front().language);
+    auto measure = [&](std::size_t end) {
+        Target target{end, stream.sentence(start, end), {}};
+        target.durations = engine.durations(target.sentence, voice, language, delivery, speed);
+        return target;
     };
-    Target target{chunk, {}, {}};
-    measure(target, 0);
-    while (!pending.empty() && joinable(target.chunk, pending.front())) {
-        const int64_t frames = total_frames(target.durations);
-        const bool last = pending.size() == 1 || !joinable(pending[0], pending[1]);
-        if (frames > longest || (frames >= shortest && !last)) break;
-        Target joined{pending.front(), {}, {}};
-        joined.chunk.chunk_id = target.chunk.chunk_id + "+" + joined.chunk.chunk_id;
-        joined.chunk.text = target.chunk.text + " " + joined.chunk.text;
-        try {
-            measure(joined, 1);
-        } catch (const OverlongError&) {
+    std::size_t window = first ? kFirstWindowPhones : kWindowPhones;
+    std::vector<TargetCandidate> stops;
+    while (true) {
+        stream.extend(start + window + 2);
+        const std::size_t last = std::min(stream.phones().size() - 1, start + window);
+        const auto next = stream.cuts().upper_bound(start);
+        if (next == stream.cuts().end()) throw std::logic_error("No silence ends the target");
+        stops.clear();
+        for (auto cut = next; cut != stream.cuts().end() && cut->first <= last; ++cut) stops.push_back({cut->first, cut->second, 0});
+        if (stops.empty()) stops.push_back({next->first, next->second, 0});  // no silence within the window: run to the next one
+        const bool no_sentence_end = std::none_of(stops.begin(), stops.end(), [](const TargetCandidate& c) { return ends_sentence(c.kind); });
+        if (first && window < kWindowPhones && !stream.at_end(stops.back().index) && no_sentence_end) {
+            window *= 2;  // no sentence end in view yet: widen before measuring
+            continue;
+        }
+        const Target measured = measure(stops.back().index);
+        int64_t reach = 0;
+        std::size_t position = start;
+        for (TargetCandidate& stop : stops) {
+            for (; position <= stop.index; ++position) reach += measured.durations[position - start];
+            stop.frames = reach;
+        }
+        // The first target widens its window until a sentence end past the minimum is in view.
+        if (!first || window >= kWindowPhones || stream.at_end(stops.back().index) ||
+            std::any_of(stops.begin(), stops.end(), [&](const TargetCandidate& c) { return ends_sentence(c.kind) && c.frames >= shortest; })) {
             break;
         }
-        const int64_t total = total_frames(joined.durations);
-        if (total > longest || (frames >= shortest && total - frames >= shortest)) break;
-        target = std::move(joined);
-        pending.pop_front();
+        window *= 2;
     }
-    return target;
+    std::vector<TargetCandidate> candidates;
+    for (const TargetCandidate& stop : stops) {  // a paragraph or record ends the target once it is long enough
+        candidates.push_back(stop);
+        if (stop.kind == TargetCut::kEnd || (stop.kind == TargetCut::kParagraph && stop.frames >= shortest)) break;
+    }
+    while (true) {
+        const std::size_t end = choose_target(candidates, first, shortest, longest);
+        Target target = measure(end);
+        std::vector<TargetCandidate> earlier;
+        for (const TargetCandidate& c : candidates) {
+            if (c.index < end) earlier.push_back(c);
+        }
+        if (total_frames(target.durations) <= longest || earlier.empty()) return target;
+        candidates = std::move(earlier);  // over the maximum: the furthest earlier boundary that fits
+        first = false;
+    }
 }
 
-// The pieces to speak instead of `text` when it is longer than the model was trained on (`frames` -1: more phones than
-// the span holds); empty to speak it as it is.
-std::vector<Text> retry_pieces(const Engine& engine, const std::string& text, int64_t frames) {
-    if (frames >= 0 && frames <= engine.max_target_frames()) return {};
-    try {
-        return split_for_retry(unicode::decode(text), frames > 0 ? static_cast<double>(engine.min_target_frames()) / static_cast<double>(frames) : 0.0);
-    } catch (const std::runtime_error&) {  // one word: the largest bucket still takes it
-        if (frames < 0) throw;
-        return {};
-    }
-}
+struct StreamSettings {
+    std::string sampler;
+    int steps;
+};
 
-}  // namespace
-
-Json synthesize_stream(Engine& engine, const SynthesisOptions& options, const std::function<bool(const StreamEvent&)>& emit,
-                       const ChunkNoiseFn& chunk_noise) {
+StreamSettings stream_settings(const Engine& engine, const SynthesisOptions& options) {
     std::string sampler = unicode::encode(unicode::lower(unicode::decode(options.sampler.empty() ? engine.default_sampler() : options.sampler)));
     if (sampler != "heun" && sampler != "euler") throw std::invalid_argument("Unsupported sampler '" + sampler + "'; choose one of heun, euler");
     if (!(options.speed > 0.0) || !std::isfinite(options.speed)) throw std::invalid_argument("speed must be positive");
     if (options.steps < 0) throw std::invalid_argument("steps must be positive");
     if (!std::isfinite(options.temperature)) throw std::invalid_argument("temperature must be finite");
-    const int steps = options.steps > 0 ? options.steps : engine.default_steps();
-    const Plan plan = plan_text(engine, options);
+    return StreamSettings{sampler, options.steps > 0 ? options.steps : engine.default_steps()};
+}
+
+template <typename Keep>
+std::vector<TargetCandidate> only(const std::vector<TargetCandidate>& candidates, Keep keep) {
+    std::vector<TargetCandidate> out;
+    std::copy_if(candidates.begin(), candidates.end(), std::back_inserter(out), keep);
+    return out;
+}
+
+}  // namespace
+
+std::size_t choose_target(const std::vector<TargetCandidate>& candidates, bool first, int64_t shortest, int64_t longest) {
+    if (candidates.empty()) throw std::invalid_argument("No target candidates");
+    std::vector<TargetCandidate> fit = only(candidates, [&](const TargetCandidate& c) { return c.frames <= longest; });
+    if (fit.empty()) fit.push_back(candidates.front());
+    const std::vector<TargetCandidate> long_enough = only(fit, [&](const TargetCandidate& c) { return c.frames >= shortest; });
+    const TargetCandidate& stop = candidates.back();
+    const bool has_stop = stop.kind == TargetCut::kEnd || stop.kind == TargetCut::kParagraph;
+    const bool stop_fits = has_stop && std::any_of(fit.begin(), fit.end(), [&](const TargetCandidate& c) { return c.index == stop.index; });
+    if (stop_fits && !first) return stop.index;
+    const std::vector<TargetCandidate> marks = only(long_enough, [](const TargetCandidate& c) { return c.kind != TargetCut::kWord; });
+    TargetCandidate choice{};
+    if (first) {
+        const std::vector<TargetCandidate> ends = only(long_enough, [](const TargetCandidate& c) { return ends_sentence(c.kind); });
+        choice = !ends.empty() ? ends.front() : stop_fits ? stop : !marks.empty() ? marks.front() : (long_enough.empty() ? fit : long_enough).front();
+    } else {
+        const std::vector<TargetCandidate> full =
+            only(marks, [&](const TargetCandidate& c) { return static_cast<double>(c.frames) >= kFillShare * static_cast<double>(longest); });
+        const std::vector<TargetCandidate> sentences =
+            only(full, [](const TargetCandidate& c) { return c.kind == TargetCut::kSentence || c.kind == TargetCut::kParagraph; });
+        const std::vector<TargetCandidate>* preference[] = {&sentences, &full, &marks, &long_enough, &fit};
+        for (const std::vector<TargetCandidate>* group : preference) {
+            if (!group->empty()) {
+                choice = group->back();
+                break;
+            }
+        }
+    }
+    if (has_stop && choice.index != stop.index && stop.frames - choice.frames < shortest) {  // never leave a short remainder
+        if (stop_fits) return stop.index;
+        const std::vector<TargetCandidate> balanced = only(long_enough, [&](const TargetCandidate& c) { return stop.frames - c.frames >= shortest; });
+        if (!balanced.empty()) {
+            const std::vector<TargetCandidate> marked = only(balanced, [](const TargetCandidate& c) { return c.kind != TargetCut::kWord; });
+            choice = (marked.empty() ? balanced : marked).back();
+        }
+    }
+    return choice.index;
+}
+
+Json synthesize_stream(Engine& engine, const SynthesisOptions& options, const std::function<bool(const StreamEvent&)>& emit,
+                       const ChunkNoiseFn& chunk_noise) {
+    stream_settings(engine, options);
+    return synthesize_plan_stream(engine, plan_text(engine, options), options, emit, chunk_noise);
+}
+
+Json synthesize_plan_stream(Engine& engine, const Plan& plan, const SynthesisOptions& options, const std::function<bool(const StreamEvent&)>& emit,
+                            const ChunkNoiseFn& chunk_noise) {
+    const StreamSettings settings = stream_settings(engine, options);
     if (plan.chunks.empty()) throw std::invalid_argument("Nothing to speak: the text has no words");
     const auto started = std::chrono::steady_clock::now();
     const int chunk_count = static_cast<int>(plan.chunks.size());
@@ -625,74 +825,63 @@ Json synthesize_stream(Engine& engine, const SynthesisOptions& options, const st
 
     const std::size_t D = static_cast<std::size_t>(engine.latent_dim());
     const int64_t keep = std::max(engine.prefix_frames(), engine.decode_context());
-    std::deque<PlanChunk> pending(plan.chunks.begin(), plan.chunks.end());
-    std::vector<PlanChunk> spoken;
-    std::map<std::string, std::pair<std::vector<float>, int64_t>> tails;  // chain -> ([D, frames], frames)
+    int spoken = 0;
     std::optional<double> first_audio_ms;
     Json chunk_metadata{Json::Array{}};
     std::random_device entropy;
 
-    while (!pending.empty()) {
-        PlanChunk next = pending.front();
-        pending.pop_front();
+    for (std::size_t begin = 0; begin < plan.chunks.size();) {
+        std::vector<const PlanChunk*> chain;  // consecutive plan sentences that share a chain
+        for (; begin < plan.chunks.size() && (chain.empty() || plan.chunks[begin].chain_id == chain.front()->chain_id); ++begin) {
+            chain.push_back(&plan.chunks[begin]);
+        }
+        ChainStream stream(engine, std::move(chain));
         DeliveryTensors delivery{};
-        next.delivery.tensors(delivery.values, delivery.present);
-        Target target{next, {}, {}};
-        int64_t target_frames = -1;
-        try {
-            target = next_target(engine, next, spoken, pending, delivery, options.speed);
-            target_frames = total_frames(target.durations);
-        } catch (const OverlongError&) {  // more phones than the duration predictor's span holds
-        }
-        const PlanChunk& chunk = target.chunk;
-        std::vector<Text> pieces = retry_pieces(engine, chunk.text, target_frames);
-        if (!pieces.empty()) {
-            for (std::size_t offset = 0; offset < pieces.size(); ++offset) {
-                PlanChunk piece = chunk;
-                piece.chunk_id = chunk.chunk_id + "_" + std::to_string(pieces.size() - offset);
-                piece.text = unicode::encode(pieces[pieces.size() - 1 - offset]);
-                pending.push_front(std::move(piece));
-            }
-            continue;
-        }
-        const std::optional<uint64_t> seed = options.seed ? std::optional<uint64_t>(*options.seed + static_cast<uint64_t>(chunk.index)) : std::nullopt;
-        static const std::pair<std::vector<float>, int64_t> no_tail{{}, 0};
-        auto tail_it = tails.find(chunk.chain_id);
-        const auto& tail = tail_it == tails.end() ? no_tail : tail_it->second;
-        send(StreamEvent{StreamEvent::kChunkStarted, &chunk, 0, nullptr, chunk.to_json()});
+        stream.front().delivery.tensors(delivery.values, delivery.present);
+        std::vector<float> tail;  // [D, tail_frames]: the chain's last latents, the next target's prefix and decode context
+        int64_t tail_frames = 0;
+        std::size_t start = 0;
+        while (true) {
+            Target target = next_target(engine, stream, start, spoken == 0, delivery, options.speed);
+            const PlanChunk chunk = stream.target_chunk(start, target.end);
+            const std::optional<uint64_t> seed = options.seed ? std::optional<uint64_t>(*options.seed + static_cast<uint64_t>(chunk.index)) : std::nullopt;
+            send(StreamEvent{StreamEvent::kChunkStarted, &chunk, 0, nullptr, chunk.to_json()});
 
-        const uint64_t draw_seed = seed ? *seed : (static_cast<uint64_t>(entropy()) << 32) ^ entropy();
-        NoiseFn noise = [&](int64_t frames, float* out) {
-            if (chunk_noise) chunk_noise(chunk.index, seed.value_or(0), seed.has_value(), frames, out);
-            else gaussian_noise(draw_seed, static_cast<int64_t>(D) * frames, static_cast<float>(options.temperature), out);
-        };
-        SentenceResult result = engine.synthesize_sentence(target.sentence, chunk.voice, chunk.language, delivery, tail.first, tail.second, steps,
-                                                           sampler, options.speed, noise, &target.durations);
-        std::vector<float> audio = engine.decode(result.latents, result.frames, chunk.voice, chunk.language, tail.first, tail.second);
-        // Keep the last frames of the chain's latents for the next sentence's prefix and decode context.
-        const int64_t joined_frames = tail.second + result.frames, kept = std::min(joined_frames, keep);
-        std::vector<float> next_tail(D * static_cast<std::size_t>(kept));
-        for (std::size_t d = 0; d < D; ++d) {
-            for (int64_t t = 0; t < kept; ++t) {
-                const int64_t source = joined_frames - kept + t;
-                next_tail[d * static_cast<std::size_t>(kept) + static_cast<std::size_t>(t)] =
-                    source < tail.second ? tail.first[d * static_cast<std::size_t>(tail.second) + static_cast<std::size_t>(source)]
-                                         : result.latents[d * static_cast<std::size_t>(result.frames) + static_cast<std::size_t>(source - tail.second)];
+            const uint64_t draw_seed = seed ? *seed : (static_cast<uint64_t>(entropy()) << 32) ^ entropy();
+            NoiseFn noise = [&](int64_t frames, float* out) {
+                if (chunk_noise) chunk_noise(chunk.index, seed.value_or(0), seed.has_value(), frames, out);
+                else gaussian_noise(draw_seed, static_cast<int64_t>(D) * frames, static_cast<float>(options.temperature), out);
+            };
+            SentenceResult result = engine.synthesize_sentence(target.sentence, chunk.voice, chunk.language, delivery, tail, tail_frames,
+                                                               settings.steps, settings.sampler, options.speed, noise, &target.durations);
+            std::vector<float> audio = engine.decode(result.latents, result.frames, chunk.voice, chunk.language, tail, tail_frames);
+            const int64_t joined_frames = tail_frames + result.frames, kept = std::min(joined_frames, keep);
+            std::vector<float> next_tail(D * static_cast<std::size_t>(kept));
+            for (std::size_t d = 0; d < D; ++d) {
+                for (int64_t t = 0; t < kept; ++t) {
+                    const int64_t source = joined_frames - kept + t;
+                    next_tail[d * static_cast<std::size_t>(kept) + static_cast<std::size_t>(t)] =
+                        source < tail_frames ? tail[d * static_cast<std::size_t>(tail_frames) + static_cast<std::size_t>(source)]
+                                             : result.latents[d * static_cast<std::size_t>(result.frames) + static_cast<std::size_t>(source - tail_frames)];
+                }
             }
+            tail = std::move(next_tail);
+            tail_frames = kept;
+            ++spoken;
+            if (!first_audio_ms) first_audio_ms = elapsed_ms(started);
+            Json metadata{Json::Object{}};
+            metadata.set("chunk", chunk.to_json());
+            for (const auto& [key, value] : result.metadata.items()) metadata.set(key, value);
+            metadata.set("seed", seed ? Json(static_cast<int64_t>(*seed)) : Json());
+            metadata.set("first_audio_ms", Json(round1(*first_audio_ms)));
+            chunk_metadata.push(metadata);
+            send(StreamEvent{StreamEvent::kAudio, &chunk, 0, &audio, metadata});
+            if (stream.at_end(target.end)) break;
+            start = target.end;
         }
-        tails[chunk.chain_id] = {std::move(next_tail), kept};
-        spoken.push_back(chunk);
-        if (!first_audio_ms) first_audio_ms = elapsed_ms(started);
-        Json metadata{Json::Object{}};
-        metadata.set("chunk", chunk.to_json());
-        for (const auto& [key, value] : result.metadata.items()) metadata.set(key, value);
-        metadata.set("seed", seed ? Json(static_cast<int64_t>(*seed)) : Json());
-        metadata.set("first_audio_ms", Json(round1(*first_audio_ms)));
-        chunk_metadata.push(metadata);
-        send(StreamEvent{StreamEvent::kAudio, &chunk, 0, &audio, metadata});
     }
     Json summary{Json::Object{}};
-    summary.set("chunks", Json(spoken.size()));
+    summary.set("chunks", Json(spoken));
     summary.set("first_audio_ms", first_audio_ms ? Json(round1(*first_audio_ms)) : Json());
     summary.set("elapsed_ms", Json(round1(elapsed_ms(started))));
     send(StreamEvent{StreamEvent::kDone, nullptr, 0, nullptr, summary});

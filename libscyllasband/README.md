@@ -24,24 +24,26 @@ allows no GPU work from background apps, so apps that speak in the background us
 
 ## Pipeline
 
-Text is normalized to its spoken form, split into paragraphs and sentences, and spoken one sentence at a time.
-For each sentence:
+Text is normalized to its spoken form and split into paragraphs and sentences. The bundle G2P converts the
+sentences to phones with word starts, and the sentences of a chain (the same voice, language and delivery) are
+read as one stream of phones, as connected text. The stream is spoken as targets, each a span from one silence
+to another. For each target:
 
-1. the bundle G2P converts it to phones with word starts;
-2. the duration graph predicts frames for a 512-phone span of the sentence plus up to 180 context phones on
-   each side from the neighbouring sentences, and the sentence's frames are rounded to integers;
-3. per-frame phone ids and text events (punctuation, word starts, stress and length marks, phone phase,
+1. the duration graph predicts frames for a 512-phone span of the target plus up to 180 context phones on
+   each side from the neighbouring text, and the target's frames are rounded to integers;
+2. per-frame phone ids and text events (punctuation, word starts, stress and length marks, phone phase,
    sentence type) are built;
-4. the flow integrates noise to latents with Heun (default) or Euler steps in the smallest fitting
+3. the flow integrates noise to latents with Heun (default) or Euler steps in the smallest fitting
    latent-frame bucket, conditioned on the span and on the last 96 latent frames already spoken;
-5. the vocoder decodes the sentence with up to 48 frames of the preceding latents as left context, so
-   consecutive sentences form one continuous waveform with no inserted pauses or crossfades.
+4. the vocoder decodes the target with up to 48 frames of the preceding latents as left context, so
+   consecutive targets form one continuous waveform with no inserted pauses or crossfades.
 
-Every pass stays within the 64 to 420 latent frames (about 1.4 to 9 seconds) the model was trained on. A
-sentence shorter than that takes in the following sentences of its paragraph, and a short last sentence of a
-paragraph joins the one before it, as long as the joined text stays within the maximum. A sentence longer than
-the maximum is split at the clause punctuation nearest its middle (or, without usable punctuation, the word
-break) and retried.
+Every target is sized by its predicted durations to stay within the 64 to 420 latent frames (about 1.4 to 9
+seconds) the model was trained on. The first target of a request ends at the first sentence end past the minimum,
+so audio starts quickly (at a clause or between words only when the opening sentence is too long for one pass). Every later target reaches as far toward the maximum as the text
+allows, ending at a sentence boundary, else at a clause, else between words. A paragraph ends a target once it
+is long enough, a change of voice, language or delivery always does, and a short remainder is never left on its
+own.
 
 ## C API
 
@@ -167,7 +169,8 @@ build/litert/scyllasband_speak --bundle ../scyllasband/models/litert --voice ink
 ## Tests
 
 `ctest` runs the unit suites (`events`, `durations`, `context`, `delivery`, `sentences`, `segments`,
-`normalizer`, `unicode`) against fixtures produced by the Python runtime. Regenerate them after a reference
+`normalizer`, `unicode`, `targets`) against fixtures produced by the Python runtime; `targets` also runs the
+streaming loop on fake graphs. Regenerate them after a reference
 change:
 
 ```bash
@@ -176,8 +179,8 @@ PYTHONPATH=.. python tests/generate_fixtures.py
 
 `tests/parity_harness.py` compares the built library with the Python runtime on a bundle of the build's
 flavor: text normalization, sentence splitting, punctuation segments and Unicode handling; G2P phones and word
-starts; per-sentence durations, latents (given the same noise) and decoded audio with passage context and
-prefix; the long-form plan and whole-passage audio. It needs numpy and `onnxruntime` or `ai-edge-litert`:
+starts; per-target durations, latents (given the same noise) and decoded audio with passage context and
+prefix; the long-form plan, targets and whole-passage audio. It needs numpy and `onnxruntime` or `ai-edge-litert`:
 
 ```bash
 PYTHONPATH=.. python tests/parity_harness.py --library build/litert/libscyllasband_native.so \

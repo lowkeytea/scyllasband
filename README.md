@@ -16,7 +16,7 @@ Delivery is controlled with **energy, tension, valence and assertiveness**, each
 - Delivery controls for energy, tension, valence and assertiveness on 0–4 scales, plus whisper, combinable into calm, assertive, joyful, angry or sad delivery.
 - Runs locally on CPU. The default LiteRT bundle synthesizes about 14× faster than real time on an 8-thread desktop CPU.
 - LiteRT, Core ML, Core AI and ONNX Runtime bundles with INT8 weights; every latent-length bucket shares one set of weights. On Apple devices, Core ML and Core AI run on the GPU or the Neural Engine.
-- Long text is spoken sentence by sentence, with neighbouring sentences as context and acoustic continuity from one sentence to the next, and can be streamed as it is generated.
+- Long text is spoken in passages of up to about nine seconds, each with the surrounding text as context and continuing from the sound of the one before, and can be streamed as it is generated.
 - Multi-voice, multilingual dialogue with inline `[voice:language:delivery]` tags.
 - A C++ runtime with a C API (`libscyllasband`) for the same bundles.
 - 24 kHz mono output.
@@ -170,11 +170,11 @@ result = runtime.synthesize(SynthesisRequest(
 # result.audio (float32 numpy array), result.sample_rate, result.metadata
 ```
 
-Reuse the runtime across requests; `runtime.warmup()` creates the sessions before interactive use. `runtime.synthesize_stream(records)` yields one audio chunk per sentence as it is ready, and `runtime.plan_records(records)` returns the sentence plan.
+Reuse the runtime across requests; `runtime.warmup()` creates the sessions before interactive use. `runtime.synthesize_stream(records)` yields each passage's audio as it is ready, and `runtime.plan_records(records)` returns the sentence plan the passages are cut from.
 
 ## Long form and dialogue
 
-Text is spoken one sentence at a time. Each sentence sees its neighbours as context and continues from the acoustics of the sentence before it, and consecutive sentences are decoded as one continuous waveform, so long text needs no chunking settings.
+Long text is spoken in passages. The first is short, ending at the first sentence break, so audio starts quickly; each later one runs as close to the model's trained length (about nine seconds) as the text allows, ending at a sentence break, else a clause, else between words, so text without punctuation is handled too. Lengths are measured with the requested delivery, so slow deliveries get shorter passages. Each passage sees the surrounding text as context and continues from the sound of the one before, and consecutive passages are decoded as one continuous waveform, so long text needs no chunking settings.
 
 ```bash
 python -m scyllasband speak --voice ariadne --file story.txt \
@@ -208,7 +208,7 @@ All ten also support `es`, `it`, `fr`, `de`, and `vi`: 60 trained voice/locale p
 
 - Spoken-text normalization expands numbers, decimals, dates, times, currency, percentages, ordinals, fractions, initialisms and common abbreviations for each language.
 - The Scylla's Band G2P model in the bundle converts each phrase to phones; punctuation is kept as pause and intonation cues, and word boundaries become optional silences.
-- Text is split into sentences after normalization. Each pass speaks 64 to 420 latent frames (about 1.4 to 9 seconds), the lengths the model was trained on: a very short sentence is spoken together with its neighbours in the same paragraph, and a sentence too long for one pass is split at clause punctuation.
+- Text is split into sentences after normalization, and the sentences of a paragraph are read as one stream of phones. Each pass speaks 64 to 420 latent frames (about 1.4 to 9 seconds), the lengths the model was trained on, cut from that stream at a sentence end, else a clause, else a word break; a pass is measured with its own delivery and speed before it is synthesized.
 
 `--no-normalize-text` skips normalization when the text is already in spoken form.
 
@@ -218,13 +218,15 @@ All ten also support `es`, `it`, `fr`, `de`, and `vi`: 60 trained voice/locale p
 text
   -> spoken-text normalization
   -> Scylla's Band G2P: phones, word boundaries and punctuation cues
-  -> sentence plan; each sentence also sees the phones of its neighbours
+  -> sentence plan, read as one stream of phones per paragraph
+  -> passages of 64-420 frames cut from the stream (short first one, later ones near the maximum),
+     each with the phones around it as context
   -> duration predictor (voice, language, delivery, neighbouring text) -> frames per phone
   -> timing events per frame: word starts, punctuation, sentence type
-  -> rectified-flow latent generator, continuing from the previous sentence's latents
+  -> rectified-flow latent generator, continuing from the previous passage's latents
   -> 24-channel acoustic latents
-  -> acoustic adapter + Vocos decoder at 24 kHz, decoded with the previous sentence as left context
-  -> one continuous waveform, or one chunk per sentence when streaming
+  -> acoustic adapter + Vocos decoder at 24 kHz, decoded with the previous passage as left context
+  -> one continuous waveform, or one chunk per passage when streaming
 ```
 
 ## Bundle layout

@@ -1,14 +1,16 @@
 // Scylla's Band synthesis engine (see engine.py, planner.py and streaming.py).
 //
-// A passage is spoken sentence by sentence. For each sentence:
+// Within a chain, the plan's sentences are read as one stream of phones and spoken as targets: spans of that stream
+// from one silence to another, sized by the predicted durations to stay within the lengths the model was trained on.
+// For each target:
 // 1. its phones form the target of a before/target/after span whose context is up to 180 phones (silences
-//    excluded) of the neighbouring sentences of the same chain;
+//    excluded) of the neighbouring text of the same chain;
 // 2. the duration graph predicts frames for every span position; the target slice is rounded to integer frames;
 // 3. per-frame phone ids and text events are built;
 // 4. the flow integrates noise to latents in the smallest fitting bucket, conditioned on the span and on the
 //    last 96 latent frames already spoken (right-aligned prefix);
-// 5. the vocoder decodes the sentence with up to 48 frames of the preceding latents as left context, so
-//    consecutive sentences join as one continuous waveform.
+// 5. the vocoder decodes the target with up to 48 frames of the preceding latents as left context, so
+//    consecutive targets join as one continuous waveform.
 #pragma once
 
 #include "scyllasband_events.h"
@@ -73,6 +75,7 @@ using NoiseFn = std::function<void(int64_t frames, float* out)>;
 class Engine {
 public:
     explicit Engine(const BackendOptions& options);
+    Engine(const BackendOptions& options, std::unique_ptr<Backend> backend);  // graphs from `backend` (tests)
     ~Engine();
 
     const std::string& bundle_dir() const { return bundle_dir_; }
@@ -85,7 +88,7 @@ public:
     int prefix_frames() const { return prefix_frames_; }
     int decode_context() const { return decode_context_; }
     std::size_t context_phones() const { return context_phones_; }
-    // Target lengths the model was trained on, in latent frames; the streaming loop keeps every sentence it synthesizes within them.
+    // Target lengths the model was trained on, in latent frames; the streaming loop keeps every target it synthesizes within them.
     int64_t min_target_frames() const { return min_target_frames_; }
     int64_t max_target_frames() const { return max_target_frames_; }
     int default_steps() const { return default_steps_; }
@@ -193,9 +196,29 @@ struct StreamEvent {
 // Per-chunk noise source for tests: (chunk index, seed, has seed, frames, out [latent_dim, frames]).
 using ChunkNoiseFn = std::function<void(int, uint64_t, bool, int64_t, float*)>;
 
-// Speaks the plan sentence by sentence; `emit` returns false to stop. Returns the final metadata.
+// Plans `options.text` and speaks it target by target; `emit` returns false to stop. Returns the final metadata.
 Json synthesize_stream(Engine& engine, const SynthesisOptions& options, const std::function<bool(const StreamEvent&)>& emit,
                        const ChunkNoiseFn& chunk_noise = nullptr);
+
+// Speaks `plan` target by target (the text fields of `options` are unused).
+Json synthesize_plan_stream(Engine& engine, const Plan& plan, const SynthesisOptions& options, const std::function<bool(const StreamEvent&)>& emit,
+                            const ChunkNoiseFn& chunk_noise = nullptr);
+
+// Silences that can end a target: the end of the chain, a paragraph or record boundary, and the silences after a
+// sentence end, after a clause pause and between words.
+enum class TargetCut { kEnd, kParagraph, kSentence, kClause, kWord };
+
+struct TargetCandidate {
+    std::size_t index;  // the silence's position in the chain's phone stream
+    TargetCut kind;
+    int64_t frames;     // predicted frames from the target's start through this silence
+};
+
+// The end of a target among `candidates` (in stream order): the first target of a request ends at the earliest
+// sentence end past the trained minimum (a clause, else a word break, only when the opening sentence does not fit); later targets end at the chain's end or a paragraph if it fits,
+// else reach toward the trained maximum, preferring a sentence boundary, then a clause, then a word break; a remainder
+// shorter than the minimum is never left before the end or a paragraph.
+std::size_t choose_target(const std::vector<TargetCandidate>& candidates, bool first, int64_t shortest, int64_t longest);
 
 // Normal noise from a seeded xoshiro256** generator (Box-Muller), scaled by `temperature`.
 void gaussian_noise(uint64_t seed, int64_t count, float temperature, float* out);

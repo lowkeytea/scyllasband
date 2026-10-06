@@ -51,7 +51,7 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
 
     for name, func, help_text in (("speak", _speak, "speak text into a WAV file"),
                                   ("group-speak", _group_speak, "speak [voice:language:delivery] tagged dialogue"),
-                                  ("stream", _stream, "speak sentence by sentence, printing JSON events"),
+                                  ("stream", _stream, "speak passage by passage, printing JSON events"),
                                   ("plan", _plan, "print the sentence plan as JSON")):
         command = sub.add_parser(name, help=help_text, allow_abbrev=False)
         _add_synthesis_args(command, group=name == "group-speak")

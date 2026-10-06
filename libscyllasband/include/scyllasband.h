@@ -85,14 +85,14 @@ typedef struct {
 
 typedef enum {
     SCYLLASBAND_EVENT_PLAN = 1,           /* metadata_json: the sentence plan */
-    SCYLLASBAND_EVENT_CHUNK_STARTED = 2,  /* metadata_json: the sentence about to be spoken */
-    SCYLLASBAND_EVENT_AUDIO = 3,          /* samples of one sentence; they join the previous audio directly */
+    SCYLLASBAND_EVENT_CHUNK_STARTED = 2,  /* metadata_json: the target about to be spoken (whole plan sentences or part of one) */
+    SCYLLASBAND_EVENT_AUDIO = 3,          /* samples of one target; they join the previous audio directly */
     SCYLLASBAND_EVENT_DONE = 4            /* metadata_json: timing summary */
 } ScyllasBandEventType;
 
 typedef struct {
     ScyllasBandEventType type;
-    int32_t chunk_index;   /* plan index of the sentence; -1 for plan and done events */
+    int32_t chunk_index;   /* plan index of the target's last sentence; -1 for plan and done events */
     int32_t chunk_count;   /* sentences in the plan */
     const char* chunk_id;  /* NULL for plan and done events */
     const char* metadata_json;
@@ -128,7 +128,7 @@ SCYLLASBAND_API ScyllasBandStatus scyllasband_plan_json(ScyllasBandRuntime* runt
 /* Speaks the whole request into one waveform. Free with scyllasband_audio_free. */
 SCYLLASBAND_API ScyllasBandStatus scyllasband_synthesize(ScyllasBandRuntime* runtime, const ScyllasBandRequest* request, ScyllasBandAudio* out_audio);
 
-/* Speaks the request sentence by sentence, calling `callback` from the calling thread as audio is ready. */
+/* Speaks the request target by target, calling `callback` from the calling thread as audio is ready. */
 SCYLLASBAND_API ScyllasBandStatus scyllasband_synthesize_stream(ScyllasBandRuntime* runtime, const ScyllasBandRequest* request,
                                                                 ScyllasBandEventCallback callback, void* user_data);
 

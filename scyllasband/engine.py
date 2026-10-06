@@ -1,6 +1,6 @@
-"""Scylla's Band synthesis engine: one sentence at a time, with passage context and acoustic continuity.
+"""Scylla's Band synthesis engine: one target at a time, with passage context and acoustic continuity.
 
-A passage is spoken sentence by sentence. For each sentence:
+Long text is spoken as targets of 64 to 420 latent frames cut by :mod:`scyllasband.streaming`. For each target:
 
 1. its phones (from :mod:`scyllasband.g2p`) form the target of a before/target/after span whose context is up
    to 180 phones (silences excluded) of the neighbouring text;
@@ -8,8 +8,8 @@ A passage is spoken sentence by sentence. For each sentence:
 3. per-frame phone ids and text events are built (:mod:`scyllasband.events`);
 4. the flow integrates noise to latents in the smallest fitting fixed-shape bucket, conditioned on the span and
    on the last 96 latent frames already spoken (right-aligned prefix);
-5. the vocoder decodes the sentence's latents with up to 48 frames of the preceding latents as left context, so
-   consecutive sentences join as one continuous decode.
+5. the vocoder decodes the target's latents with up to 48 frames of the preceding latents as left context, so
+   consecutive targets join as one continuous decode.
 """
 
 from __future__ import annotations

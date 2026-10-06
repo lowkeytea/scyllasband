@@ -193,8 +193,8 @@ def render_page(ctx: dict) -> str:
     <section id="long-form">
       <div class="section-heading">
         <h2>Long form</h2>
-        <p>Whole passages, spoken one sentence at a time. Each sentence sees its neighbours and continues from the sound of the one
-          before it.</p>
+        <p>Whole texts, spoken as passages of up to about nine seconds. Each passage sees the text around it and continues from
+          the sound of the one before it.</p>
       </div>
       <div class="long-form-grid">{"".join(long_cards)}
       </div>
