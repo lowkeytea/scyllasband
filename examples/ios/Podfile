@@ -6,3 +6,15 @@ target 'ScyllasBandStudio' do
   use_frameworks! :linkage => :static
   pod 'ScyllasBandKit', :path => '../../libscyllasband'
 end
+
+# The app target builds for iPhone, iPad and Apple Vision. CocoaPods generates its pod targets for the single platform
+# above, so they also get the visionOS SDKs and deployment target; ScyllasBandKit supports visionOS 2 and later.
+post_install do |installer|
+  installer.pods_project.targets.each do |target|
+    target.build_configurations.each do |configuration|
+      configuration.build_settings['SUPPORTED_PLATFORMS'] = 'iphoneos iphonesimulator xros xrsimulator'
+      configuration.build_settings['TARGETED_DEVICE_FAMILY'] = '1,2,7'
+      configuration.build_settings['XROS_DEPLOYMENT_TARGET'] = '2.0'
+    end
+  end
+end

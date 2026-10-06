@@ -1,8 +1,9 @@
 # Scylla's Band iOS sample
 
-This SwiftUI sample speaks multi-voice, multilingual documents on iPhone and
-iPad with Scylla's Band v2 (release `v2-20261005`). It uses Apple's Core ML
-runtime on iOS 18–26 and Core AI on iOS 27 and later. It keeps one warmed
+This SwiftUI sample speaks multi-voice, multilingual documents on iPhone,
+iPad and Apple Vision Pro with Scylla's Band v2 (release `v2-20261005`). It
+uses Apple's Core ML runtime on iOS 18–26 and visionOS 2–26, and Core AI on
+iOS and visionOS 27 and later. It keeps one warmed
 `SBScyllasBand` runtime, reads voices and languages from the bundle at run
 time, streams each sentence's mono Float32 audio into `AVAudioEngine` as soon
 as it's ready, and keeps the sentence being spoken on screen.
@@ -40,15 +41,16 @@ Engine. Changing the compute unit reloads the voices.
 ## Requirements
 
 - A Mac with Xcode 27 and CocoaPods
-- An iPhone or iPad with iOS 18 or later, or the iOS Simulator. Core AI needs
-  a device with iOS 27 or later. Earlier systems and the Simulator run the
-  Core ML bundle.
+- An iPhone or iPad with iOS 18 or later, an Apple Vision Pro with visionOS 2
+  or later, or the iOS or visionOS Simulator. Core AI needs a device with iOS
+  or visionOS 27 or later. Earlier systems and the Simulators run the Core ML
+  bundle.
 - At least one model bundle in `scyllasband/models`, downloaded at the
   repository root:
 
   ```bash
-  python -m scyllasband download --flavor coreml --yes   # iOS 18 and later, and the Simulator
-  python -m scyllasband download --flavor coreai --yes   # iOS 27 and later devices
+  python -m scyllasband download --flavor coreml --yes   # iOS 18 / visionOS 2 and later, and the Simulators
+  python -m scyllasband download --flavor coreai --yes   # iOS and visionOS 27 and later devices
   ```
 
   On a Mac, `python -m scyllasband download` without flags asks which bundle
@@ -67,7 +69,16 @@ xcodebuild -workspace ScyllasBandStudio.xcworkspace -scheme ScyllasBandStudio \
 # Device
 xcodebuild -workspace ScyllasBandStudio.xcworkspace -scheme ScyllasBandStudio \
   -destination 'generic/platform=iOS' build
+
+# Apple Vision Pro (or 'platform=visionOS Simulator,name=Apple Vision Pro')
+xcodebuild -workspace ScyllasBandStudio.xcworkspace -scheme ScyllasBandStudio \
+  -destination 'generic/platform=visionOS' build
 ```
+
+The one `ScyllasBandStudio` target builds for iPhone, iPad and Apple Vision.
+CocoaPods generates pod targets for a single platform, so the `Podfile`'s
+`post_install` adds the visionOS SDKs to them; keep it when you run
+`pod install`.
 
 To run the app, open `ScyllasBandStudio.xcworkspace` (not the `.xcodeproj`,
 which fails with `No such module 'ScyllasBandKit'`), select a development team,
@@ -80,8 +91,8 @@ The **Prepare Scylla's Band assets** build phase
 in the app as `scyllasband/coreai` and `scyllasband/coreml`, together with
 the three example documents, and fails if neither bundle exists. Simulator
 builds embed only Core ML. Set `SCYLLASBAND_IOS_BUNDLE_DIR` to embed one
-specific bundle directory instead. At launch, the app runs Core AI on iOS 27
-devices when that bundle was embedded and Core ML everywhere else, falling
+specific bundle directory instead. At launch, the app runs Core AI on iOS and
+visionOS 27 devices when that bundle was embedded and Core ML everywhere else, falling
 back to Core ML if Core AI can't load.
 
 In Debug builds, the launch argument `-autoplay` plays the first-launch
@@ -158,7 +169,7 @@ The app contains no C or C++. To add synthesis to another app:
 2. Add the local static pod:
 
    ```ruby
-   platform :ios, '18.0'
+   platform :ios, '18.0'        # or platform :visionos, '2.0'
    use_frameworks! :linkage => :static
    pod 'ScyllasBandKit', :path => '../path/to/libscyllasband'
    ```

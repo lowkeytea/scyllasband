@@ -32,6 +32,7 @@ asset_phase.always_out_of_date = '1'
 
 project.build_configurations.each do |configuration|
   configuration.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '18.0'
+  configuration.build_settings['XROS_DEPLOYMENT_TARGET'] = '2.0'
 end
 
 target.build_configurations.each do |configuration|
@@ -41,7 +42,10 @@ target.build_configurations.each do |configuration|
   settings['INFOPLIST_FILE'] = 'ScyllasBandStudio/Info.plist'
   settings['GENERATE_INFOPLIST_FILE'] = 'NO'
   settings['SWIFT_VERSION'] = '5.0'
-  settings['TARGETED_DEVICE_FAMILY'] = '1,2'
+  # iPhone, iPad and Apple Vision: one target that builds for the iOS and visionOS SDKs.
+  settings['SUPPORTED_PLATFORMS'] = 'iphoneos iphonesimulator xros xrsimulator'
+  settings['TARGETED_DEVICE_FAMILY'] = '1,2,7'
+  settings['XROS_DEPLOYMENT_TARGET'] = '2.0'
   settings['CODE_SIGN_STYLE'] = 'Automatic'
   settings['CURRENT_PROJECT_VERSION'] = '1'
   settings['MARKETING_VERSION'] = '1.0'

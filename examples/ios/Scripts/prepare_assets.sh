@@ -12,8 +12,8 @@ models_dir="${scyllasband_root}/scyllasband/models"
 destination_root="$1/scyllasband"
 
 # Embeds the Scylla's Band bundles found in scyllasband/models (symlinks are followed):
-#   coreai -> Core AI, used on iOS 27 and later (devices only)
-#   coreml -> Core ML, used on iOS 18-26, in the Simulator, and wherever Core AI is unavailable
+#   coreai -> Core AI, used on iOS and visionOS 27 and later (devices only)
+#   coreml -> Core ML, used on iOS 18-26 and visionOS 2-26, in the Simulators, and wherever Core AI is unavailable
 # SCYLLASBAND_IOS_BUNDLE_DIR embeds one specific bundle instead.
 
 typeset -a embed_sources embed_names
@@ -82,8 +82,8 @@ fi
 
 if (( ${#embed_sources[@]} == 0 )); then
     echo "error: no usable Scylla's Band bundle found in ${models_dir} (expected coreml/ and/or coreai/)" >&2
-    echo "error: run 'python -m scyllasband download --flavor coreml --yes' (iOS 18+ and the Simulator)" >&2
-    echo "error: and/or 'python -m scyllasband download --flavor coreai --yes' (iOS 27+ devices) at the repository root," >&2
+    echo "error: run 'python -m scyllasband download --flavor coreml --yes' (iOS 18+, visionOS 2+ and the Simulators)" >&2
+    echo "error: and/or 'python -m scyllasband download --flavor coreai --yes' (iOS and visionOS 27+ devices) at the repository root," >&2
     echo "error: or set SCYLLASBAND_IOS_BUNDLE_DIR to one bundle directory" >&2
     exit 1
 fi
