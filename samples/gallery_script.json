@@ -85,10 +85,10 @@
     {
       "id": "dialogue",
       "title": "Multi-voice multilingual dialogue",
-      "file": "data/walkthrough_demo.txt",
+      "file": "data/walkthrough_2nd.txt",
       "group": true,
       "pause_ms": 250,
-      "summary": "All ten voices introduce the release, moving between English, German, French, Vietnamese, Spanish and Italian while the delivery changes line by line."
+      "summary": "Nine voices introduce the release and its speed on phones, then move between English, German, French, Vietnamese, Spanish and Italian while the delivery changes line by line."
     }
   ]
 }
