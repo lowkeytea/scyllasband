@@ -246,7 +246,6 @@ Delivery Delivery::parse(const char* spec) {
     if (folded.empty() || folded == "neutral") return out;
     if (folded == "auto") {
         out.axes = {std::nullopt, std::nullopt, std::nullopt, std::nullopt};
-        out.whisper = "auto";
         return out;
     }
     std::vector<std::pair<std::string, std::string>> fields;
@@ -263,10 +262,11 @@ Delivery Delivery::parse(const char* spec) {
         start = comma + 1;
     }
     for (const auto& [key, raw] : fields) {
+        if (key == "whisper") throw std::invalid_argument("Whisper is not supported; remove whisper from the delivery");
+    }
+    for (const auto& [key, raw] : fields) {
         auto axis = std::find_if(std::begin(kDeliveryAxes), std::end(kDeliveryAxes), [&](const char* name) { return key == name; });
-        if (axis == std::end(kDeliveryAxes) && key != "whisper") {
-            throw std::invalid_argument("Delivery accepts only energy, tension, valence, assertiveness, whisper");
-        }
+        if (axis == std::end(kDeliveryAxes)) throw std::invalid_argument("Delivery accepts only energy, tension, valence, assertiveness");
     }
     auto field = [&](const std::string& key) -> const std::string* {
         for (const auto& item : fields) {
@@ -287,10 +287,6 @@ Delivery Delivery::parse(const char* spec) {
         if (!std::isfinite(number) || number < 0.0 || number > 4.0) throw std::invalid_argument("Delivery " + key + " must be finite and within [0, 4]");
         out.axes[index] = number;
     }
-    if (const std::string* raw = field("whisper")) {
-        if (*raw != "on" && *raw != "off" && *raw != "auto") throw std::invalid_argument("Delivery whisper must be on, off, or auto");
-        out.whisper = *raw;
-    }
     return out;
 }
 
@@ -305,23 +301,19 @@ void Delivery::tensors(float values[5], uint8_t present[5]) const {
             present[i] = 1;
         }
     }
-    if (whisper != "auto") {
-        values[4] = whisper == "on" ? 1.0f : 0.0f;
-        present[4] = 1;
-    }
+    present[4] = 1;  // whisper: always off
 }
 
 Json Delivery::to_json() const {
     Json out{Json::Object{}};
     for (std::size_t i = 0; i < 4; ++i) out.set(kDeliveryAxes[i], axes[i] ? Json(*axes[i]) : Json());
-    out.set("whisper", Json(whisper));
     return out;
 }
 
 std::string Delivery::spec() const {
     std::string out;
-    for (std::size_t i = 0; i < 4; ++i) out += std::string(kDeliveryAxes[i]) + "=" + (axes[i] ? format_float(*axes[i]) : "auto") + ",";
-    return out + "whisper=" + whisper;
+    for (std::size_t i = 0; i < 4; ++i) out += (i ? "," : "") + std::string(kDeliveryAxes[i]) + "=" + (axes[i] ? format_float(*axes[i]) : "auto");
+    return out;
 }
 
 }  // namespace scyllasband

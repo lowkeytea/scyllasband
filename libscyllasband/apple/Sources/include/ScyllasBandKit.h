@@ -38,8 +38,9 @@ typedef NS_ENUM(NSInteger, SBScyllasBandComputeUnit) {
 @end
 
 /**
- Delivery controls, each 0–4 with 2 neutral, plus whisper. Combinations give familiar deliveries, e.g. joyful
- energy 3.2 valence 3.6; angry energy 3.4 tension 3.4 valence 0.8 assertiveness 3.4.
+ Delivery controls, each 0–4 with 2 neutral. Combinations give familiar deliveries, e.g. joyful energy 2.4 tension 2
+ valence 2.8 assertiveness 2.2; angry energy 2.7 tension 3.1 valence 1.3 assertiveness 2.5. `whisper` is no longer supported
+ and is ignored.
  */
 @interface SBScyllasBandDelivery : NSObject <NSCopying>
 @property(nonatomic, readonly) float energy;
@@ -54,7 +55,7 @@ typedef NS_ENUM(NSInteger, SBScyllasBandComputeUnit) {
                        valence:(float)valence
                  assertiveness:(float)assertiveness
                        whisper:(BOOL)whisper NS_DESIGNATED_INITIALIZER;
-/** The runtime's delivery string, e.g. "energy=2.5,tension=2,valence=2,assertiveness=2,whisper=off". */
+/** The runtime's delivery string, e.g. "energy=2.5,tension=2,valence=2,assertiveness=2". */
 @property(nonatomic, copy, readonly) NSString *specification;
 - (instancetype)init NS_UNAVAILABLE;
 @end

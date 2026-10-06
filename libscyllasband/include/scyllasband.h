@@ -48,7 +48,7 @@ typedef enum {
 } ScyllasBandAccelerator;
 
 typedef enum {
-    SCYLLASBAND_SAMPLER_DEFAULT = 0,  /* the bundle default (Heun) */
+    SCYLLASBAND_SAMPLER_DEFAULT = 0,  /* the bundle default (Euler for the released bundles) */
     SCYLLASBAND_SAMPLER_HEUN = 1,
     SCYLLASBAND_SAMPLER_EULER = 2
 } ScyllasBandSampler;
@@ -64,8 +64,8 @@ typedef struct {
     const char* voice_id;
     const char* language;     /* NULL or "": the voice's default language ("en" also selects it) */
     /* NULL, "" or "neutral": neutral delivery. "auto": unconditioned. Otherwise axis=value pairs, e.g.
-       "energy=2.5,tension=2,valence=2,assertiveness=2,whisper=off": axes on 0-4 (2 = neutral) or "auto",
-       whisper on/off/auto; omitted axes stay neutral. */
+       "energy=2.5,tension=2,valence=2,assertiveness=2": axes on 0-4 (2 = neutral) or "auto";
+       omitted axes stay neutral. */
     const char* delivery;
     float speed;              /* duration scale; 1.0 = the model's own pace; must be positive */
     int32_t steps;            /* flow steps; 0 = bundle default (8) */

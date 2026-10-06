@@ -42,10 +42,10 @@ FrameEvents frame_events(const std::vector<std::string>& phones, const std::vect
 std::pair<std::vector<int64_t>, std::vector<int64_t>> balanced_context(const std::vector<int64_t>& before, const std::vector<int64_t>& target,
                                                                        const std::vector<int64_t>& after, std::size_t max_phones);
 
-// Delivery: energy, tension, valence and assertiveness on 0-4 (2 = neutral, nullopt = auto), whisper on/off/auto.
+// Delivery: energy, tension, valence and assertiveness on 0-4 (2 = neutral, nullopt = auto). The graphs' fifth delivery
+// input (whisper, from training) is always sent as off.
 struct Delivery {
     std::array<std::optional<double>, 4> axes{2.0, 2.0, 2.0, 2.0};
-    std::string whisper = "off";
 
     // NULL, "" or "neutral": neutral; "auto": every channel unconditioned; else "axis=value,..." pairs.
     static Delivery parse(const char* spec);

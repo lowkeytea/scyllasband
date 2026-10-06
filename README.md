@@ -2,19 +2,19 @@
 
 Scylla's Band is a local text-to-speech runtime for ten managed voices. It predicts phone durations, generates continuous acoustic latents with rectified flow, and decodes speech at 24 kHz through an acoustic adapter and Vocos.
 
-Delivery is controlled with **energy, tension, valence and assertiveness**, each from **0 to 4** with **2 as neutral**, plus **whisper on/off**.
+Delivery is controlled with **energy, tension, valence and assertiveness**, each from **0 to 4** with **2 as neutral**.
 
 ## Samples and community
 
-- **[Listen to the voice gallery](https://lowkeytea.github.io/scyllasband/)**: every voice in all six languages, seven delivery styles per voice, a long-form narration and a ten-voice dialogue.
+- **[Listen to the voice gallery](https://lowkeytea.github.io/scyllasband/)**: every voice in all six languages, six delivery styles per voice, a long-form narration and a ten-voice dialogue.
 - The [sample index](samples/README.md) lists every clip with the settings used, and `samples/generate_gallery.py` regenerates them.
 - Join the [Scylla's Band Discord](https://discord.gg/cNdBuM3tS) for release updates, help, and community discussion.
 
 ## Highlights
 
 - Ten voices in seven locales: American and British English, Spanish, Italian, French, German and Vietnamese.
-- Delivery controls for energy, tension, valence and assertiveness on 0–4 scales, plus whisper, combinable into calm, assertive, joyful, angry or sad delivery.
-- Runs locally on CPU. The default LiteRT bundle synthesizes about 14× faster than real time on an 8-thread desktop CPU.
+- Delivery controls for energy, tension, valence and assertiveness on 0–4 scales, combinable into calm, assertive, joyful, angry or sad delivery.
+- Runs locally on CPU. The default LiteRT bundle synthesizes more than 35× faster than real time on an 8-thread desktop CPU.
 - LiteRT, Core ML, Core AI and ONNX Runtime bundles with INT8 weights; every latent-length bucket shares one set of weights. On Apple devices, Core ML and Core AI run on the GPU or the Neural Engine.
 - Long text is spoken in passages of up to about nine seconds, each with the surrounding text as context and continuing from the sound of the one before, and can be streamed as it is generated.
 - Multi-voice, multilingual dialogue with inline `[voice:language:delivery]` tags.
@@ -44,7 +44,7 @@ source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -e .                   # ".[onnx]", ".[coreml]" or ".[coreai]" for the other backends
 ```
 
-The model is downloaded from [`spybyscript/scyllasband`](https://huggingface.co/spybyscript/scyllasband), pinned to the tag `v2-20261005-apple` (release v2-20261005 with its Core ML and Core AI bundles), into `scyllasband/models/<bundle>` (`litert`, `coreai`, `coreml` or `onnx`). Voice conditioning is embedded in the graphs; no separate voice files are needed.
+The model is downloaded from [`spybyscript/scyllasband`](https://huggingface.co/spybyscript/scyllasband), pinned to the tag `v2-20261006-apple` (release v2-20261006 with its Core ML and Core AI bundles), into `scyllasband/models/<bundle>` (`litert`, `coreai`, `coreml` or `onnx`). Voice conditioning is embedded in the graphs; no separate voice files are needed.
 
 ## Delivery controls
 
@@ -54,7 +54,6 @@ The model is downloaded from [`spybyscript/scyllasband`](https://huggingface.co/
 | Tension | 0–4 or `auto` | 2 |
 | Valence | 0–4 or `auto` | 2 |
 | Assertiveness | 0–4 or `auto` | 2 |
-| Whisper | `on`, `off`, or `auto` | `off` |
 
 With every control at 2, the default, voices speak in a calm, conversational delivery with a neutral tone. Raising or lowering a control changes the delivery:
 
@@ -64,8 +63,6 @@ With every control at 2, the default, voices speak in a calm, conversational del
 | Tension | Slightly looser and steadier | Tighter, with wider pitch swings |
 | Valence | Flatter, more downcast pitch | Livelier pitch, a little quicker, shorter pauses |
 | Assertiveness | More pauses between phrases | Faster and clipped with fewer pauses; the strongest control over pace |
-
-`whisper=on` whispers: quieter and breathy.
 
 The model learned delivery mostly from settings between about 1.7 and 2.8 for energy, 1.9 and 3.0 for valence, 1.8 and 2.7 for assertiveness, and 1.0 and 3.1 for tension. The controls are most reliable inside those ranges; further out, voices can sound strained or a style can become ambiguous.
 
@@ -77,10 +74,9 @@ Combining the controls gives familiar deliveries:
 | Assertive and quick | `energy=2.6,tension=2.4,valence=2.1,assertiveness=2.8` |
 | Joyful | `energy=2.4,tension=2,valence=2.8,assertiveness=2.2` |
 | Angry | `energy=2.7,tension=3.1,valence=1.3,assertiveness=2.5` |
-| Sad | `energy=1.7,tension=1.7,valence=1.8,assertiveness=2` |
-| Whispered | `whisper=on` |
+| Sad | `energy=1.7,tension=1.5,valence=1.4,assertiveness=2` |
 
-Angry takes valence a little below the trained range so that it separates clearly from joyful. These are moderate styles; how strongly each comes through varies with voice, language and text. The [voice gallery](https://lowkeytea.github.io/scyllasband/#delivery) plays each of them for all ten voices.
+Angry and sad take valence a little below the trained range so that they separate clearly from joyful and calm. These are moderate styles; how strongly each comes through varies with voice, language and text. The [voice gallery](https://lowkeytea.github.io/scyllasband/#delivery) plays each of them for all ten voices.
 
 ```bash
 python -m scyllasband speak --voice ariadne \
@@ -88,10 +84,10 @@ python -m scyllasband speak --voice ariadne \
     -o joyful.wav "We actually did it! The whole street came out to watch!"
 
 python -m scyllasband speak --voice ink --language en_gb \
-    --delivery whisper=on -o whisper.wav "Keep your voice down."
+    --delivery energy=1.7,tension=1.5,valence=1.4,assertiveness=2 -o sad.wav "I kept the letter for years."
 ```
 
-Unspecified controls use the neutral default of 2 (whisper off). `--delivery auto` leaves every control unspecified, and `energy=auto` leaves only that one unspecified; an unspecified control is passed to the model as absent, which is different from requesting 2.
+Unspecified controls use the neutral default of 2. `--delivery auto` leaves every control unspecified, and `energy=auto` leaves only that one unspecified; an unspecified control is passed to the model as absent, which is different from requesting 2.
 
 ## CLI
 
@@ -114,9 +110,9 @@ python -m scyllasband plan --voice scylla "Print the sentence plan as JSON."
 | Option | Default | Effect |
 | --- | --- | --- |
 | `--voice`, `--language` | `scylla`, the voice's English | Voice and locale; `en` picks the voice's own English |
-| `--delivery` | all 2, whisper off | `energy=..,tension=..,valence=..,assertiveness=..,whisper=on\|off`, `neutral` or `auto` |
+| `--delivery` | all 2 | `energy=..,tension=..,valence=..,assertiveness=..`, `neutral` or `auto` |
 | `--speed` | 1.0 | Speaking rate; 1.2 is 20% faster |
-| `--steps`, `--sampler` | 8, `heun` | Flow sampling. Heun evaluates the model twice per step and Euler once, so `--sampler euler` is about twice as fast at the same step count; fewer steps are faster still. Listen when trading quality for speed |
+| `--steps`, `--sampler` | 4, `euler` | Flow sampling. The flow is trained for few-step sampling, so Euler with 4 steps (four model evaluations) is the default. Heun evaluates the model twice per step: `--sampler heun --steps 8` costs four times as much and sounds slightly sharper. Fewer steps are faster still; listen when trading quality for speed |
 | `--seed`, `--temperature` | random, 1.0 | Repeatable output; scale of the sampling noise |
 | `--threads` | backend default | CPU threads per graph |
 | `--backend`, `--bundle` | the installed bundle for this machine (Core ML on a Mac, LiteRT elsewhere) | Choose another installed bundle |
@@ -163,8 +159,7 @@ result = runtime.synthesize(SynthesisRequest(
     text="It is a real pleasure to meet you.",
     voice_id="ariadne",
     language="en_us",
-    delivery={"energy": 2.3, "tension": 1.7, "valence": 2.6,
-              "assertiveness": 2.0, "whisper": "off"},
+    delivery={"energy": 2.3, "tension": 1.7, "valence": 2.6, "assertiveness": 2.0},
     seed=2027,
 ))
 # result.audio (float32 numpy array), result.sample_rate, result.metadata
@@ -190,7 +185,7 @@ A dialogue file sets the voice, language and controls per tagged span:
 ```text
 [ariadne:en_us:energy=2.3,valence=2.5] Good to see you. [es] Me alegra verte.
 [rex:en_us:tension=2.6,assertiveness=2.5] We should get going.
-[ink:en_gb:whisper=on] Keep this between us.
+[ink:en_gb:energy=1.8,tension=1,valence=2.5,assertiveness=2.1] Keep this between us.
 ```
 
 Language tags keep the active delivery request. A new delivery tag replaces it, with unspecified coordinates reset to neutral. `--pause-ms` adds silence where the voice, language or delivery changes.
