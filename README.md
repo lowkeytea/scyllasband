@@ -8,7 +8,7 @@ Delivery is controlled with **energy, tension, valence and assertiveness**, each
 
 - **[Listen to the voice gallery](https://lowkeytea.github.io/scyllasband/)**: every voice in all six languages, six delivery styles per voice, a long-form narration and a nine-voice dialogue.
 - The [sample index](samples/README.md) lists every clip with the settings used, and `samples/generate_gallery.py` regenerates them.
-- Join the [Scylla's Band Discord](https://discord.gg/cNdBuM3tS) for release updates, help, and community discussion.
+- Join the [Scylla's Band Discord](https://discord.gg/mBhpn7WB5N) for release updates, help, and community discussion.
 
 ## Highlights
 
