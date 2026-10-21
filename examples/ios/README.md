@@ -139,10 +139,10 @@ from background apps, and Automatic uses the GPU (the bundles recommend it in
   `controls.coreai.neural_engine_assets`.
 - **Core ML:** choose **CPU**. The Core ML bundle lists no Neural Engine models.
 
-On an iPhone 17 Pro Max, a three-sentence passage (11.6 s of speech) starts
-playing after about 240 ms on the GPU (Core AI or Core ML), 400 ms with Core
-AI's Neural Engine placement and 770 ms on Core ML's CPU, with a warm runtime.
-Core AI on the CPU alone is much slower (about 2.5 s).
+On an iPhone 17 Pro Max, a three-sentence passage (11.9 s of speech) starts
+playing after about 85-90 ms on the GPU (Core AI or Core ML), 400 ms with Core
+AI's Neural Engine placement and 360 ms on Core ML's CPU, with a warm runtime.
+Core AI on the CPU alone is much slower (about 1.4 s).
 
 ## On-device benchmark
 

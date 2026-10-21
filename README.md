@@ -44,7 +44,7 @@ source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -e .                   # ".[onnx]", ".[coreml]" or ".[coreai]" for the other backends
 ```
 
-The model is downloaded from [`spybyscript/scyllasband`](https://huggingface.co/spybyscript/scyllasband), pinned to the tag `v2-20261006-apple` (release v2-20261006 with its Core ML and Core AI bundles), into `scyllasband/models/<bundle>` (`litert`, `coreai`, `coreml` or `onnx`). Voice conditioning is embedded in the graphs; no separate voice files are needed.
+The model is downloaded from [`spybyscript/scyllasband`](https://huggingface.co/spybyscript/scyllasband), pinned to the tag `v2-20261020-apple` (release v2-20261020 with its Core ML and Core AI bundles), into `scyllasband/models/<bundle>` (`litert`, `coreai`, `coreml` or `onnx`). Voice conditioning is embedded in the graphs; no separate voice files are needed.
 
 ## Delivery controls
 
@@ -125,8 +125,8 @@ python -m scyllasband plan --voice scylla "Print the sentence plan as JSON."
 
 | Bundle | Used on | Download | Runtime package |
 | --- | --- | --- | --- |
-| Core ML | Apple silicon Macs (macOS 15 and later); iOS and iPadOS 18 and visionOS 2 apps | 142 MB | `coremltools`, installed the first time a Core ML bundle runs (or `pip install -e ".[coreml]"`) |
-| Core AI | iOS, iPadOS and visionOS 27 apps; also runs on macOS 27 | 155 MB | `coreai-core`, installed the first time a Core AI bundle runs (or `pip install -e ".[coreai]"`) |
+| Core ML | Apple silicon Macs (macOS 15 and later); iOS and iPadOS 18 and visionOS 2 apps | 200 MB | `coremltools`, installed the first time a Core ML bundle runs (or `pip install -e ".[coreml]"`) |
+| Core AI | iOS, iPadOS and visionOS 27 apps; also runs on macOS 27 | 213 MB | `coreai-core`, installed the first time a Core AI bundle runs (or `pip install -e ".[coreai]"`) |
 | LiteRT | Linux, Windows, Android and Intel Macs | 228 MB | `ai-edge-litert` (installed with this package) |
 | ONNX Runtime | anywhere ONNX Runtime runs | 323 MB | `onnxruntime`, installed the first time you use `--backend onnx` (or `pip install -e ".[onnx]"`) |
 
@@ -134,24 +134,24 @@ python -m scyllasband plan --voice scylla "Print the sentence plan as JSON."
 
 On Core ML and Core AI, `--compute-units` chooses where the graphs run: `auto` (the bundle's recommendation: the GPU), `gpu`, `cpu`, or `ane`, which runs the graphs the bundle marks as accurate on the Neural Engine there (Core AI's flow) and the rest on the CPU. iOS does not allow GPU work from background apps, so an app that keeps speaking in the background uses `ane` (Core AI) or `cpu`. The first load of a Core AI bundle specializes its graphs for the device (a few seconds on the GPU, about half a minute for the Neural Engine); the system caches that until the next OS update.
 
-Measured with the native runtime on a three-sentence passage (11.6 s of speech) with the default sampler. First run is the first launch after installing the bundle (when Core AI specializes its graphs), cold start a later launch, warm first audio a later request on a loaded runtime, and real-time speed the seconds of audio generated per second when warm. The [model card](https://huggingface.co/spybyscript/scyllasband) describes the measurements.
+Measured with the native runtime on a three-sentence passage (11.9 s of speech) with the default sampler. First run is the first launch after installing the bundle (when Core AI specializes its graphs), cold start a later launch, warm first audio a later request on a loaded runtime, and real-time speed the seconds of audio generated per second when warm. The [model card](https://huggingface.co/spybyscript/scyllasband) describes the measurements.
 
 | Device | Bundle | Compute | First run | Cold start | Warm first audio | Real-time speed |
 | --- | --- | --- | --- | --- | --- | --- |
-| MacBook Pro, M5 Max (macOS 27) | Core ML | GPU (default) | 2.44 s | 1.29 s | 24 ms | ~220× |
-|  | Core ML | CPU | 1.82 s | 0.28 s | 192 ms | ~25× |
-|  | Core AI | GPU (default) | 5.33 s | 0.42 s | 28 ms | ~200× |
-|  | Core AI | Neural Engine | 25.3 s | 0.50 s | 310 ms | ~18× |
-|  | Core AI | CPU | 2.49 s | 0.82 s | 746 ms | ~6.3× |
-|  | LiteRT | CPU | 0.76 s | 0.74 s | 142 ms | ~34× |
-|  | ONNX Runtime | CPU | 0.84 s | 0.89 s | 200 ms | ~24× |
-| iPhone 17 Pro Max (iOS 27.0.1) | Core ML | GPU (default) | 2.79 s | 1.43 s | 63 ms | ~85× |
-|  | Core ML | CPU | 2.04 s | 0.35 s | 240 ms | ~20× |
-|  | Core AI | GPU (default) | 6.49 s | 0.42 s | 58 ms | ~92× |
-|  | Core AI | Neural Engine | 27.8 s | 0.58 s | 370 ms | ~15× |
-|  | Core AI | CPU | 3.30 s | 0.96 s | 882 ms | ~5.2× |
-| Galaxy Z Fold 8, Snapdragon SM8850 (Android 17) | LiteRT | CPU | 1.60 s | 1.32 s | 178 ms | ~27× |
-|  | ONNX Runtime | CPU | 1.90 s | 1.48 s | 375 ms | ~12× |
+| MacBook Pro, M5 Max (macOS 27) | Core ML | GPU (default) | 3.79 s | 1.26 s | 28 ms | ~200× |
+|  | Core ML | CPU | 2.37 s | 0.37 s | 272 ms | ~14× |
+|  | Core AI | GPU (default) | 5.88 s | 0.39 s | 27 ms | ~200× |
+|  | Core AI | Neural Engine | 38.9 s | 0.52 s | 320 ms | ~17× |
+|  | Core AI | CPU | 3.48 s | 1.13 s | 1036 ms | ~3.5× |
+|  | LiteRT | CPU | 1.00 s | 1.04 s | 192 ms | ~22× |
+|  | ONNX Runtime | CPU | 0.92 s | 0.94 s | 262 ms | ~17× |
+| iPhone 17 Pro Max (iOS 27.0.1) | Core ML | GPU (default) | 3.82 s | 1.49 s | 92 ms | ~53× |
+|  | Core ML | CPU | 2.71 s | 0.51 s | 359 ms | ~10× |
+|  | Core AI | GPU (default) | 7.68 s | 0.48 s | 84 ms | ~57× |
+|  | Core AI | Neural Engine | 50.1 s | 0.67 s | 401 ms | ~14× |
+|  | Core AI | CPU | 5.19 s | 1.42 s | 1368 ms | ~2.7× |
+| Galaxy Z Fold 8, Snapdragon SM8850 (Android 17) | LiteRT | CPU | 2.26 s | 1.87 s | 250 ms | ~16× |
+|  | ONNX Runtime | CPU | 2.35 s | 1.72 s | 535 ms | ~7.7× |
 
 ## Python API
 
