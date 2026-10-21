@@ -5,16 +5,15 @@ An on-device text-to-speech studio for the Scylla's Band v2 model (`scyllasband_
 ## What it demonstrates
 
 - All fourteen voices and each voice's languages, read from the runtime (`scyllasband_voices_json`) rather than hard-coded.
-- Measured delivery: four continuous sliders, energy, tension, valence and assertiveness, each 0.5-3.1 with 2 neutral (0.1 steps), plus a whisper switch. Quick presets (Neutral, Calm, Assertive, Joyful, Angry, Sad, Whisper) only fill the sliders. The app limits the four axes to 0.5-3.1 (see Delivery range):
+- Measured delivery: four continuous sliders, energy, tension, valence and assertiveness, each covering the range the runtime supports (energy 1.4-2.3, tension 1.0-2.4, valence 1.4-2.2, assertiveness 1.8-2.4; 2 is neutral; 0.1 steps). Quick presets, the same as the main README's, only fill the sliders (see Delivery range):
 
   | Preset | Delivery |
   | --- | --- |
-  | Calm | `energy=1.2,tension=0.8,valence=2.6` |
-  | Assertive | `energy=2.6,tension=2.2,assertiveness=3` |
-  | Joyful | `energy=3,valence=3` |
-  | Angry | `energy=3,tension=3,valence=0.8,assertiveness=3` |
-  | Sad | `energy=1,tension=1.6,valence=0.8,assertiveness=1.6` |
-  | Whisper | `whisper=on` |
+  | Calm | `energy=1.8,tension=1,valence=2.2,assertiveness=2.1` |
+  | Assertive | `energy=2.3,tension=2.4,valence=2.1,assertiveness=2.4` |
+  | Joyful | `energy=2.3,tension=2,valence=2.2,assertiveness=2.2` |
+  | Angry | `energy=2.3,tension=2.4,valence=1.4,assertiveness=2.4` |
+  | Sad | `energy=1.7,tension=1.5,valence=1.4,assertiveness=2` |
 
 - A text editor with inline speaker points (voice, language, delivery). Double-tap or long-press to add a point, tap one to edit or remove it. A point applies until the next one; new points copy the last one's settings.
 - An example selector loading the repository's `data/` files: `walkthrough_demo.txt` (tagged multi-voice, multilingual dialogue; also the first-launch document), `test_document.txt` (long narration) and `emotional_text.txt` (energetic prose). Tagged files become editable speaker points.
@@ -25,11 +24,11 @@ An on-device text-to-speech studio for the Scylla's Band v2 model (`scyllasband_
 Imported text uses the same format as `python -m scyllasband group-speak`:
 
 ```text
-[ariadne:en_us:energy=2.3,valence=2.5] Good to see you. [es] Me alegra verte.
-[ink:en_gb:whisper=on] Keep this between us.
+[ariadne:en_us:energy=2.3,valence=2.1] Good to see you. [es] Me alegra verte.
+[ink:en_gb:energy=1.6,tension=1.2] Keep this between us.
 ```
 
-`[voice:language:delivery]` sets all three (an empty voice or language keeps the active one). A language-only tag such as `[es]` keeps the active voice and delivery. A tag with a delivery part replaces the delivery, and axes it does not name return to neutral. `[voice]` alone switches voice. Each line starts from the default settings. `auto` delivery is not supported by this editor, and axes outside 0.5-3.1 are clamped.
+`[voice:language:delivery]` sets all three (an empty voice or language keeps the active one). A language-only tag such as `[es]` keeps the active voice and delivery. A tag with a delivery part replaces the delivery, and axes it does not name return to neutral. `[voice]` alone switches voice. Each line starts from the default settings. `auto` delivery and whisper are not supported, and each axis is clamped into its supported range, as the runtime would.
 
 ## Build
 
@@ -78,7 +77,7 @@ The Android emulator behaves like `AUTO` on the device: the GPU graphs compile b
 
 ## Delivery range
 
-The app keeps energy, tension, valence and assertiveness between 0.5 and 3.1 (2 is neutral). The model accepts 0-4, but training data thins out past about 3 (tension reaches 3.1) and pushing further distorts the voice. The sliders are limited to that range, the presets (the same as the main README's) lie within it, and values read from tagged documents are clamped when they become speaker points. `ScyllasBandDelivery` itself still validates the full 0-4 range; the limit is an app-level choice.
+Requests use the 0-4 scale (2 is neutral), and the runtime clamps each axis into the range where the voices render most reliably: energy 1.4-2.3, tension 1.0-2.4, valence 1.4-2.2 and assertiveness 1.8-2.4. The sliders cover exactly those ranges, the presets (the same as the main README's) lie within them, and values read from tagged documents are clamped into them when they become speaker points. `ScyllasBandDelivery` itself accepts the full 0-4 scale.
 
 ## Minimal integration
 
@@ -105,7 +104,7 @@ scyllasband.cancel()   // from any thread
 scyllasband.close()
 ```
 
-Synthesis uses the bundle defaults (8 Heun steps); `steps` is an optional parameter. `ScyllasBandDelivery.spec()` produces the ABI delivery string, for example `energy=2.5,tension=2,valence=2.3,assertiveness=2,whisper=off`.
+Synthesis uses the bundle defaults (Euler, 4 steps); `steps` is an optional parameter. `ScyllasBandDelivery.spec()` produces the ABI delivery string, for example `energy=2.3,tension=2,valence=2.2,assertiveness=2`.
 
 ## Modules
 

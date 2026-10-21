@@ -39,7 +39,7 @@ object GroupSpeakPresetParser {
         return SpeakerDocumentSnapshot(output.toString().trimEnd(), points)
     }
 
-    /** Parses `energy=2.5,tension=2,whisper=on` into a delivery; omitted axes are neutral. */
+    /** Parses `energy=2.3,tension=1.8` into a delivery; omitted axes are neutral. Whisper is no longer supported. */
     fun parseDelivery(spec: String): ScyllasBandDelivery {
         val clean = spec.trim().lowercase()
         if (clean.isEmpty() || clean == "neutral") return ScyllasBandDelivery()
@@ -52,11 +52,7 @@ object GroupSpeakPresetParser {
             val raw = pair[1].trim()
             require(seen.add(axis)) { "Delivery axis '$axis' is repeated" }
             require(raw != "auto") { "'auto' delivery is not supported by this editor ('$axis')" }
-            if (axis == "whisper") {
-                require(raw == "on" || raw == "off") { "whisper must be on or off" }
-                delivery = delivery.copy(whisper = raw == "on")
-                continue
-            }
+            require(axis != "whisper") { "Whisper is not supported; remove whisper from the delivery" }
             val value = raw.toFloatOrNull()
             require(value != null && value.isFinite() && value in ScyllasBandDelivery.MIN..ScyllasBandDelivery.MAX) {
                 "Delivery '$axis' must be within [0, 4]"
@@ -91,7 +87,7 @@ object GroupSpeakPresetParser {
                 explicitLanguage = true
             }
             parts.getOrNull(2)?.takeIf { it.isNotBlank() }?.let {
-                // Tagged documents may exceed the app's 0.5-3.1 range; clamp (sparse training data beyond about 3).
+                // Tags use the 0-4 scale; clamp into each axis's supported range, as the runtime would.
                 delivery = parseDelivery(it).coerceToUiRange()
             }
         } else if (clean in languageTags) {
