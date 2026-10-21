@@ -9,52 +9,36 @@ class DeliveryPresetsTest {
     @Test
     fun presetsMatchTheDocumentedCombinations() {
         assertEquals(ScyllasBandDelivery(), DeliveryPreset.NEUTRAL.delivery)
-        assertEquals(
-            "energy=1.8,tension=1,valence=2.5,assertiveness=2.1,whisper=off",
-            DeliveryPreset.CALM.delivery.spec(),
-        )
-        assertEquals(
-            "energy=2.6,tension=2.4,valence=2.1,assertiveness=2.8,whisper=off",
-            DeliveryPreset.ASSERTIVE.delivery.spec(),
-        )
-        assertEquals(
-            "energy=2.4,tension=2,valence=2.8,assertiveness=2.2,whisper=off",
-            DeliveryPreset.JOYFUL.delivery.spec(),
-        )
-        assertEquals(
-            "energy=2.7,tension=3.1,valence=1.3,assertiveness=2.5,whisper=off",
-            DeliveryPreset.ANGRY.delivery.spec(),
-        )
-        assertEquals(
-            "energy=1.7,tension=1.7,valence=1.8,assertiveness=2,whisper=off",
-            DeliveryPreset.SAD.delivery.spec(),
-        )
-        assertEquals(ScyllasBandDelivery(whisper = true), DeliveryPreset.WHISPER.delivery)
+        assertEquals("energy=1.8,tension=1,valence=2.2,assertiveness=2.1", DeliveryPreset.CALM.delivery.spec())
+        assertEquals("energy=2.3,tension=2.4,valence=2.1,assertiveness=2.4", DeliveryPreset.ASSERTIVE.delivery.spec())
+        assertEquals("energy=2.3,tension=2,valence=2.2,assertiveness=2.2", DeliveryPreset.JOYFUL.delivery.spec())
+        assertEquals("energy=2.3,tension=2.4,valence=1.4,assertiveness=2.4", DeliveryPreset.ANGRY.delivery.spec())
+        assertEquals("energy=1.7,tension=1.5,valence=1.4,assertiveness=2", DeliveryPreset.SAD.delivery.spec())
     }
 
     @Test
-    fun everyPresetStaysWithinTheUiRange() {
+    fun everyPresetStaysWithinTheSupportedRanges() {
         DeliveryPreset.entries.forEach { preset ->
-            val d = preset.delivery
-            listOf(d.energy, d.tension, d.valence, d.assertiveness).forEach {
-                assertTrue("${preset.name} $it", it in DELIVERY_UI_MIN..DELIVERY_UI_MAX)
-            }
+            assertEquals(preset.name, preset.delivery, preset.delivery.coerceToUiRange())
         }
     }
 
     @Test
-    fun coerceToUiRangeClampsBothEnds() {
+    fun neutralIsInsideEveryRange() {
+        DELIVERY_UI_RANGES.forEach { (axis, range) -> assertTrue(axis, ScyllasBandDelivery.NEUTRAL in range) }
+    }
+
+    @Test
+    fun coerceToUiRangeClampsEachAxisToItsRange() {
         assertEquals(
-            ScyllasBandDelivery(energy = 3.1f, tension = 0.5f, valence = 2.5f, assertiveness = 3.1f, whisper = true),
-            ScyllasBandDelivery(energy = 3.6f, tension = 0.1f, valence = 2.5f, assertiveness = 4f, whisper = true)
-                .coerceToUiRange(),
+            ScyllasBandDelivery(energy = 2.3f, tension = 1f, valence = 2.2f, assertiveness = 1.8f),
+            ScyllasBandDelivery(energy = 3.6f, tension = 0.1f, valence = 2.5f, assertiveness = 0f).coerceToUiRange(),
         )
     }
 
     @Test
     fun summaryListsOnlyNonNeutralAxes() {
         assertEquals("neutral", ScyllasBandDelivery().summary())
-        assertEquals("E 2.4 V 2.8 A 2.2", DeliveryPreset.JOYFUL.delivery.summary())
-        assertEquals("whisper", DeliveryPreset.WHISPER.delivery.summary())
+        assertEquals("E 2.3 V 2.2 A 2.2", DeliveryPreset.JOYFUL.delivery.summary())
     }
 }

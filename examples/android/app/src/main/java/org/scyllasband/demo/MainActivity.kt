@@ -626,8 +626,7 @@ class MainActivity : AppCompatActivity() {
                 .put("energy", settings.delivery.energy.toDouble())
                 .put("tension", settings.delivery.tension.toDouble())
                 .put("valence", settings.delivery.valence.toDouble())
-                .put("assertiveness", settings.delivery.assertiveness.toDouble())
-                .put("whisper", settings.delivery.whisper),
+                .put("assertiveness", settings.delivery.assertiveness.toDouble()),
         )
 
     private fun settingsFromJson(value: JSONObject): ScyllasBandSegmentSettings {
@@ -640,8 +639,7 @@ class MainActivity : AppCompatActivity() {
                 tension = delivery.optDouble("tension", 2.0).toFloat(),
                 valence = delivery.optDouble("valence", 2.0).toFloat(),
                 assertiveness = delivery.optDouble("assertiveness", 2.0).toFloat(),
-                whisper = delivery.optBoolean("whisper", false),
-            ),
+            ).coerceToUiRange(),
         )
     }
 
@@ -674,7 +672,7 @@ class MainActivity : AppCompatActivity() {
         const val MARKER_TEXT = "\uFFFC"
         const val PLAYBACK_SEED = 31_415L
 
-        // CPU: on the Galaxy Z Fold 8 it runs about 27 times faster than real time, and LiteRT's GPU accelerator either
+        // CPU: on the Galaxy Z Fold 8 it runs about 16 times faster than real time, and LiteRT's GPU accelerator either
         // fails (AUTO falls back to the CPU) or hangs (GPU). See the README.
         val ACCELERATOR = ScyllasBandAccelerator.CPU
         const val STATE_DOCUMENT = "speaker_document"

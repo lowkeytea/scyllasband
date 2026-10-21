@@ -2,7 +2,7 @@
 <resources>
     <string name="app_name">Scylla\'s Band Studio</string>
     <string name="title">Scylla\'s Band Studio</string>
-    <string name="instructions">Paste or edit text below. Double-tap or long-press a position to insert a speaker point. Tap a point to change its voice, language, or delivery (energy, tension, valence, assertiveness, whisper). Each point applies until the next one.</string>
+    <string name="instructions">Paste or edit text below. Double-tap or long-press a position to insert a speaker point. Tap a point to change its voice, language, or delivery (energy, tension, valence, assertiveness). Each point applies until the next one.</string>
     <string name="example_script">Example script</string>
     <string name="choose_example">Choose an example…</string>
     <string name="example_emotional">Energetic prose</string>
@@ -22,19 +22,17 @@
     <string name="voice">Voice</string>
     <string name="language">Language</string>
     <string name="delivery_presets">Delivery</string>
-    <string name="delivery_explanation">Each axis runs from 0.5 to 3.1; 2 is neutral. Presets only fill the sliders.</string>
+    <string name="delivery_explanation">Each slider covers the range the voices render most reliably; 2 is neutral. Presets only fill the sliders.</string>
     <string name="axis_energy">Energy</string>
     <string name="axis_tension">Tension</string>
     <string name="axis_valence">Valence</string>
     <string name="axis_assertiveness">Assertiveness</string>
-    <string name="whisper">Whisper</string>
     <string name="preset_neutral">Neutral</string>
     <string name="preset_calm">Calm</string>
     <string name="preset_assertive">Assertive</string>
     <string name="preset_joyful">Joyful</string>
     <string name="preset_angry">Angry</string>
     <string name="preset_sad">Sad</string>
-    <string name="preset_whisper">Whisper</string>
     <string name="language_en_us">English (US)</string>
     <string name="language_en_gb">English (UK)</string>
     <string name="language_es">Spanish</string>

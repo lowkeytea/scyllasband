@@ -20,6 +20,17 @@ enum DeliveryAxis: String, CaseIterable, Identifiable {
         }
     }
 
+    /// The range the runtime supports for the control, where the voices render most reliably; the runtime clamps any
+    /// other request into it. 2 (neutral) lies inside each.
+    var supportedRange: ClosedRange<Float> {
+        switch self {
+        case .energy: return 1.4...2.3
+        case .tension: return 1.0...2.4
+        case .valence: return 1.4...2.2
+        case .assertiveness: return 1.8...2.4
+        }
+    }
+
     /// What lowering and raising the control does.
     var range: (low: String, high: String) {
         switch self {
@@ -33,10 +44,7 @@ enum DeliveryAxis: String, CaseIterable, Identifiable {
 
 struct DeliverySettings: Codable, Equatable {
     static let neutralValue: Float = 2
-    /// The model accepts 0–4 (2 neutral), but its training data thins out past about 3 (tension reaches 3.1) and
-    /// pushing further distorts the voice, so this app keeps every control within 0.5–3.1, which holds the presets.
-    static let valueRange: ClosedRange<Float> = 0.5...3.1
-    /// What delivery tags may contain: the model's full range, clamped to `valueRange` when imported.
+    /// What delivery tags may contain: the full 0–4 scale, clamped to each control's `supportedRange` when imported.
     static let modelRange: ClosedRange<Float> = 0...4
     static let neutral = DeliverySettings()
 
@@ -44,7 +52,6 @@ struct DeliverySettings: Codable, Equatable {
     var tension: Float = 2
     var valence: Float = 2
     var assertiveness: Float = 2
-    var whisper = false
 
     var isNeutral: Bool { self == .neutral }
 
@@ -54,26 +61,26 @@ struct DeliverySettings: Codable, Equatable {
             tension: tension,
             valence: valence,
             assertiveness: assertiveness,
-            whisper: whisper
+            whisper: false
         )
     }
 
-    /// "neutral", or the controls that differ from neutral, e.g. "energy 3.2 · valence 3.6".
+    /// "neutral", or the controls that differ from neutral, e.g. "energy 2.3 · valence 2.2".
     var summary: String {
-        var parts = DeliveryAxis.allCases.compactMap { axis -> String? in
+        let parts = DeliveryAxis.allCases.compactMap { axis -> String? in
             let value = self[keyPath: axis.keyPath]
             return value == Self.neutralValue ? nil : "\(axis.rawValue) \(Self.format(value))"
         }
-        if whisper { parts.append("whisper") }
         return parts.isEmpty ? "neutral" : parts.joined(separator: " · ")
     }
 
-    /// Clamps to `valueRange` and rounds to the slider step (0.1).
+    /// Clamps each control to its `supportedRange` and rounds to the slider step (0.1).
     mutating func normalize() {
         for axis in DeliveryAxis.allCases {
             let value = self[keyPath: axis.keyPath]
+            let range = axis.supportedRange
             self[keyPath: axis.keyPath] = value.isFinite
-                ? (min(max(value, Self.valueRange.lowerBound), Self.valueRange.upperBound) * 10).rounded() / 10
+                ? (min(max(value, range.lowerBound), range.upperBound) * 10).rounded() / 10
                 : Self.neutralValue
         }
     }
@@ -83,7 +90,8 @@ struct DeliverySettings: Codable, Equatable {
     }
 }
 
-/// Familiar deliveries made from the four controls (README "Delivery controls"), clamped to `valueRange`.
+/// Familiar deliveries made from the four controls, the same combinations as the main README; each lies within the
+/// supported ranges.
 enum DeliveryPreset: String, CaseIterable, Identifiable {
     case neutral
     case calm
@@ -91,7 +99,6 @@ enum DeliveryPreset: String, CaseIterable, Identifiable {
     case joyful
     case angry
     case sad
-    case whisper
 
     var id: String { rawValue }
     var title: String { rawValue.capitalized }
@@ -101,17 +108,15 @@ enum DeliveryPreset: String, CaseIterable, Identifiable {
         case .neutral:
             return .neutral
         case .calm:
-            return DeliverySettings(energy: 1.8, tension: 1, valence: 2.5, assertiveness: 2.1)
+            return DeliverySettings(energy: 1.8, tension: 1, valence: 2.2, assertiveness: 2.1)
         case .assertive:
-            return DeliverySettings(energy: 2.6, tension: 2.4, valence: 2.1, assertiveness: 2.8)
+            return DeliverySettings(energy: 2.3, tension: 2.4, valence: 2.1, assertiveness: 2.4)
         case .joyful:
-            return DeliverySettings(energy: 2.4, tension: 2, valence: 2.8, assertiveness: 2.2)
+            return DeliverySettings(energy: 2.3, tension: 2, valence: 2.2, assertiveness: 2.2)
         case .angry:
-            return DeliverySettings(energy: 2.7, tension: 3.1, valence: 1.3, assertiveness: 2.5)
+            return DeliverySettings(energy: 2.3, tension: 2.4, valence: 1.4, assertiveness: 2.4)
         case .sad:
-            return DeliverySettings(energy: 1.7, tension: 1.7, valence: 1.8, assertiveness: 2)
-        case .whisper:
-            return DeliverySettings(whisper: true)
+            return DeliverySettings(energy: 1.7, tension: 1.5, valence: 1.4, assertiveness: 2)
         }
     }
 }
