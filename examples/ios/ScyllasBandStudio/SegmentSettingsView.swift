@@ -45,11 +45,10 @@ struct SegmentSettingsView: View {
                     ForEach(DeliveryAxis.allCases) { axis in
                         DeliverySlider(axis: axis, value: $settings.delivery[dynamicMember: axis.keyPath])
                     }
-                    Toggle("Whisper", isOn: $settings.delivery.whisper)
                 } header: {
                     Text("Delivery")
                 } footer: {
-                    Text("2 is neutral. The model accepts 0 to 4, but this app keeps each control between 0.5 and 3.1, because past about 3 the training data thins out and the voice distorts. How far a control moves the delivery varies with voice, language, and text, so start near 2 and listen as you move away from it.")
+                    Text("2 is neutral. Each slider covers the range the voices render most reliably, which is also the range the runtime keeps any request within. How far a control moves the delivery varies with voice, language, and text, so start near 2 and listen as you move away from it.")
                 }
             }
             .navigationTitle("Speaker settings")
@@ -96,7 +95,7 @@ private struct DeliverySlider: View {
                     .monospacedDigit()
                     .foregroundStyle(value == DeliverySettings.neutralValue ? Color(uiColor: .secondaryLabel) : .accentColor)
             }
-            Slider(value: $value, in: DeliverySettings.valueRange, step: 0.1) {
+            Slider(value: $value, in: axis.supportedRange, step: 0.1) {
                 Text(axis.title)
             }
             HStack {

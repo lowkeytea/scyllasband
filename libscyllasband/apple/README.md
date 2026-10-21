@@ -38,7 +38,7 @@ the pod targets in `post_install`.
 | `SBScyllasBandComputeUnit` | `Automatic` (the bundle's recommendation for each graph), `CPU`, `GPU`, `NeuralEngine`. |
 | `SBScyllasBandBundleInfo` | `backend` (`coreml` or `coreai`), `releaseIdentifier`, `sampleRate`, `voices` (identifier, languages, default language), `defaultVoice`. |
 | `SBScyllasBandRequest` | Text, voice, optional language, delivery, seed, flow steps, speed, text normalization. |
-| `SBScyllasBandDelivery` | Energy, tension, valence and assertiveness (0–4, 2 neutral) plus whisper; `+neutral`. |
+| `SBScyllasBandDelivery` | Energy, tension, valence and assertiveness (0–4, 2 neutral; the runtime clamps each into its supported range); `+neutral`. `whisper` is no longer supported and is ignored. |
 | `SBScyllasBandAudioChunk` | One sentence of mono Float32 PCM. The chunk owns its copy of the data. |
 
 ```swift
@@ -46,7 +46,7 @@ let runtime = try SBScyllasBand(bundleURL: bundleURL, computeUnit: .automatic)
 try runtime.warmUp(withVoice: nil)
 
 let request = SBScyllasBandRequest(text: "Keep this between us.", voiceIdentifier: "ink")
-request.delivery = SBScyllasBandDelivery(energy: 2, tension: 2, valence: 2, assertiveness: 2, whisper: true)
+request.delivery = SBScyllasBandDelivery(energy: 1.8, tension: 1, valence: 2.2, assertiveness: 2.1, whisper: false)
 try runtime.synthesizeRequest(request, chunkStarted: nil) { chunk in
     // Schedule chunk.pcmFloat32Data (chunk.sampleRate Hz) before returning; return false to stop.
     return true
