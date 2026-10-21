@@ -38,6 +38,7 @@ class DefaultWalkthroughTest {
         assertEquals("es", segments.single { it.settings.voiceId == "rex" }.settings.language)
         assertEquals("it", segments.single { it.settings.voiceId == "max" }.settings.language)
         assertTrue(segments.any { it.settings.voiceId == "scylla" && it.settings.language == "vi" })
+        assertEquals("fr", segments.single { it.settings.voiceId == "poppy" }.settings.language)
     }
 
     @Test
@@ -46,10 +47,10 @@ class DefaultWalkthroughTest {
 
         assertEquals(source.lines().count { it.isNotBlank() }, snapshot.points.size)
         assertFalse(snapshot.text.contains('['))
-        assertTrue(snapshot.points.first().settings.delivery.whisper)
+        assertFalse(snapshot.points.any { it.settings.delivery.whisper })
         assertEquals(
-            ScyllasBandDelivery(energy = 2.7f, tension = 3.1f, valence = 1.3f, assertiveness = 2.5f),
-            snapshot.points.map { it.settings.delivery }.first { it.tension == 3.1f },
+            ScyllasBandDelivery(energy = 2.3f, tension = 2.4f, valence = 1.4f, assertiveness = 2.4f),
+            snapshot.points.map { it.settings.delivery }.first { it.tension == 2.4f },
         )
         snapshot.points.forEach {
             val d = it.settings.delivery
@@ -62,8 +63,8 @@ class DefaultWalkthroughTest {
 
     private companion object {
         val ALL_VOICES = listOf(
-            "ariadne", "felix", "gwen", "ink", "max",
-            "orpheus", "rex", "scylla", "stone", "tuesday",
+            "ariadne", "felix", "gwen", "ink", "max", "orpheus", "rex",
+            "scylla", "stone", "tuesday", "thistle", "kincade", "poppy", "priya",
         )
         val BRITISH_VOICES = setOf("ink", "orpheus", "tuesday")
         val NON_ENGLISH_LANGUAGES = listOf("es", "it", "fr", "de", "vi")

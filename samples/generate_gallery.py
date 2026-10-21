@@ -169,7 +169,7 @@ def render_page(ctx: dict) -> str:
   <header class="hero shell">
     <p class="eyebrow">Spybyscript presents</p>
     <h1>Scylla's Band<br>Voice Gallery</h1>
-    <p class="lede">Ten voices speaking {escape(language_names)}, with delivery set by energy, tension, valence and
+    <p class="lede">Fourteen voices speaking {escape(language_names)}, with delivery set by energy, tension, valence and
       assertiveness on 0–4 scales.</p>
     <div class="metrics" aria-label="Gallery summary">
       <span class="metric"><strong>{len(voices)}</strong> voices</span>
