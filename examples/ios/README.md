@@ -10,12 +10,12 @@ as it's ready, and keeps the sentence being spoken on screen.
 
 A document is a list of speaker-segment cards. Each card has a voice, a
 language, and a delivery: energy, tension, valence, and assertiveness, with 2
-as neutral, plus whisper on/off. The model accepts 0–4 for each control, but
-this app keeps them between 0.5 and 3.1: the training data thins out past
-about 3, and pushing further distorts the voice. The segment settings also
-offer the Neutral, Calm, Assertive, Joyful, Angry, Sad, and Whisper presets,
-the same as the main README's (for example, Joyful is
-`energy=2.4,tension=2,valence=2.8,assertiveness=2.2`). **Load
+as neutral. Requests use the 0–4 scale, and the runtime clamps each control
+into the range where the voices render most reliably (energy 1.4–2.3,
+tension 1.0–2.4, valence 1.4–2.2, assertiveness 1.8–2.4); each slider covers
+exactly that range. The segment settings also offer the Neutral, Calm,
+Assertive, Joyful, Angry, and Sad presets, the same as the main README's (for
+example, Joyful is `energy=2.3,tension=2,valence=2.2,assertiveness=2.2`). **Load
 example** imports the repository's `data/` documents: `walkthrough_demo.txt`
 (the first-launch document, a tagged dialogue across voices and languages),
 `test_document.txt` (long narration), and `emotional_text.txt` (energetic
@@ -23,15 +23,16 @@ prose). Tagged lines become cards using the same rules as
 `python -m scyllasband group-speak`:
 
 ```text
-[ariadne:en_us:energy=2.3,valence=2.5] Good to see you. [es] Me alegra verte.
-[ink:en_gb:whisper=on] Keep this between us.
+[ariadne:en_us:energy=2.3,valence=2.1] Good to see you. [es] Me alegra verte.
+[ink:en_gb:energy=1.6,tension=1.2] Keep this between us.
 ```
 
 A language tag such as `[es]` keeps the voice and delivery. A tag with a
 delivery replaces the delivery, and controls it leaves out return to 2. Tag
-values may use the full 0–4 range; the app clamps them to 0.5–3.1, so
-`energy=3.3` becomes 3. `[ink]` alone switches to that voice in its default
-language. Each line starts again from the defaults.
+values may use the full 0–4 scale; the app clamps each into its supported
+range, as the runtime would, so `energy=3.3` becomes 2.3. Whisper is not
+supported. `[ink]` alone switches to that voice in its default language. Each
+line starts again from the defaults.
 
 The gear button opens the runtime settings. They show the active backend
 (Core ML or Core AI) and compute unit and let you choose where the models run:
@@ -138,10 +139,10 @@ from background apps, and Automatic uses the GPU (the bundles recommend it in
   `controls.coreai.neural_engine_assets`.
 - **Core ML:** choose **CPU**. The Core ML bundle lists no Neural Engine models.
 
-On an iPhone 17 Pro Max, a three-sentence passage (11.6 s of speech) starts
-playing after about 240 ms on the GPU (Core AI or Core ML), 400 ms with Core
-AI's Neural Engine placement and 770 ms on Core ML's CPU, with a warm runtime.
-Core AI on the CPU alone is much slower (about 2.5 s).
+On an iPhone 17 Pro Max, a three-sentence passage (11.9 s of speech) starts
+playing after about 85-90 ms on the GPU (Core AI or Core ML), 400 ms with Core
+AI's Neural Engine placement and 360 ms on Core ML's CPU, with a warm runtime.
+Core AI on the CPU alone is much slower (about 1.4 s).
 
 ## On-device benchmark
 
@@ -189,7 +190,7 @@ try runtime.warmUp(withVoice: nil)
 let request = SBScyllasBandRequest(text: "Finally, Scylla's Band is singing on Apple hardware.",
                                    voiceIdentifier: "ariadne")
 request.language = "en_us"
-request.delivery = SBScyllasBandDelivery(energy: 3, tension: 2, valence: 3, assertiveness: 2, whisper: false)
+request.delivery = SBScyllasBandDelivery(energy: 2.3, tension: 2, valence: 2.2, assertiveness: 2.2, whisper: false)
 
 try runtime.synthesizeRequest(request, chunkStarted: { index, count, text in
     print("sentence \(index + 1)/\(count): \(text ?? "")")

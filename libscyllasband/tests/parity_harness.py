@@ -122,6 +122,10 @@ class Native:
         self._check(self.lib.scyllasband_runtime_create(ctypes.byref(options), ctypes.byref(runtime)), "runtime_create")
         self.runtime = runtime
 
+    def warmup(self, voice: str) -> None:
+        self.lib.scyllasband_warmup.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+        self._check(self.lib.scyllasband_warmup(self.runtime, voice.encode()), "warmup")
+
     def close(self) -> None:
         if self.runtime is not None:
             self.lib.scyllasband_runtime_destroy(self.runtime)
@@ -173,7 +177,7 @@ class Native:
         self.lib.scyllasband_test_free(audio)
         return meta, lat.reshape(noise.shape[0], -1), wav
 
-    def _request(self, text: str, voice: str, seed: int | None):
+    def _request(self, text: str, voice: str, seed: int | None, steps: int = 0, sampler: str | None = None):
         class Request(ctypes.Structure):
             _fields_ = [("text", ctypes.c_char_p), ("voice_id", ctypes.c_char_p), ("language", ctypes.c_char_p), ("delivery", ctypes.c_char_p),
                         ("speed", ctypes.c_float), ("steps", ctypes.c_int32), ("sampler", ctypes.c_int), ("seed", ctypes.c_uint64),
@@ -181,6 +185,7 @@ class Native:
         request = Request()
         self.lib.scyllasband_request_init(ctypes.byref(request))
         request.text, request.voice_id = text.encode(), voice.encode()
+        request.steps, request.sampler = steps, {None: 0, "heun": 1, "euler": 2}[sampler]
         if seed is not None:
             request.seed, request.has_seed = seed, 1
         return request
@@ -193,13 +198,13 @@ class Native:
         self.lib.scyllasband_test_free(out)
         return json.loads(value)
 
-    def synthesize(self, text: str, voice: str, seed: int, noise=None):
+    def synthesize(self, text: str, voice: str, seed: int, noise=None, steps: int = 0, sampler: str | None = None):
         class Audio(ctypes.Structure):
             _fields_ = [("samples", ctypes.POINTER(ctypes.c_float)), ("sample_count", ctypes.c_int64), ("sample_rate", ctypes.c_int32),
                         ("metadata_json", ctypes.c_char_p)]
         callback = self.noise_type(noise) if noise is not None else self.noise_type()
         self.lib.scyllasband_test_set_noise(self.runtime, callback, None)
-        request, audio = self._request(text, voice, seed), Audio()
+        request, audio = self._request(text, voice, seed, steps, sampler), Audio()
         try:
             self._check(self.lib.scyllasband_synthesize(self.runtime, ctypes.byref(request), ctypes.byref(audio)), "synthesize")
             samples = np.ctypeslib.as_array(audio.samples, shape=(audio.sample_count,)).copy() if audio.sample_count else np.zeros(0, np.float32)
@@ -317,12 +322,12 @@ def compare_targets(native: Native, engine, plan, voice: str, label: str, failur
     for index, (chunk, sentence, python_durations, delivery, chain_start) in enumerate(python_targets(engine, plan)):
         tail = None if chain_start else tail
         request = dict(phones=sentence.phones, word_starts=sentence.word_starts, before_ids=sentence.before_ids, after_ids=sentence.after_ids,
-                       voice=voice, language=language, delivery=delivery_spec(chunk.delivery), steps=args.steps, sampler="heun", speed=1.0)
+                       voice=voice, language=language, delivery=delivery_spec(chunk.delivery), steps=args.steps, sampler=args.sampler, speed=1.0)
         native_durations = native.sentence(request, None, None)[0]["durations"]
         length = int(sum(python_durations))
         noise = np.random.default_rng(SEED + 31 * index).standard_normal((engine.latent_dim, length)).astype(np.float32)
         result = engine.synthesize_sentence(sentence, voice=voice, language=language, delivery=delivery, prefix=tail, steps=args.steps,
-                                            sampler="heun", noise=noise, durations=python_durations)
+                                            sampler=args.sampler, noise=noise, durations=python_durations)
         python_audio = engine.decode(result.latents, voice=voice, language=language, left=tail)
         native_meta, native_latents, native_audio = native.sentence(dict(request, durations=python_durations), noise, tail)
         latent_rel = rel_error(result.latents, native_latents)
@@ -388,8 +393,8 @@ def check_long_form(native: Native, runtime, report: dict, failures: list[str], 
     out = dict()
     # Built-in noise: runs end to end with a fixed seed and is reproducible.
     started = time.perf_counter()
-    first, meta = native.synthesize(text, "scylla", SEED)
-    second, _ = native.synthesize(text, "scylla", SEED)
+    first, meta = native.synthesize(text, "scylla", SEED, steps=args.steps, sampler=args.sampler)
+    second, _ = native.synthesize(text, "scylla", SEED, steps=args.steps, sampler=args.sampler)
     out["native_seconds"] = round(time.perf_counter() - started, 2)
     out["native_samples"] = int(first.size)
     out["native_chunks"] = len(meta["chunks"])
@@ -397,13 +402,13 @@ def check_long_form(native: Native, runtime, report: dict, failures: list[str], 
     if first.size == 0 or not out["native_reproducible"] or not np.isfinite(first).all():
         failures.append("long-form native synthesis did not produce reproducible finite audio")
     # The reference's noise injected: the native loop should speak the same targets and the whole passage should match.
-    reference = runtime.synthesize(SynthesisRequest(text=text, voice_id="scylla", seed=SEED, steps=args.steps))
+    reference = runtime.synthesize(SynthesisRequest(text=text, voice_id="scylla", seed=SEED, steps=args.steps, sampler=args.sampler))
 
     def noise(index, seed, has_seed, dim, frames, pointer, _user):
         values = np.random.default_rng(int(seed) if has_seed else None).standard_normal((dim, frames)).astype(np.float32) * np.float32(1.0)
         ctypes.memmove(pointer, values.ctypes.data, values.nbytes)
 
-    injected, injected_meta = native.synthesize(text, "scylla", SEED, noise=noise)
+    injected, injected_meta = native.synthesize(text, "scylla", SEED, noise=noise, steps=args.steps, sampler=args.sampler)
     python_targets_ = reference.metadata["chunks"]
     native_targets = injected_meta["chunks"]
     out["reference_samples"] = int(reference.audio.size)
@@ -443,7 +448,8 @@ def main() -> int:
     parser.add_argument("--library", required=True)
     parser.add_argument("--bundle", required=True)
     parser.add_argument("--voices", nargs="+", default=list(VOICES))
-    parser.add_argument("--steps", type=int, default=8)
+    parser.add_argument("--steps", type=int, help="flow steps on both sides (default: the bundle's)")
+    parser.add_argument("--sampler", choices=["heun", "euler"], help="sampler on both sides (default: the bundle's)")
     parser.add_argument("--latent-tolerance", type=float, default=1e-4)
     parser.add_argument("--min-snr", type=float, default=50.0)
     parser.add_argument("--accelerator", choices=sorted(ACCELERATORS), default="cpu", help="Apple builds: compute unit on both sides")
@@ -457,7 +463,13 @@ def main() -> int:
     if not args.skip_frontend:
         check_frontend(native, report, failures)
     native.open(args.bundle, ACCELERATORS[args.accelerator])
+    if native.backend == "apple":
+        # Core AI specializes each asset once per process. The native bridge keeps the system's persistent
+        # specialization and cannot adopt the one coreai-core's Python loader makes first, so load natively first.
+        native.warmup("scylla")
     runtime = reference_runtime(args.bundle, native.backend, args.accelerator)
+    args.steps = args.steps or runtime.default_steps
+    args.sampler = args.sampler or runtime.default_sampler
     try:
         check_sentences(native, runtime, report, failures, args)
         check_long_form(native, runtime, report, failures, args)
