@@ -1,6 +1,6 @@
 # Scylla's Band
 
-Scylla's Band is a local text-to-speech runtime for ten managed voices. It predicts phone durations, generates continuous acoustic latents with rectified flow, and decodes speech at 24 kHz through an acoustic adapter and Vocos.
+Scylla's Band is a local text-to-speech runtime for fourteen managed voices. It predicts phone durations, generates continuous acoustic latents with rectified flow, and decodes speech at 24 kHz through an acoustic adapter and Vocos.
 
 Delivery is controlled with **energy, tension, valence and assertiveness**, each from **0 to 4** with **2 as neutral**.
 
@@ -12,9 +12,9 @@ Delivery is controlled with **energy, tension, valence and assertiveness**, each
 
 ## Highlights
 
-- Ten voices in seven locales: American and British English, Spanish, Italian, French, German and Vietnamese.
+- Fourteen voices in seven locales: American and British English, Spanish, Italian, French, German and Vietnamese.
 - Delivery controls for energy, tension, valence and assertiveness on 0–4 scales, combinable into calm, assertive, joyful, angry or sad delivery.
-- Runs locally on CPU. The default LiteRT bundle synthesizes more than 35× faster than real time on an 8-thread desktop CPU.
+- Runs locally on CPU. The default LiteRT bundle synthesizes more than 30× faster than real time on an 8-thread desktop CPU.
 - LiteRT, Core ML, Core AI and ONNX Runtime bundles with INT8 weights; every latent-length bucket shares one set of weights. On Apple devices, Core ML and Core AI run on the GPU or the Neural Engine.
 - Long text is spoken in passages of up to about nine seconds, each with the surrounding text as context and continuing from the sound of the one before, and can be streamed as it is generated.
 - Multi-voice, multilingual dialogue with inline `[voice:language:delivery]` tags.
@@ -76,7 +76,7 @@ Combining the controls gives familiar deliveries:
 | Angry | `energy=2.3,tension=2.4,valence=1.4,assertiveness=2.4` |
 | Sad | `energy=1.7,tension=1.5,valence=1.4,assertiveness=2` |
 
-These are moderate styles; how strongly each comes through varies with voice, language and text. The [voice gallery](https://lowkeytea.github.io/scyllasband/#delivery) plays each of them for all ten voices.
+These are moderate styles; how strongly each comes through varies with voice, language and text. The [voice gallery](https://lowkeytea.github.io/scyllasband/#delivery) plays each of them for all fourteen voices.
 
 ```bash
 python -m scyllasband speak --voice ariadne \
@@ -127,8 +127,8 @@ python -m scyllasband plan --voice scylla "Print the sentence plan as JSON."
 | --- | --- | --- | --- |
 | Core ML | Apple silicon Macs (macOS 15 and later); iOS and iPadOS 18 and visionOS 2 apps | 142 MB | `coremltools`, installed the first time a Core ML bundle runs (or `pip install -e ".[coreml]"`) |
 | Core AI | iOS, iPadOS and visionOS 27 apps; also runs on macOS 27 | 155 MB | `coreai-core`, installed the first time a Core AI bundle runs (or `pip install -e ".[coreai]"`) |
-| LiteRT | Linux, Windows, Android and Intel Macs | 164 MB | `ai-edge-litert` (installed with this package) |
-| ONNX Runtime | anywhere ONNX Runtime runs | 262 MB | `onnxruntime`, installed the first time you use `--backend onnx` (or `pip install -e ".[onnx]"`) |
+| LiteRT | Linux, Windows, Android and Intel Macs | 228 MB | `ai-edge-litert` (installed with this package) |
+| ONNX Runtime | anywhere ONNX Runtime runs | 323 MB | `onnxruntime`, installed the first time you use `--backend onnx` (or `pip install -e ".[onnx]"`) |
 
 `python -m scyllasband download` fetches the Core ML bundle on an Apple silicon Mac and the LiteRT bundle elsewhere. A Mac that can build apps for iOS, iPadOS or visionOS 27 (macOS 27, or an Xcode with those SDKs) is also offered the Core AI bundle those apps use; the Mac itself keeps running Core ML. `--flavor` downloads a particular bundle. Commands use the installed bundle for the machine; `--backend` and `--bundle` select another, for example `--backend coreai` on macOS 27. Every bundle holds INT8 weights for the transformers and the G2P; LiteRT, Core ML and Core AI also quantize the vocoder. `--threads` sets the CPU threads per graph. Sampling uses Euler with 4 steps by default (`--sampler`, `--steps`).
 
@@ -198,10 +198,10 @@ Language tags keep the active delivery request. A new delivery tag replaces it, 
 
 | Voices | English dialect |
 | --- | --- |
-| Ariadne, Felix, Gwen, Max, Rex, Scylla, Stone | `en_us` |
+| Ariadne, Felix, Gwen, Kincade, Max, Poppy, Priya, Rex, Scylla, Stone, Thistle | `en_us` |
 | Ink, Orpheus, Tuesday | `en_gb` |
 
-All ten also support `es`, `it`, `fr`, `de`, and `vi`: 60 trained voice/locale pairs. `en` selects the voice's own English dialect. The runtime rejects unsupported voice/dialect combinations.
+All fourteen also support `es`, `it`, `fr`, `de`, and `vi`: 84 trained voice/locale pairs. `en` selects the voice's own English dialect. The runtime rejects unsupported voice/dialect combinations.
 
 ## Text handling
 
@@ -253,7 +253,7 @@ Latent-length buckets are 128, 256, 384, 512, 768 and 1024 frames (about 2.7 to 
 
 ## Validation and limitations
 
-Release checks include export parity against PyTorch, end-to-end comparison of full passages with the PyTorch reference path, comparison of the quantized bundles with full precision on real sentences (for Core ML and Core AI on each compute unit they use), and listening across all ten voices. Passing tests does not establish naturalness; listening decides quality.
+Release checks include export parity against PyTorch, end-to-end comparison of full passages with the PyTorch reference path, comparison of the quantized bundles with full precision on real sentences (for Core ML and Core AI on each compute unit they use), and listening across all fourteen voices. Passing tests does not establish naturalness; listening decides quality.
 
 Known limitations include occasional pronunciation errors, occasional roughness on fast, wide pitch movements in some voices, and limited strong anger or sadness. No arbitrary-speaker cloning is provided.
 

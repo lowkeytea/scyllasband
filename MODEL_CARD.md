@@ -8,7 +8,7 @@ tags: [text-to-speech, tts, litert, onnx, coreml, coreai, pytorch, multilingual,
 
 # Scylla's Band v2
 
-Release **`v2-20261006`**. The [Scylla's Band runtime](https://github.com/lowkeytea/scyllasband) supports this release. Tag `v2-20261006-apple` adds Core ML and Core AI bundles of the same model; the runtime downloads from that tag.
+Release **`v2-20261020`**. The [Scylla's Band runtime](https://github.com/lowkeytea/scyllasband) supports this release. Tag `v2-20261020-apple` adds Core ML and Core AI bundles of the same model; the runtime downloads from that tag.
 
 The model exposes **energy, tension, valence and assertiveness** on **0–4 scales with neutral at 2**. Combining the controls changes the generated delivery; a request is not a guarantee of a particular perceived emotion or exact external scorer value.
 
@@ -55,7 +55,7 @@ Combining the controls gives familiar deliveries:
 | Angry | `energy=2.3,tension=2.4,valence=1.4,assertiveness=2.4` |
 | Sad | `energy=1.7,tension=1.5,valence=1.4,assertiveness=2` |
 
-These are moderate styles; how strongly each comes through varies with voice, language and text. The [voice gallery](https://lowkeytea.github.io/scyllasband/#delivery) plays each of them for all ten voices.
+These are moderate styles; how strongly each comes through varies with voice, language and text. The [voice gallery](https://lowkeytea.github.io/scyllasband/#delivery) plays each of them for all fourteen voices.
 
 `--delivery auto` omits all coordinates. A per-axis `auto` omits just that coordinate; other unspecified fields in a partial request use neutral defaults. Omission is represented by a separate mask, not by the value 2. It is not an automatic text-to-performance planner.
 
@@ -72,7 +72,7 @@ Controls are **global within each request**. This release does not support contr
 | Audio | Mono 24 kHz; 100 mel features; 24 latent channels |
 | Mel / latent hop | 256 / 512 samples |
 | Duration model | Hidden size 320; 8 layers; reads the neighbouring text as context |
-| Vector model | Hidden size 512; 12 layers; adaptive layer normalization and QK normalization |
+| Vector model | Hidden size 640; 16 layers; adaptive layer normalization and QK normalization |
 | Maximum graph phones per sentence | 512 |
 | Trained target length | 64–420 latent frames (about 1.4–9 s) per pass |
 | Latent buckets | 128, 256, 384, 512, 768, 1024 frames |
@@ -114,16 +114,17 @@ The GPU is the default on Apple platforms. The Neural Engine placement runs the 
 
 ## Voices and language coverage
 
-Ten voices: Ariadne, Felix, Gwen, Ink, Max, Orpheus, Rex, Scylla, Stone, Tuesday.
+Fourteen voices: Ariadne, Felix, Gwen, Ink, Kincade, Max, Orpheus, Poppy, Priya, Rex, Scylla, Stone, Thistle, Tuesday.
 
-All ten have Spanish (`es`), Italian (`it`), French (`fr`), German (`de`) and Vietnamese (`vi`). Ink, Orpheus and Tuesday use British English (`en_gb`); the other seven use American English (`en_us`). This is **60 trained voice/locale pairs**, not every combination of ten voices and seven locale IDs.
+All fourteen have Spanish (`es`), Italian (`it`), French (`fr`), German (`de`) and Vietnamese (`vi`). Ink, Orpheus and Tuesday use British English (`en_gb`); the other eleven use American English (`en_us`). This is **84 trained voice/locale pairs**, not every combination of fourteen voices and seven locale IDs.
 
 ## Artifacts
 
-- `litert/` (164 MB): LiteRT bundle; default download. Transformer and vocoder weights are dynamic-range INT8; each size bucket is a signature of one model file, sharing weights.
+- `litert/` (228 MB): LiteRT bundle; default download. Transformer and vocoder weights are dynamic-range INT8; each size bucket is a signature of one model file, sharing weights.
 - `coreai/` (155 MB): Core AI bundle for apps on iOS, iPadOS and visionOS 27 (`.aimodel` assets); it also runs on macOS 27, where the runtime uses the Core ML bundle by default. INT8 weights per output channel with FP16 compute; size buckets are functions of one asset sharing weights. The flow also runs accurately on the Neural Engine (`controls.coreai.neural_engine_assets`), which is the placement for apps that speak in the background; the GPU is the default.
 - `coreml/` (142 MB): Core ML bundle for Apple silicon with iOS 18 / visionOS 2 / macOS 15 and later (compiled `.mlmodelc` assets), with INT8 weights and FP16 compute; GPU by default, CPU in background apps.
-- `onnx/` (262 MB): ONNX Runtime bundle with dynamic INT8 transformer weights; the vocoder stays in full precision.
+- `onnx/` (323 MB): ONNX Runtime bundle with dynamic INT8 transformer weights; the vocoder stays in full precision.
+- `webgpu/` (325 MB): ONNX Runtime bundle for ONNX Runtime Web's WebGPU backend, used by the browser demo. Transformer weights are INT8 with float compute (`MatMulNBits`), which runs entirely on the GPU; the vocoder stays in full precision.
 - `pytorch/`: duration, vector, adapter/vocoder and G2P weights (no training state), with the release configuration assets.
 - `SHA256SUMS.json`: published-file hashes.
 
@@ -134,8 +135,8 @@ Every runtime bundle includes the G2P model in a matching precision. The Apple b
 Release validation separates graph accuracy, frontend/timing behaviour and perceived speech quality:
 
 - Component comparisons against PyTorch during export, and end-to-end comparison of full passages against the PyTorch reference path.
-- The distilled flow at 4 Euler steps compared with the base flow at 8 Heun steps on the same passages, seeds and noise: equal distance to the 32-step output, confirmed by listening across all ten voices.
-- Quantized bundles compared with full precision on real sentences: identical phonemes, phone durations and generated latents within small tolerances, followed by listening across all ten voices.
+- The distilled flow at 4 Euler steps compared with the base flow on the same passages, seeds and noise: closer to the base flow's 32-step output than the base flow's own 8 Heun steps, and compared blind with the 32-step base flow by listening across all fourteen voices.
+- Quantized bundles compared with full precision on real sentences (48 passages, six voices): identical phonemes; identical phone durations for 97.7% (ONNX), 97.9% (LiteRT) and 99.6% (WebGPU) of phones, the rest one frame apart; generated latents within 2% median relative error; followed by listening across all fourteen voices.
 - G2P conversions compared with the full-precision G2P on multilingual text.
 - Core ML and Core AI bundles compared with the PyTorch model on every graph and on real passages, on each compute unit they are used with (GPU, CPU, and for Core AI the Neural Engine): identical phonemes apart from two near-tie stress marks also seen in FP16, fewer changed phone durations than the LiteRT bundle, and smaller latent and spectral differences. The Apple exports rewrite three computations into equivalent forms that FP16 and the Neural Engine evaluate exactly (span pooling, the modifier bit decoding, the duration model's combined phone/segment index), and scale the flow's residual stream; in FP32 the rewritten graphs are bit-identical to the trained ones.
 

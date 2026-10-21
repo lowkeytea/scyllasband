@@ -4,9 +4,13 @@
 [scylla:en_us:energy=2.3,tension=2.4,valence=1.4,assertiveness=2.4] Oh, come on! I stayed calm, I sulked, and somebody still cranked my tension all the way up!
 [ink:en_gb:energy=1.8,tension=1,valence=2.2,assertiveness=2.1] Scylla! Deep breath... relax...
 [ink:en_gb:valence=2.2] What are you actually trying to tell these nice people?
-[gwen:en_us:valence=2.2] I think she means: Scylla's Band is a 150 megabyte voice model with ten voices, six languages, and control over how we sound. It runs fast, right on your iPhone or Android phone.
-[tuesday:en_gb] So let's cover what's new! German, French and Vietnamese are new this time.
-[felix:de:energy=1.8,tension=1,valence=2.2,assertiveness=2.1] Felix hier. Ich spreche ganz ruhig, damit niemand meinen Akzent hört. Klinge ich wie ein Amerikaner, der Deutsch spricht? Sagt es mir nicht. Bei 150 Megabyte war für Umlaute kaum noch Platz.
+[gwen:en_us:valence=2.2] I think she means: Scylla's Band is a voice model with fourteen voices, six languages, and control over how we sound. It runs fast, right on your iPhone or Android phone.
+[tuesday:en_gb] So let's cover what's new! Four new voices joined the band this time.
+[thistle:en_us:energy=2.2,valence=2.1,assertiveness=2.1] Hi! I'm Thistle, one of the new ones. I've been rehearsing this line all week!
+[kincade:en_us] Kincade. Also new. I mostly read the classics, so expect a little drama.
+[poppy:fr:energy=2.2,valence=2.1] Bonjour, moi c'est Poppy ! Je parle français... et peut-être un peu trop.
+[priya:en_us:valence=2.1] And I'm Priya. Somebody has to keep these four organized.
+[felix:de:energy=1.8,tension=1,valence=2.2,assertiveness=2.1] Felix hier. Ich spreche ganz ruhig, damit niemand meinen Akzent hört. Klinge ich wie ein Amerikaner, der Deutsch spricht? Sagt es mir nicht. Bei 230 Megabyte war für Umlaute kaum noch Platz.
 [tuesday:en_gb] Felix says hello. I promise that's it.
 [stone:fr:energy=1.8,tension=1.6] Je m'appelle Stone. Vous pouvez régler mes émotions. Bonne chance.
 [scylla:vi:energy=2.3,valence=2.2] Thấy chưa? Vẫn là tôi, giờ tôi có thể làm phiền bạn bằng sáu thứ tiếng.

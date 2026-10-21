@@ -4,7 +4,7 @@ An on-device text-to-speech studio for the Scylla's Band v2 model (`scyllasband_
 
 ## What it demonstrates
 
-- All ten voices and each voice's languages, read from the runtime (`scyllasband_voices_json`) rather than hard-coded.
+- All fourteen voices and each voice's languages, read from the runtime (`scyllasband_voices_json`) rather than hard-coded.
 - Measured delivery: four continuous sliders, energy, tension, valence and assertiveness, each 0.5-3.1 with 2 neutral (0.1 steps), plus a whisper switch. Quick presets (Neutral, Calm, Assertive, Joyful, Angry, Sad, Whisper) only fill the sliders. The app limits the four axes to 0.5-3.1 (see Delivery range):
 
   | Preset | Delivery |
@@ -33,7 +33,7 @@ Imported text uses the same format as `python -m scyllasband group-speak`:
 
 ## Build
 
-1. Download the LiteRT bundle (about 164 MB, INT8) from the repository root:
+1. Download the LiteRT bundle (about 228 MB, INT8) from the repository root:
 
    ```bash
    python -m scyllasband download --yes

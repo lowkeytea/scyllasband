@@ -2,7 +2,7 @@
 
 [Open the voice gallery](https://lowkeytea.github.io/scyllasband/) to play every clip in the browser.
 
-The clips use the default LiteRT bundle (release `v2-20261006`), euler sampling with 4 steps and
+The clips use the default LiteRT bundle (release `v2-20261020`), euler sampling with 4 steps and
 seed `2027`. To regenerate them after downloading the model:
 
 ```bash
@@ -13,8 +13,8 @@ The script reads `samples/gallery_script.json` and writes `docs/index.html`, `do
 
 ## Long form
 
-- [Single-voice narration](https://lowkeytea.github.io/scyllasband/#narration) (5:09), from `data/test_document.txt`
-- [Multi-voice multilingual dialogue](https://lowkeytea.github.io/scyllasband/#dialogue) (2:04), from `data/walkthrough_2nd.txt`
+- [Single-voice narration](https://lowkeytea.github.io/scyllasband/#narration) (5:00), from `data/test_document.txt`
+- [Multi-voice multilingual dialogue](https://lowkeytea.github.io/scyllasband/#dialogue) (2:06), from `data/walkthrough_2nd.txt`
 
 ## Languages
 
@@ -26,11 +26,15 @@ Each voice reads the same line in its own English and in five more languages.
 | Felix | [Listen](https://lowkeytea.github.io/scyllasband/#felix-en) | [Listen](https://lowkeytea.github.io/scyllasband/#felix-es) | [Listen](https://lowkeytea.github.io/scyllasband/#felix-it) | [Listen](https://lowkeytea.github.io/scyllasband/#felix-fr) | [Listen](https://lowkeytea.github.io/scyllasband/#felix-de) | [Listen](https://lowkeytea.github.io/scyllasband/#felix-vi) |
 | Gwen | [Listen](https://lowkeytea.github.io/scyllasband/#gwen-en) | [Listen](https://lowkeytea.github.io/scyllasband/#gwen-es) | [Listen](https://lowkeytea.github.io/scyllasband/#gwen-it) | [Listen](https://lowkeytea.github.io/scyllasband/#gwen-fr) | [Listen](https://lowkeytea.github.io/scyllasband/#gwen-de) | [Listen](https://lowkeytea.github.io/scyllasband/#gwen-vi) |
 | Ink | [Listen](https://lowkeytea.github.io/scyllasband/#ink-en) | [Listen](https://lowkeytea.github.io/scyllasband/#ink-es) | [Listen](https://lowkeytea.github.io/scyllasband/#ink-it) | [Listen](https://lowkeytea.github.io/scyllasband/#ink-fr) | [Listen](https://lowkeytea.github.io/scyllasband/#ink-de) | [Listen](https://lowkeytea.github.io/scyllasband/#ink-vi) |
+| Kincade | [Listen](https://lowkeytea.github.io/scyllasband/#kincade-en) | [Listen](https://lowkeytea.github.io/scyllasband/#kincade-es) | [Listen](https://lowkeytea.github.io/scyllasband/#kincade-it) | [Listen](https://lowkeytea.github.io/scyllasband/#kincade-fr) | [Listen](https://lowkeytea.github.io/scyllasband/#kincade-de) | [Listen](https://lowkeytea.github.io/scyllasband/#kincade-vi) |
 | Max | [Listen](https://lowkeytea.github.io/scyllasband/#max-en) | [Listen](https://lowkeytea.github.io/scyllasband/#max-es) | [Listen](https://lowkeytea.github.io/scyllasband/#max-it) | [Listen](https://lowkeytea.github.io/scyllasband/#max-fr) | [Listen](https://lowkeytea.github.io/scyllasband/#max-de) | [Listen](https://lowkeytea.github.io/scyllasband/#max-vi) |
 | Orpheus | [Listen](https://lowkeytea.github.io/scyllasband/#orpheus-en) | [Listen](https://lowkeytea.github.io/scyllasband/#orpheus-es) | [Listen](https://lowkeytea.github.io/scyllasband/#orpheus-it) | [Listen](https://lowkeytea.github.io/scyllasband/#orpheus-fr) | [Listen](https://lowkeytea.github.io/scyllasband/#orpheus-de) | [Listen](https://lowkeytea.github.io/scyllasband/#orpheus-vi) |
+| Poppy | [Listen](https://lowkeytea.github.io/scyllasband/#poppy-en) | [Listen](https://lowkeytea.github.io/scyllasband/#poppy-es) | [Listen](https://lowkeytea.github.io/scyllasband/#poppy-it) | [Listen](https://lowkeytea.github.io/scyllasband/#poppy-fr) | [Listen](https://lowkeytea.github.io/scyllasband/#poppy-de) | [Listen](https://lowkeytea.github.io/scyllasband/#poppy-vi) |
+| Priya | [Listen](https://lowkeytea.github.io/scyllasband/#priya-en) | [Listen](https://lowkeytea.github.io/scyllasband/#priya-es) | [Listen](https://lowkeytea.github.io/scyllasband/#priya-it) | [Listen](https://lowkeytea.github.io/scyllasband/#priya-fr) | [Listen](https://lowkeytea.github.io/scyllasband/#priya-de) | [Listen](https://lowkeytea.github.io/scyllasband/#priya-vi) |
 | Rex | [Listen](https://lowkeytea.github.io/scyllasband/#rex-en) | [Listen](https://lowkeytea.github.io/scyllasband/#rex-es) | [Listen](https://lowkeytea.github.io/scyllasband/#rex-it) | [Listen](https://lowkeytea.github.io/scyllasband/#rex-fr) | [Listen](https://lowkeytea.github.io/scyllasband/#rex-de) | [Listen](https://lowkeytea.github.io/scyllasband/#rex-vi) |
 | Scylla | [Listen](https://lowkeytea.github.io/scyllasband/#scylla-en) | [Listen](https://lowkeytea.github.io/scyllasband/#scylla-es) | [Listen](https://lowkeytea.github.io/scyllasband/#scylla-it) | [Listen](https://lowkeytea.github.io/scyllasband/#scylla-fr) | [Listen](https://lowkeytea.github.io/scyllasband/#scylla-de) | [Listen](https://lowkeytea.github.io/scyllasband/#scylla-vi) |
 | Stone | [Listen](https://lowkeytea.github.io/scyllasband/#stone-en) | [Listen](https://lowkeytea.github.io/scyllasband/#stone-es) | [Listen](https://lowkeytea.github.io/scyllasband/#stone-it) | [Listen](https://lowkeytea.github.io/scyllasband/#stone-fr) | [Listen](https://lowkeytea.github.io/scyllasband/#stone-de) | [Listen](https://lowkeytea.github.io/scyllasband/#stone-vi) |
+| Thistle | [Listen](https://lowkeytea.github.io/scyllasband/#thistle-en) | [Listen](https://lowkeytea.github.io/scyllasband/#thistle-es) | [Listen](https://lowkeytea.github.io/scyllasband/#thistle-it) | [Listen](https://lowkeytea.github.io/scyllasband/#thistle-fr) | [Listen](https://lowkeytea.github.io/scyllasband/#thistle-de) | [Listen](https://lowkeytea.github.io/scyllasband/#thistle-vi) |
 | Tuesday | [Listen](https://lowkeytea.github.io/scyllasband/#tuesday-en) | [Listen](https://lowkeytea.github.io/scyllasband/#tuesday-es) | [Listen](https://lowkeytea.github.io/scyllasband/#tuesday-it) | [Listen](https://lowkeytea.github.io/scyllasband/#tuesday-fr) | [Listen](https://lowkeytea.github.io/scyllasband/#tuesday-de) | [Listen](https://lowkeytea.github.io/scyllasband/#tuesday-vi) |
 
 ## Delivery
