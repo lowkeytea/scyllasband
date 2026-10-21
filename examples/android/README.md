@@ -63,7 +63,7 @@ python -m scyllasband download --flavor onnx --yes
 ./gradlew -Pscyllasband.backend=onnx :app:assembleDebug
 ```
 
-This links `libscyllasband` against ONNX Runtime 1.30.0 (`onnxruntime-android`) and embeds `scyllasband/models/onnx` (about 250 MB). ONNX Runtime builds run on the CPU. LiteRT is the default.
+This links `libscyllasband` against ONNX Runtime 1.30.0 (`onnxruntime-android`) and embeds `scyllasband/models/onnx` (about 323 MB). ONNX Runtime builds run on the CPU. LiteRT is the default.
 
 ## Accelerator
 
