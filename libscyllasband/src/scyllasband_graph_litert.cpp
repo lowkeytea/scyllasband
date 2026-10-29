@@ -241,6 +241,13 @@ private:
             if (settings_.gpu_priority) gpu += "priority = " + std::to_string(settings_.gpu_priority) + "\n";
             if (settings_.gpu_quantized_weights) gpu += "allow_src_quantized_fc_conv_ops = true\n";
             if (cache) gpu += "serialization_dir = \"" + toml_path(cache_dir_) + "\"\nmodel_cache_key = \"" + cache_key_ + "\"\nserialize_program_cache = true\n";
+            // SCYLLASBAND_GPU_TOML replaces these options (LiteRT "gpu_options" TOML, one key per line), for device experiments.
+            const std::string override_toml = env_string("SCYLLASBAND_GPU_TOML");
+            if (!override_toml.empty()) {
+                gpu = override_toml;
+                std::replace(gpu.begin(), gpu.end(), ';', '\n');
+                gpu += "\n";
+            }
             status = add_opaque(options, "gpu_options", gpu);
         }
         if (status == kLiteRtStatusOk) status = LiteRtCreateCompiledModel(env_, model_, options, &compiled_);
