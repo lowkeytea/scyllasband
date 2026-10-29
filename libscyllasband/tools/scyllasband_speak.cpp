@@ -20,6 +20,8 @@ const char* kUsage =
     "  [--temperature 1.0] [--threads N] [--accelerator cpu|gpu|auto|ane] [--no-normalize] [--metadata OUT.json]\n"
     "  [--plan-only] [--stream] [--warmup] [--timings N]\n"
     "  --timings N: speak the text N times in this process and print load, warm-up and per-request first-audio and total\n"
+    "  --timings-file PATH: speak each line of PATH once in this process (new text every request, so the G2P runs on the\n"
+    "    path to first audio), after one request with the first line; prints the timings only, never the text\n"
     "  times as JSON (the first request includes opening its graphs; later ones show a warm runtime)\n";
 
 double milliseconds_since(std::chrono::steady_clock::time_point start) {
@@ -63,6 +65,7 @@ int main(int argc, char** argv) {
     std::string voice, language, delivery;
     bool plan_only = false, stream = false, warm = false;
     int threads = 0, timings = 0;
+    std::vector<std::string> timing_lines;  // --timings-file: one request per line
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         auto value = [&]() -> std::string {
@@ -96,11 +99,20 @@ int main(int argc, char** argv) {
         else if (arg == "--stream") stream = true;
         else if (arg == "--warmup") warm = true;
         else if (arg == "--timings") timings = std::stoi(value());
+        else if (arg == "--timings-file") {
+            std::ifstream in(value());
+            for (std::string line; std::getline(in, line);) {
+                if (!line.empty()) timing_lines.push_back(line);
+            }
+            if (timing_lines.size() < 2) return fail("--timings-file needs at least two lines");
+            timings = static_cast<int>(timing_lines.size());
+        }
         else {
             std::fprintf(stderr, "unknown argument %s\n%s", arg.c_str(), kUsage);
             return 2;
         }
     }
+    if (text.empty() && !timing_lines.empty()) text = timing_lines.front();
     if (bundle.empty() || voice.empty() || text.empty()) {
         std::fprintf(stderr, "%s", kUsage);
         return 2;
@@ -139,6 +151,7 @@ int main(int argc, char** argv) {
         };
         std::printf("{\"load_ms\": %.1f, \"warmup_ms\": %.1f, \"requests\": [", load_ms, warmup_ms);
         for (int run = 0; run < timings && status == 0; ++run) {
+            if (!timing_lines.empty()) request.text = timing_lines[static_cast<std::size_t>(run)].c_str();
             Timing timing{std::chrono::steady_clock::now()};
             auto callback = [](const ScyllasBandEvent* event, void* user) -> int32_t {
                 auto* t = static_cast<Timing*>(user);
