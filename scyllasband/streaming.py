@@ -81,18 +81,19 @@ def synthesize_plan_stream(engine: Engine, plan: SynthesisPlan, options: StreamO
     previous_chain: str | None = None
     for chain in _chains(plan.chunks):
         stream = _ChainStream(engine, chain)
-        values, present, _ = delivery_tensors(chain[0].delivery)
+        values, present, row, resolved = engine.delivery_inputs(chain[0].voice, chain[0].delivery)
         tail: np.ndarray | None = None
         start = 0
         while True:
-            end, sentence, durations = _next_target(engine, stream, start, spoken == 0, (values, present), options.speed)
+            end, sentence, durations = _next_target(engine, stream, start, spoken == 0, (values, present), options.speed, row)
             chunk = stream.target_chunk(start, end)
             seed = None if options.seed is None else int(options.seed) + chunk.index
             yield StreamingEvent(type="chunk_started", chunk=chunk)
             _progress(progress, f"[scyllasband] {chunk.chunk_id} {chunk.voice}/{chunk.language}: {chunk.text[:80]}")
             result = engine.synthesize_sentence(sentence, voice=chunk.voice, language=chunk.language, delivery=(values, present),
                                                 prefix=tail, steps=options.steps, sampler=options.sampler, speed=options.speed,
-                                                noise_scale=options.temperature, rng=np.random.default_rng(seed), durations=durations)
+                                                noise_scale=options.temperature, rng=np.random.default_rng(seed), durations=durations,
+                                                voice_row=row)
             audio = engine.decode(result.latents, voice=chunk.voice, language=chunk.language, left=tail)
             if previous_chain is not None and previous_chain != chunk.chain_id and options.pause_ms > 0:
                 audio = np.concatenate([np.zeros(int(sample_rate * options.pause_ms / 1000), np.float32), audio])
@@ -103,7 +104,7 @@ def synthesize_plan_stream(engine: Engine, plan: SynthesisPlan, options: StreamO
             if first_audio_ms is None:
                 first_audio_ms = (time.perf_counter() - started) * 1000
             yield StreamingEvent(type="audio_chunk", chunk=chunk, audio=audio, sample_rate=sample_rate,
-                                 metadata=dict(result.metadata, seed=seed, first_audio_ms=round(first_audio_ms, 1)))
+                                 metadata=dict(result.metadata, seed=seed, first_audio_ms=round(first_audio_ms, 1), delivery=resolved))
             if stream.at_end(end):
                 break
             start = end
@@ -218,10 +219,11 @@ class _ChainStream:
 
 
 def _next_target(engine: Engine, stream: _ChainStream, start: int, first: bool,
-                 delivery: tuple[np.ndarray, np.ndarray], speed: float) -> tuple[int, Sentence, list[int]]:
+                 delivery: tuple[np.ndarray, np.ndarray], speed: float, voice_row: int | None = None) -> tuple[int, Sentence, list[int]]:
     """The end of the next target, its sentence and durations."""
     shortest, longest = engine.min_target_frames, engine.max_target_frames
-    voice, language = engine.voice_index(stream.chunks[0].voice), engine.language_index(stream.chunks[0].language)
+    voice = engine.voice_index(stream.chunks[0].voice) if voice_row is None else int(voice_row)
+    language = engine.language_index(stream.chunks[0].language)
 
     def measure(end: int) -> tuple[Sentence, list[int]]:
         sentence = stream.sentence(start, end)
