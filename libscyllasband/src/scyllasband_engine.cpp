@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <iterator>
 #include <random>
@@ -26,6 +27,10 @@ const std::vector<std::string> kVectorInputs = {"noise", "time", "expanded_phone
                                                 "expanded_boundary_event_ids", "expanded_modifier_event_ids", "expanded_phone_phase",
                                                 "expanded_phone_log_duration", "expanded_sentence_type_ids"};
 const std::vector<std::string> kVocoderInputs = {"latents", "latent_mask", "voice_id", "language_id", "emotion_id"};
+const std::vector<std::string> kFlowInputs = {"noise", "expanded_phone_ids", "voice_id", "language_id", "delivery_values", "delivery_present",
+                                              "latent_mask", "span_context_hidden", "prefix_latents", "prefix_mask", "expanded_boundary_event_ids",
+                                              "expanded_modifier_event_ids", "expanded_phone_phase", "expanded_phone_log_duration",
+                                              "expanded_sentence_type_ids"};
 const std::vector<std::string> kRequiredAssets = {"phone_vocab", "voice_index", "language_index", "g2p_config", "g2p_tokenizer", "g2p_language_map"};
 
 std::map<std::string, int64_t> load_index(const std::string& path) {
@@ -93,6 +98,7 @@ Engine::Engine(const BackendOptions& options, std::unique_ptr<Backend> backend) 
     if (!std::filesystem::is_regular_file(manifest_path)) throw std::invalid_argument("No manifest.json in " + bundle_dir_);
     manifest_ = Json::parse_file(manifest_path.string());
     validate();
+    backend_->configure(manifest_);
     const Json& assets = manifest_.get("assets");
     const Json& controls = manifest_.get("controls");
     auto asset = [&](const std::string& key) { return bundle_dir_ + "/" + assets.get(key).str(); };
@@ -120,7 +126,7 @@ Engine::Engine(const BackendOptions& options, std::unique_ptr<Backend> backend) 
     default_sampler_ = controls.get("sampler").get("default").str("heun");
     for (const Json& b : controls.get("target_buckets").get("buckets").elements()) {
         buckets_.push_back(Bucket{b.get("latent_frames").integer(), b.get("vector_estimator").str(), b.get("vocoder").str(),
-                                  b.get("vector_flow").str()});
+                                  b.get("vector_flow").str(), b.get("vector_estimator_first").str(), b.get("vector_flow_first").str()});
     }
     std::sort(buckets_.begin(), buckets_.end(), [](const Bucket& a, const Bucket& b) { return a.frames < b.frames; });
     // v2 was trained on targets of 64 to 420 latent frames (about 1.4 to 9 seconds): shorter targets lose their prosody and
@@ -133,6 +139,10 @@ Engine::Engine(const BackendOptions& options, std::unique_ptr<Backend> backend) 
     fused_steps_ = static_cast<int>(controls.get("fused_flow").get("steps").integer(0));
     for (const Json& b : controls.get("g2p_buckets").elements()) g2p_buckets_.emplace_back(b.get("text_tokens").integer(), b.get("component").str());
     std::sort(g2p_buckets_.begin(), g2p_buckets_.end());
+    for (const Json& b : controls.get("span_buckets").elements()) {
+        span_buckets_.push_back(SpanBucket{b.get("phones").integer(), b.get("duration_predictor").str(), b.get("vector_context_encoder").str()});
+    }
+    std::sort(span_buckets_.begin(), span_buckets_.end(), [](const SpanBucket& a, const SpanBucket& b) { return a.phones < b.phones; });
     for (const Json& v : manifest_.get("voices").elements()) {
         Voice voice{v.get("id").str(), {}, v.get("default_language").str()};
         for (const Json& language : v.get("languages").elements()) voice.languages.push_back(language.str());
@@ -184,6 +194,13 @@ void Engine::validate() const {
     for (const Json& b : buckets.elements()) {
         expected.emplace_back(b.get("vector_estimator").str(), &kVectorInputs);
         expected.emplace_back(b.get("vocoder").str(), &kVocoderInputs);
+        if (!b.get("vector_estimator_first").str().empty()) expected.emplace_back(b.get("vector_estimator_first").str(), &kVectorInputs);
+        if (!b.get("vector_flow").str().empty()) expected.emplace_back(b.get("vector_flow").str(), &kFlowInputs);
+        if (!b.get("vector_flow_first").str().empty()) expected.emplace_back(b.get("vector_flow_first").str(), &kFlowInputs);
+    }
+    for (const Json& b : controls.get("span_buckets").elements()) {
+        if (!b.get("duration_predictor").str().empty()) expected.emplace_back(b.get("duration_predictor").str(), &kDurationInputs);
+        if (!b.get("vector_context_encoder").str().empty()) expected.emplace_back(b.get("vector_context_encoder").str(), &kContextInputs);
     }
     const Json& components = manifest_.get("components");
     const std::string backend = backend_->name();
@@ -275,7 +292,16 @@ Graph& Engine::graph(const std::string& component) {
 
 GraphOutput Engine::run(const std::string& component, const std::vector<TensorView>& inputs) {
     if (cancel_generation_.load() != active_generation_) throw CancelledError();
-    return graph(component).run(inputs);
+    // SCYLLASBAND_TRACE_GRAPHS=1 prints each graph call's component and milliseconds to stderr (content-free).
+    static const bool trace = [] {
+        const char* value = std::getenv("SCYLLASBAND_TRACE_GRAPHS");
+        return value != nullptr && value[0] == '1';
+    }();
+    if (!trace) return graph(component).run(inputs);
+    const auto started = std::chrono::steady_clock::now();
+    GraphOutput out = graph(component).run(inputs);
+    std::fprintf(stderr, "scyllasband graph %s %.2f ms\n", component.c_str(), elapsed_ms(started));
+    return out;
 }
 
 const Engine::Bucket& Engine::bucket(int64_t frames) const {
@@ -284,6 +310,13 @@ const Engine::Bucket& Engine::bucket(int64_t frames) const {
     }
     throw OverlongError("Predicted " + std::to_string(frames) + " latent frames, but this bundle supports at most " +
                         std::to_string(buckets_.back().frames) + ". Split the text into shorter sentences.");
+}
+
+const Engine::SpanBucket* Engine::span_bucket(std::size_t phones) const {
+    for (const SpanBucket& b : span_buckets_) {
+        if (static_cast<std::size_t>(b.phones) >= phones && static_cast<std::size_t>(b.phones) < span_width_) return &b;
+    }
+    return nullptr;
 }
 
 std::vector<int> Engine::durations(const Sentence& sentence, int64_t voice, int64_t language, const DeliveryTensors& delivery, double speed) {
@@ -297,11 +330,13 @@ std::vector<int> Engine::durations(const Sentence& sentence, int64_t voice, int6
                                 sentence.before_ids.end());
     std::vector<int64_t> after(sentence.after_ids.begin(), sentence.after_ids.begin() + static_cast<std::ptrdiff_t>(std::min(sentence.after_ids.size(), context_phones_)));
     auto [span, segments] = balanced_context(before, target, after, span_width_);
-    const int64_t width = static_cast<int64_t>(span_width_);
-    std::vector<int64_t> ids = pad(span, span_width_), segs = pad(segments, span_width_);
-    std::vector<uint8_t> mask = pad(std::vector<uint8_t>(span.size(), 1), span_width_);
+    const SpanBucket* narrow = span_bucket(span.size());
+    const std::size_t padded = narrow ? static_cast<std::size_t>(narrow->phones) : span_width_;
+    const int64_t width = static_cast<int64_t>(padded);
+    std::vector<int64_t> ids = pad(span, padded), segs = pad(segments, padded);
+    std::vector<uint8_t> mask = pad(std::vector<uint8_t>(span.size(), 1), padded);
     int64_t voice_id = voice, language_id = language;
-    GraphOutput frames = run("duration_predictor", {view(DType::i64, {1, width}, ids.data()), view(DType::i64, {1, width}, segs.data()),
+    GraphOutput frames = run(narrow && !narrow->duration.empty() ? narrow->duration : std::string("duration_predictor"), {view(DType::i64, {1, width}, ids.data()), view(DType::i64, {1, width}, segs.data()),
                                                     view(DType::b8, {1, width}, mask.data()), view(DType::i64, {1}, &voice_id),
                                                     view(DType::i64, {1}, &language_id), view(DType::f32, {1, 5}, delivery.values),
                                                     view(DType::b8, {1, 5}, delivery.present)});
@@ -334,10 +369,13 @@ SentenceResult Engine::synthesize_sentence(const Sentence& sentence, const std::
     FrameEvents events = frame_events(sentence.phones, durations, sentence.word_starts, following, phone_to_id_, bits_);
 
     auto [span, segments] = balanced_context(before, target, after, span_width_);
-    const int64_t width = static_cast<int64_t>(span_width_);
-    std::vector<int64_t> span_ids = pad(span, span_width_), span_segs = pad(segments, span_width_);
-    std::vector<uint8_t> span_mask = pad(std::vector<uint8_t>(span.size(), 1), span_width_);
-    GraphOutput hidden = run("vector_context_encoder", {view(DType::i64, {1, width}, span_ids.data()), view(DType::i64, {1, width}, span_segs.data()),
+    const SpanBucket* narrow = span_bucket(span.size());
+    const bool narrow_context = narrow && !narrow->context.empty();
+    const std::size_t padded = narrow_context ? static_cast<std::size_t>(narrow->phones) : span_width_;
+    const int64_t width = static_cast<int64_t>(padded);
+    std::vector<int64_t> span_ids = pad(span, padded), span_segs = pad(segments, padded);
+    std::vector<uint8_t> span_mask = pad(std::vector<uint8_t>(span.size(), 1), padded);
+    GraphOutput hidden = run(narrow_context ? narrow->context : std::string("vector_context_encoder"), {view(DType::i64, {1, width}, span_ids.data()), view(DType::i64, {1, width}, span_segs.data()),
                                                         view(DType::b8, {1, width}, span_mask.data())});
 
     std::vector<float> prefix_latents(D * P, 0.0f);
@@ -364,11 +402,15 @@ SentenceResult Engine::synthesize_sentence(const Sentence& sentence, const std::
         std::copy_n(noise_values.begin() + static_cast<std::ptrdiff_t>(d * static_cast<std::size_t>(length)), static_cast<std::size_t>(length),
                     x.begin() + static_cast<std::ptrdiff_t>(d * F));
     }
+    // A target without a prefix (a chain's first) uses the bucket's prefix-less graphs when the bundle has them.
+    const bool no_prefix = kept == 0;
+    const std::string& estimator = no_prefix && !chosen.vector_estimator_first.empty() ? chosen.vector_estimator_first : chosen.vector_estimator;
+    const std::string& flow = no_prefix && !chosen.vector_flow_first.empty() ? chosen.vector_flow_first : chosen.vector_flow;
     float time_value = 0.0f;
     std::vector<float> probe(D * F);
     auto velocity = [&](const std::vector<float>& state, float time) {
         time_value = time;
-        return run(chosen.vector_estimator,
+        return run(estimator,
                    {view(DType::f32, {1, latent_dim_, frames}, state.data()), view(DType::f32, {1}, &time_value),
                     view(DType::i64, {1, frames}, expanded.data()), view(DType::i64, {1}, &voice_id), view(DType::i64, {1}, &language_id),
                     view(DType::f32, {1, 5}, delivery.values), view(DType::b8, {1, 5}, delivery.present), view(DType::b8, {1, frames}, latent_mask.data()),
@@ -379,9 +421,9 @@ SentenceResult Engine::synthesize_sentence(const Sentence& sentence, const std::
             .values;
     };
     const bool heun = sampler == "heun";
-    const bool fused = !chosen.vector_flow.empty() && sampler == fused_sampler_ && steps == fused_steps_;
+    const bool fused = !flow.empty() && sampler == fused_sampler_ && steps == fused_steps_;
     if (fused) {
-        x = run(chosen.vector_flow,
+        x = run(flow,
                 {view(DType::f32, {1, latent_dim_, frames}, x.data()), view(DType::i64, {1, frames}, expanded.data()), view(DType::i64, {1}, &voice_id),
                  view(DType::i64, {1}, &language_id), view(DType::f32, {1, 5}, delivery.values), view(DType::b8, {1, 5}, delivery.present),
                  view(DType::b8, {1, frames}, latent_mask.data()), view(DType::f32, hidden.shape, hidden.values.data()),
@@ -422,6 +464,7 @@ SentenceResult Engine::synthesize_sentence(const Sentence& sentence, const std::
     metadata.set("steps", Json(steps));
     metadata.set("sampler", Json(sampler));
     metadata.set("fused_flow", Json(fused));
+    metadata.set("flow_graph", Json(fused ? flow : estimator));
     metadata.set("prefix_frames", Json(static_cast<int64_t>(kept)));
     metadata.set("context_before", Json(std::min(sentence.before_ids.size(), context_phones_)));
     metadata.set("context_after", Json(std::min(sentence.after_ids.size(), context_phones_)));
@@ -692,9 +735,13 @@ bool ends_sentence(TargetCut kind) { return kind == TargetCut::kSentence || kind
 Target next_target(Engine& engine, ChainStream& stream, std::size_t start, bool first, const DeliveryTensors& delivery, double speed) {
     const int64_t shortest = engine.min_target_frames(), longest = engine.max_target_frames();
     const int64_t voice = engine.voice_index(stream.front().voice), language = engine.language_index(stream.front().language);
+    std::map<std::size_t, Target> measured;  // the window's measurement is reused when the chosen end is the same silence
     auto measure = [&](std::size_t end) {
+        auto found = measured.find(end);
+        if (found != measured.end()) return found->second;
         Target target{end, stream.sentence(start, end), {}};
         target.durations = engine.durations(target.sentence, voice, language, delivery, speed);
+        measured.emplace(end, target);
         return target;
     };
     std::size_t window = first ? kFirstWindowPhones : kWindowPhones;

@@ -124,6 +124,9 @@ private:
         int64_t frames;
         std::string vector_estimator, vocoder;
         std::string vector_flow;  // optional: every flow step in one graph, for fused_sampler_/fused_steps_
+        // Optional graphs without the prefix tokens, for targets that have no prefix (a chain's first target). Masked
+        // prefix keys contribute nothing, so they return what the full graphs return there, for less work.
+        std::string vector_estimator_first, vector_flow_first;
     };
     Graph& graph(const std::string& component);
     GraphOutput run(const std::string& component, const std::vector<TensorView>& inputs);
@@ -139,6 +142,14 @@ private:
     std::vector<Voice> voices_;
     std::vector<Bucket> buckets_;
     std::vector<std::pair<int64_t, std::string>> g2p_buckets_;  // optional narrower G2P inputs (text tokens, component), smallest first
+    // Optional narrower span graphs (phones, duration component, context encoder component), smallest first: padding is
+    // masked and positions are absolute, so the narrowest graph that holds the span gives the same values.
+    struct SpanBucket {
+        int64_t phones;
+        std::string duration, context;
+    };
+    std::vector<SpanBucket> span_buckets_;
+    const SpanBucket* span_bucket(std::size_t phones) const;
     std::string fused_sampler_;
     int fused_steps_ = 0;
     std::size_t span_width_ = 512, context_phones_ = 180;
