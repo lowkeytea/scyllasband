@@ -225,9 +225,13 @@ def _next_target(engine: Engine, stream: _ChainStream, start: int, first: bool,
     voice = engine.voice_index(stream.chunks[0].voice) if voice_row is None else int(voice_row)
     language = engine.language_index(stream.chunks[0].language)
 
+    measured: dict[int, tuple[Sentence, list[int]]] = {}   # the window's measurement is reused when the chosen end is the same silence
+
     def measure(end: int) -> tuple[Sentence, list[int]]:
-        sentence = stream.sentence(start, end)
-        return sentence, engine.durations(sentence, voice=voice, language=language, delivery=delivery, speed=speed)
+        if end not in measured:
+            sentence = stream.sentence(start, end)
+            measured[end] = (sentence, engine.durations(sentence, voice=voice, language=language, delivery=delivery, speed=speed))
+        return measured[end]
 
     window = FIRST_WINDOW_PHONES if first else WINDOW_PHONES
     while True:

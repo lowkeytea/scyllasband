@@ -73,9 +73,9 @@ enum PresetParser {
         return segments
     }
 
-    /// `energy=2.3,valence=2.5,whisper=on`: omitted controls are neutral; "neutral" alone resets every control.
-    /// Values may use the model's full 0–4 range; they are clamped to the app's 0.5–3.1 range (see
-    /// `DeliverySettings.valueRange`: past about 3 the training data thins out and the voice distorts).
+    /// `energy=2.3,valence=2.1`: omitted controls are neutral; "neutral" alone resets every control. Values may use the
+    /// full 0–4 scale; each is clamped to its control's supported range, as the runtime would. Whisper is no longer
+    /// supported.
     static func parseDelivery(_ specification: String, tag: String) throws -> DeliverySettings {
         var delivery = DeliverySettings.neutral
         let clean = specification.trimmingCharacters(in: .whitespaces)
@@ -91,10 +91,7 @@ enum PresetParser {
                 throw PresetParserError.invalidTag(tag, "\(control) is repeated")
             }
             if control == "whisper" {
-                guard raw == "on" || raw == "off" else {
-                    throw PresetParserError.invalidTag(tag, "whisper must be on or off")
-                }
-                delivery.whisper = raw == "on"
+                throw PresetParserError.invalidTag(tag, "whisper is not supported; remove it from the delivery")
             } else if let axis = DeliveryAxis(rawValue: control) {
                 guard let value = Float(raw), value.isFinite, DeliverySettings.modelRange.contains(value) else {
                     throw PresetParserError.invalidTag(tag, "\(control) must be a number from 0 to 4")

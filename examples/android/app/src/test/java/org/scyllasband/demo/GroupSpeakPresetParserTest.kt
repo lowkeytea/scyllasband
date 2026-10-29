@@ -39,36 +39,36 @@ class GroupSpeakPresetParserTest {
     }
 
     @Test
-    fun parsesDeliveryAxesAndWhisper() {
+    fun parsesDeliveryAxes() {
         val settings = GroupSpeakPresetParser.parse(
-            "[ink:en_gb:energy=2.5,tension=1.2,whisper=on] Lovely.",
+            "[ink:en_gb:energy=2.2,tension=1.2] Lovely.",
             defaults,
             info,
         ).points.single().settings
 
-        assertEquals(ScyllasBandDelivery(energy = 2.5f, tension = 1.2f, whisper = true), settings.delivery)
+        assertEquals(ScyllasBandDelivery(energy = 2.2f, tension = 1.2f), settings.delivery)
     }
 
     @Test
-    fun clampsTaggedAxesToTheAppRange() {
+    fun clampsTaggedAxesToTheSupportedRanges() {
         val settings = GroupSpeakPresetParser.parse(
             "[ink:en_gb:energy=3.6,tension=0.1,valence=4,assertiveness=3] Loud.",
             defaults,
             info,
         ).points.single().settings
 
-        assertEquals(ScyllasBandDelivery(energy = 3.1f, tension = 0.5f, valence = 3.1f, assertiveness = 3f), settings.delivery)
+        assertEquals(ScyllasBandDelivery(energy = 2.3f, tension = 1f, valence = 2.2f, assertiveness = 2.4f), settings.delivery)
     }
 
     @Test
     fun languageTagKeepsActiveVoiceAndDelivery() {
         val points = GroupSpeakPresetParser.parse(
-            "[ariadne:en_us:energy=2.3,valence=2.5] Good to see you. [es] Me alegra verte.",
+            "[ariadne:en_us:energy=2.3,valence=2.1] Good to see you. [es] Me alegra verte.",
             defaults,
             info,
         ).points
 
-        val expected = ScyllasBandDelivery(energy = 2.3f, valence = 2.5f)
+        val expected = ScyllasBandDelivery(energy = 2.3f, valence = 2.1f)
         assertEquals(expected, points[0].settings.delivery)
         assertEquals(ScyllasBandSegmentSettings("ariadne", "es", expected), points[1].settings)
     }
@@ -76,31 +76,31 @@ class GroupSpeakPresetParserTest {
     @Test
     fun newDeliveryTagResetsUnspecifiedAxesToNeutral() {
         val points = GroupSpeakPresetParser.parse(
-            "[ariadne:en_us:energy=3.5,whisper=on] One. [ariadne:en_us:valence=3] Two.",
+            "[ariadne:en_us:energy=2.3] One. [ariadne:en_us:valence=2.1] Two.",
             defaults,
             info,
         ).points
 
-        assertEquals(ScyllasBandDelivery(valence = 3f), points[1].settings.delivery)
+        assertEquals(ScyllasBandDelivery(valence = 2.1f), points[1].settings.delivery)
     }
 
     @Test
     fun voiceOnlyTagKeepsDeliveryAndFallsBackToTheVoiceDefaultLanguage() {
         val points = GroupSpeakPresetParser.parse(
-            "[ariadne:en_us:energy=3] Hi. [ink] Hello.",
+            "[ariadne:en_us:energy=2.2] Hi. [ink] Hello.",
             defaults,
             info,
         ).points
 
         assertEquals("ink", points[1].settings.voiceId)
         assertEquals("en_gb", points[1].settings.language)
-        assertEquals(ScyllasBandDelivery(energy = 3f), points[1].settings.delivery)
+        assertEquals(ScyllasBandDelivery(energy = 2.2f), points[1].settings.delivery)
     }
 
     @Test
     fun everyLineStartsFromTheDefaults() {
         val points = GroupSpeakPresetParser.parse(
-            "[ink:en_gb:whisper=on] Psst.\n[es] Hola.",
+            "[ink:en_gb:energy=1.6] Psst.\n[es] Hola.",
             defaults,
             info,
         ).points
@@ -115,7 +115,7 @@ class GroupSpeakPresetParserTest {
             "[ink:fr] x",
             "[ink:en_gb:energy=5] x",
             "[ink:en_gb:mood=2] x",
-            "[ink:en_gb:whisper=maybe] x",
+            "[ink:en_gb:whisper=on] x",
             "[ink:en_gb:energy=1,energy=2] x",
             "[ink:en_gb:energy=auto] x",
         ).forEach { source ->

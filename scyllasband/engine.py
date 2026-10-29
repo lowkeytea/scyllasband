@@ -122,11 +122,19 @@ class Engine:
         fused = controls.get("fused_flow") or {}
         self.fused_flow = (str(fused.get("sampler", "")).lower(), int(fused.get("steps", 0)))
         self.flow_graphs = {int(b["latent_frames"]): str(b["vector_flow"]) for b in buckets if b.get("vector_flow")}
+        # Optional graphs without the prefix tokens, for targets with no prefix (a chain's first): masked prefix keys
+        # contribute nothing, so they return what the full graphs return there, for less work.
+        self.first_graphs = {int(b["latent_frames"]): str(b["vector_estimator_first"]) for b in buckets if b.get("vector_estimator_first")}
+        self.first_flow_graphs = {int(b["latent_frames"]): str(b["vector_flow_first"]) for b in buckets if b.get("vector_flow_first")}
         chunking = controls.get("chunking") or {}
         self.min_target_frames = int(chunking.get("min_target_frames", MIN_TARGET_FRAMES))
         self.max_target_frames = min(int(chunking.get("max_target_frames", MAX_TARGET_FRAMES)), self.buckets[-1][0])
         # Optional narrower G2P inputs, smallest first: a phrase runs at the smallest width that holds it.
         self.g2p_buckets = sorted((int(b["text_tokens"]), str(b["component"])) for b in controls.get("g2p_buckets") or [])
+        # Optional narrower span graphs: padding is masked and positions are absolute, so the narrowest that holds the span
+        # gives the same values. [(phones, duration component, context encoder component)], smallest first.
+        self.span_buckets = sorted((int(b["phones"]), str(b.get("duration_predictor") or ""), str(b.get("vector_context_encoder") or ""))
+                                   for b in controls.get("span_buckets") or [])
         self._session_factory = session_factory or self._onnx_session
         self._sessions: dict[str, Any] = {}
         self._lock = threading.RLock()
@@ -155,6 +163,12 @@ class Engine:
                 if width >= length:
                     return self._run(name, text=np.asarray(text)[:, :width])
         return self._run("g2p", text=text)
+
+    def _span_graph(self, phones: int, which: int, default: str) -> tuple[int, str]:
+        for width, *names in self.span_buckets:
+            if phones <= width < self.span_width and names[which]:
+                return width, names[which]
+        return self.span_width, default
 
     @property
     def max_frames(self) -> int:
@@ -210,9 +224,10 @@ class Engine:
                                 frames=len(target), limit=self.span_width)
         span, segments = balanced_context(sentence.before_ids[-self.context_phones:], target,
                                           sentence.after_ids[:self.context_phones], self.span_width)
-        ids, segs, mask = _pad(span, self.span_width), _pad(segments, self.span_width), _pad([True] * len(span), self.span_width, False)
+        width, graph = self._span_graph(len(span), 0, "duration_predictor")
+        ids, segs, mask = _pad(span, width), _pad(segments, width), _pad([True] * len(span), width, False)
         values, present = delivery
-        frames = self._run("duration_predictor", span_phone_ids=ids, span_segment_ids=segs, span_mask=mask,
+        frames = self._run(graph, span_phone_ids=ids, span_segment_ids=segs, span_mask=mask,
                            voice_id=_scalar(voice), language_id=_scalar(language), delivery_values=values, delivery_present=present)
         offset = int(((segs == 0) & mask).sum())
         return frames_to_durations(frames[0, offset:offset + len(target)].tolist(), sentence.phones, scale=1.0 / float(speed))
@@ -235,9 +250,9 @@ class Engine:
                               [self._id_to_token(i) for i in sentence.after_ids[:self.context_phones]], self.phone_to_id, self.bits)
         span, segments = balanced_context(sentence.before_ids[-self.context_phones:], target, sentence.after_ids[:self.context_phones],
                                           self.span_width)
-        hidden = self._run("vector_context_encoder", span_context_phone_ids=_pad(span, self.span_width),
-                           span_context_segment_ids=_pad(segments, self.span_width),
-                           span_context_mask=_pad([True] * len(span), self.span_width, False))
+        width, graph = self._span_graph(len(span), 1, "vector_context_encoder")
+        hidden = self._run(graph, span_context_phone_ids=_pad(span, width), span_context_segment_ids=_pad(segments, width),
+                           span_context_mask=_pad([True] * len(span), width, False))
         prefix_latents = np.zeros((1, self.latent_dim, self.prefix_frames), np.float32)
         prefix_mask = np.zeros((1, self.prefix_frames), bool)
         if prefix is not None and prefix.shape[-1]:
@@ -255,7 +270,11 @@ class Engine:
             noise = rng.standard_normal((self.latent_dim, length)).astype(np.float32) * float(noise_scale)
         x[0, :, :length] = noise
         heun = str(sampler).lower() == "heun"
-        fused = self.flow_graphs.get(frames) if (str(sampler).lower(), int(steps)) == self.fused_flow else None
+        no_prefix = not prefix_mask.any()
+        if no_prefix and frames in self.first_graphs:
+            vector_name = self.first_graphs[frames]
+        flows = self.first_flow_graphs if no_prefix and frames in self.first_flow_graphs else self.flow_graphs
+        fused = flows.get(frames) if (str(sampler).lower(), int(steps)) == self.fused_flow else None
         if fused is not None:
             x = self._run(fused, noise=x, **feeds)
         for step in range(0 if fused is not None else int(steps)):
@@ -267,7 +286,7 @@ class Engine:
                 x = x + a / steps
             x = x * mask[:, None, :]
         metadata = dict(phones=sentence.phones, durations=durations, latent_frames=length, bucket=frames, steps=int(steps), sampler=sampler,
-                        fused_flow=fused is not None,
+                        fused_flow=fused is not None, flow_graph=fused if fused is not None else vector_name,
                         prefix_frames=int(prefix_mask.sum()), context_before=min(len(sentence.before_ids), self.context_phones),
                         context_after=min(len(sentence.after_ids), self.context_phones))
         return SentenceResult(latents=x[0, :, :length].copy(), durations=durations, bucket=frames, metadata=metadata)

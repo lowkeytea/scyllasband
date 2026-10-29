@@ -41,6 +41,8 @@ public:
     virtual ~Backend() = default;
     virtual const char* name() const = 0;  // the manifest artifact key: "onnx" or "litert"
     virtual std::string accelerator() const { return "cpu"; }
+    // Called once with the bundle manifest before any graph opens (bundle-level backend settings).
+    virtual void configure(const Json& manifest) { (void)manifest; }
     virtual std::unique_ptr<Graph> open(const std::string& component, const Json& spec) = 0;
 };
 

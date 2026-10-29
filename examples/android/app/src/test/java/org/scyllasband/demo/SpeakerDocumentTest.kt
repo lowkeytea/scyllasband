@@ -8,7 +8,7 @@ import org.junit.Test
 class SpeakerDocumentTest {
     private val default = ScyllasBandSegmentSettings("scylla", "en_us")
     private val spanishJoyful = ScyllasBandSegmentSettings("ariadne", "es", DeliveryPreset.JOYFUL.delivery)
-    private val italianWhisper = ScyllasBandSegmentSettings("ink", "it", ScyllasBandDelivery(energy = 3.4f, whisper = true))
+    private val italianSoft = ScyllasBandSegmentSettings("ink", "it", ScyllasBandDelivery(energy = 1.6f, tension = 1.2f))
 
     @Test
     fun pointAppliesUntilTheNextPoint() {
@@ -17,7 +17,7 @@ class SpeakerDocumentTest {
             text,
             listOf(
                 SpeakerPoint(text.indexOf("Hola"), spanishJoyful),
-                SpeakerPoint(text.indexOf("Dopo"), italianWhisper),
+                SpeakerPoint(text.indexOf("Dopo"), italianSoft),
             ),
         )
 
@@ -25,7 +25,7 @@ class SpeakerDocumentTest {
             listOf(
                 SpeechSegment("Before.", default),
                 SpeechSegment("Hola mundo.", spanishJoyful),
-                SpeechSegment("Dopo.", italianWhisper),
+                SpeechSegment("Dopo.", italianSoft),
             ),
             SpeakerDocument.segments(snapshot, default),
         )
@@ -46,10 +46,10 @@ class SpeakerDocumentTest {
     fun laterPointAtSameOffsetWinsWithoutCreatingEmptyAudio() {
         val snapshot = SpeakerDocumentSnapshot(
             "Hello",
-            listOf(SpeakerPoint(0, spanishJoyful), SpeakerPoint(0, italianWhisper)),
+            listOf(SpeakerPoint(0, spanishJoyful), SpeakerPoint(0, italianSoft)),
         )
         assertEquals(
-            listOf(SpeechSegment("Hello", italianWhisper)),
+            listOf(SpeechSegment("Hello", italianSoft)),
             SpeakerDocument.segments(snapshot, default),
         )
     }

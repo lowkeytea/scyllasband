@@ -47,17 +47,11 @@ class DefaultWalkthroughTest {
 
         assertEquals(source.lines().count { it.isNotBlank() }, snapshot.points.size)
         assertFalse(snapshot.text.contains('['))
-        assertFalse(snapshot.points.any { it.settings.delivery.whisper })
         assertEquals(
             ScyllasBandDelivery(energy = 2.3f, tension = 2.4f, valence = 1.4f, assertiveness = 2.4f),
             snapshot.points.map { it.settings.delivery }.first { it.tension == 2.4f },
         )
-        snapshot.points.forEach {
-            val d = it.settings.delivery
-            listOf(d.energy, d.tension, d.valence, d.assertiveness).forEach { v ->
-                assertTrue(v in DELIVERY_UI_MIN..DELIVERY_UI_MAX)
-            }
-        }
+        snapshot.points.forEach { assertEquals(it.settings.delivery, it.settings.delivery.coerceToUiRange()) }
         assertTrue(snapshot.points.map { it.settings.delivery }.distinct().size >= 8)
     }
 

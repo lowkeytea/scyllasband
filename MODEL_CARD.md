@@ -86,7 +86,7 @@ Long text is spoken as passages within the trained target lengths (64 to 420 lat
 
 ## Performance
 
-Measured with the default sampler (Euler, 4 steps) through the native runtime: `scyllasband_speak` from [libscyllasband](https://github.com/lowkeytea/scyllasband/tree/main/libscyllasband) on the Mac and Android, and the [iOS sample](https://github.com/lowkeytea/scyllasband/tree/main/examples/ios)'s benchmark mode on the iPhone. The text is three sentences, 11.6 s of audio: "The last train leaves at midnight, so pack light. Bring a warm coat, and don't forget the map. If we miss it, we walk, and nobody wants to walk that far in the rain." (voice Scylla, seed 7).
+Measured with the default sampler (Euler, 4 steps) through the native runtime: `scyllasband_speak` from [libscyllasband](https://github.com/lowkeytea/scyllasband/tree/main/libscyllasband) on the Mac and Android, and the [iOS sample](https://github.com/lowkeytea/scyllasband/tree/main/examples/ios)'s benchmark mode on the iPhone. The text is three sentences, 11.9 s of audio: "The last train leaves at midnight, so pack light. Bring a warm coat, and don't forget the map. If we miss it, we walk, and nobody wants to walk that far in the rain." (voice Scylla, seed 7).
 
 - **First run**: from launch to first audio on the first launch after installing the bundle. Core AI specializes its graphs for the device then and caches them until the next OS update.
 - **Cold start**: from launch to first audio on a later launch, including loading the bundle.
@@ -95,20 +95,20 @@ Measured with the default sampler (Euler, 4 steps) through the native runtime: `
 
 | Device | Bundle | Compute | First run | Cold start | Warm first audio | Real-time speed |
 | --- | --- | --- | --- | --- | --- | --- |
-| MacBook Pro, M5 Max (macOS 27) | Core ML | GPU (default) | 2.44 s | 1.29 s | 24 ms | ~220× |
-|  | Core ML | CPU | 1.82 s | 0.28 s | 192 ms | ~25× |
-|  | Core AI | GPU (default) | 5.33 s | 0.42 s | 28 ms | ~200× |
-|  | Core AI | Neural Engine | 25.3 s | 0.50 s | 310 ms | ~18× |
-|  | Core AI | CPU | 2.49 s | 0.82 s | 746 ms | ~6.3× |
-|  | LiteRT | CPU | 0.76 s | 0.74 s | 142 ms | ~34× |
-|  | ONNX Runtime | CPU | 0.84 s | 0.89 s | 200 ms | ~24× |
-| iPhone 17 Pro Max (iOS 27.0.1) | Core ML | GPU (default) | 2.79 s | 1.43 s | 63 ms | ~85× |
-|  | Core ML | CPU | 2.04 s | 0.35 s | 240 ms | ~20× |
-|  | Core AI | GPU (default) | 6.49 s | 0.42 s | 58 ms | ~92× |
-|  | Core AI | Neural Engine | 27.8 s | 0.58 s | 370 ms | ~15× |
-|  | Core AI | CPU | 3.30 s | 0.96 s | 882 ms | ~5.2× |
-| Galaxy Z Fold 8, Snapdragon SM8850 (Android 17) | LiteRT | CPU | 1.60 s | 1.32 s | 178 ms | ~27× |
-|  | ONNX Runtime | CPU | 1.90 s | 1.48 s | 375 ms | ~12× |
+| MacBook Pro, M5 Max (macOS 27) | Core ML | GPU (default) | 3.79 s | 1.26 s | 28 ms | ~200× |
+|  | Core ML | CPU | 2.37 s | 0.37 s | 272 ms | ~14× |
+|  | Core AI | GPU (default) | 5.88 s | 0.39 s | 27 ms | ~200× |
+|  | Core AI | Neural Engine | 38.9 s | 0.52 s | 320 ms | ~17× |
+|  | Core AI | CPU | 3.48 s | 1.13 s | 1036 ms | ~3.5× |
+|  | LiteRT | CPU | 1.00 s | 1.04 s | 192 ms | ~22× |
+|  | ONNX Runtime | CPU | 0.92 s | 0.94 s | 262 ms | ~17× |
+| iPhone 17 Pro Max (iOS 27.0.1) | Core ML | GPU (default) | 3.82 s | 1.49 s | 92 ms | ~53× |
+|  | Core ML | CPU | 2.71 s | 0.51 s | 359 ms | ~10× |
+|  | Core AI | GPU (default) | 7.68 s | 0.48 s | 84 ms | ~57× |
+|  | Core AI | Neural Engine | 50.1 s | 0.67 s | 401 ms | ~14× |
+|  | Core AI | CPU | 5.19 s | 1.42 s | 1368 ms | ~2.7× |
+| Galaxy Z Fold 8, Snapdragon SM8850 (Android 17) | LiteRT | CPU | 2.26 s | 1.87 s | 250 ms | ~16× |
+|  | ONNX Runtime | CPU | 2.35 s | 1.72 s | 535 ms | ~7.7× |
 
 The GPU is the default on Apple platforms. The Neural Engine placement runs the flow on the Neural Engine and the other graphs on the CPU, for apps that speak in the background, where iOS does not allow GPU work. Core ML reloads its graphs on every launch, which accounts for most of its cold start on the GPU.
 
@@ -121,8 +121,8 @@ All fourteen have Spanish (`es`), Italian (`it`), French (`fr`), German (`de`) a
 ## Artifacts
 
 - `litert/` (228 MB): LiteRT bundle; default download. Transformer and vocoder weights are dynamic-range INT8; each size bucket is a signature of one model file, sharing weights.
-- `coreai/` (155 MB): Core AI bundle for apps on iOS, iPadOS and visionOS 27 (`.aimodel` assets); it also runs on macOS 27, where the runtime uses the Core ML bundle by default. INT8 weights per output channel with FP16 compute; size buckets are functions of one asset sharing weights. The flow also runs accurately on the Neural Engine (`controls.coreai.neural_engine_assets`), which is the placement for apps that speak in the background; the GPU is the default.
-- `coreml/` (142 MB): Core ML bundle for Apple silicon with iOS 18 / visionOS 2 / macOS 15 and later (compiled `.mlmodelc` assets), with INT8 weights and FP16 compute; GPU by default, CPU in background apps.
+- `coreai/` (213 MB): Core AI bundle for apps on iOS, iPadOS and visionOS 27 (`.aimodel` assets); it also runs on macOS 27, where the runtime uses the Core ML bundle by default. INT8 weights per output channel with FP16 compute; size buckets are functions of one asset sharing weights. The flow also runs accurately on the Neural Engine (`controls.coreai.neural_engine_assets`), which is the placement for apps that speak in the background; the GPU is the default.
+- `coreml/` (200 MB): Core ML bundle for Apple silicon with iOS 18 / visionOS 2 / macOS 15 and later (compiled `.mlmodelc` assets), with INT8 weights and FP16 compute; GPU by default, CPU in background apps.
 - `onnx/` (323 MB): ONNX Runtime bundle with dynamic INT8 transformer weights; the vocoder stays in full precision.
 - `webgpu/` (325 MB): ONNX Runtime bundle for ONNX Runtime Web's WebGPU backend, used by the browser demo. Transformer weights are INT8 with float compute (`MatMulNBits`), which runs entirely on the GPU; the vocoder stays in full precision.
 - `pytorch/`: duration, vector, adapter/vocoder and G2P weights (no training state), with the release configuration assets.
