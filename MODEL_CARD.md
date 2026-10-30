@@ -8,7 +8,7 @@ tags: [text-to-speech, tts, litert, onnx, coreml, coreai, pytorch, multilingual,
 
 # Scylla's Band v2
 
-Release **`v2-20261020`**. The [Scylla's Band runtime](https://github.com/lowkeytea/scyllasband) supports this release. Tag `v2-20261020-apple` adds Core ML and Core AI bundles of the same model; the runtime downloads from that tag.
+Release **`v2-20261020`**. The [Scylla's Band runtime](https://github.com/lowkeytea/scyllasband) supports this release. Tag `v2-20261020-apple` adds Core ML and Core AI bundles of the same model, and tag `v2-20261020-litert` adds those and a faster LiteRT bundle, exported again from the same weights; the runtime downloads from `v2-20261020-litert`.
 
 The model exposes **energy, tension, valence and assertiveness** on **0–4 scales with neutral at 2**. Combining the controls changes the generated delivery; a request is not a guarantee of a particular perceived emotion or exact external scorer value.
 
@@ -88,7 +88,7 @@ Long text is spoken as passages within the trained target lengths (64 to 420 lat
 
 Measured with the default sampler (Euler, 4 steps) through the native runtime: `scyllasband_speak` from [libscyllasband](https://github.com/lowkeytea/scyllasband/tree/main/libscyllasband) on the Mac and Android, and the [iOS sample](https://github.com/lowkeytea/scyllasband/tree/main/examples/ios)'s benchmark mode on the iPhone. The text is three sentences, 11.9 s of audio: "The last train leaves at midnight, so pack light. Bring a warm coat, and don't forget the map. If we miss it, we walk, and nobody wants to walk that far in the rain." (voice Scylla, seed 7).
 
-- **First run**: from launch to first audio on the first launch after installing the bundle. Core AI specializes its graphs for the device then and caches them until the next OS update.
+- **First run**: from launch to first audio on the first launch after installing the bundle. Core AI specializes its graphs for the device then and caches them until the next OS update; LiteRT writes its packed weights to a cache file beside each graph.
 - **Cold start**: from launch to first audio on a later launch, including loading the bundle.
 - **Warm first audio**: from a request to its first audio in a process that has already spoken (median of three requests).
 - **Real-time speed**: seconds of audio generated per second when warm, rounded.
@@ -100,14 +100,14 @@ Measured with the default sampler (Euler, 4 steps) through the native runtime: `
 |  | Core AI | GPU (default) | 5.88 s | 0.39 s | 27 ms | ~200× |
 |  | Core AI | Neural Engine | 38.9 s | 0.52 s | 320 ms | ~17× |
 |  | Core AI | CPU | 3.48 s | 1.13 s | 1036 ms | ~3.5× |
-|  | LiteRT | CPU | 1.00 s | 1.04 s | 192 ms | ~22× |
+|  | LiteRT | CPU | 0.47 s | 0.35 s | 121 ms | ~29× |
 |  | ONNX Runtime | CPU | 0.92 s | 0.94 s | 262 ms | ~17× |
 | iPhone 17 Pro Max (iOS 27.0.1) | Core ML | GPU (default) | 3.82 s | 1.49 s | 92 ms | ~53× |
 |  | Core ML | CPU | 2.71 s | 0.51 s | 359 ms | ~10× |
 |  | Core AI | GPU (default) | 7.68 s | 0.48 s | 84 ms | ~57× |
 |  | Core AI | Neural Engine | 50.1 s | 0.67 s | 401 ms | ~14× |
 |  | Core AI | CPU | 5.19 s | 1.42 s | 1368 ms | ~2.7× |
-| Galaxy Z Fold 8, Snapdragon SM8850 (Android 17) | LiteRT | CPU | 2.26 s | 1.87 s | 250 ms | ~16× |
+| Galaxy Z Fold 8, Snapdragon SM8850 (Android 17) | LiteRT | CPU | 1.47 s | 0.48 s | 132 ms | ~23× |
 |  | ONNX Runtime | CPU | 2.35 s | 1.72 s | 535 ms | ~7.7× |
 
 The GPU is the default on Apple platforms. The Neural Engine placement runs the flow on the Neural Engine and the other graphs on the CPU, for apps that speak in the background, where iOS does not allow GPU work. Core ML reloads its graphs on every launch, which accounts for most of its cold start on the GPU.
@@ -120,7 +120,7 @@ All fourteen have Spanish (`es`), Italian (`it`), French (`fr`), German (`de`) a
 
 ## Artifacts
 
-- `litert/` (228 MB): LiteRT bundle; default download. Transformer and vocoder weights are dynamic-range INT8; each size bucket is a signature of one model file, sharing weights.
+- `litert/` (267 MB): LiteRT bundle; default download. Dynamic-range INT8 weights on the fully connected, convolution and embedding layers; the vocoder's depthwise convolutions stay in full precision, which keeps them on XNNPACK. Each size is a signature of one model file, sharing weights: latent buckets every 64 frames up to 512 (then 768 and 1024), flow graphs without the 96 prefix frames for a request's first segment (up to 448 frames), and narrower duration and span-context (128 and 256 phones) and G2P (32–256 tokens) widths beside the full ones. (Tag `v2-20261020`'s LiteRT bundle, 228 MB, has six latent buckets and full-width graphs only.)
 - `coreai/` (213 MB): Core AI bundle for apps on iOS, iPadOS and visionOS 27 (`.aimodel` assets); it also runs on macOS 27, where the runtime uses the Core ML bundle by default. INT8 weights per output channel with FP16 compute; size buckets are functions of one asset sharing weights. The flow also runs accurately on the Neural Engine (`controls.coreai.neural_engine_assets`), which is the placement for apps that speak in the background; the GPU is the default.
 - `coreml/` (200 MB): Core ML bundle for Apple silicon with iOS 18 / visionOS 2 / macOS 15 and later (compiled `.mlmodelc` assets), with INT8 weights and FP16 compute; GPU by default, CPU in background apps.
 - `onnx/` (323 MB): ONNX Runtime bundle with dynamic INT8 transformer weights; the vocoder stays in full precision.
@@ -128,7 +128,7 @@ All fourteen have Spanish (`es`), Italian (`it`), French (`fr`), German (`de`) a
 - `pytorch/`: duration, vector, adapter/vocoder and G2P weights (no training state), with the release configuration assets.
 - `SHA256SUMS.json`: published-file hashes.
 
-Every runtime bundle includes the G2P model in a matching precision. The Apple bundles also give the G2P narrower input widths (64–512 tokens), so short phrases are converted faster.
+Every runtime bundle includes the G2P model in a matching precision. The Apple and LiteRT bundles also give the G2P narrower input widths (64–512 and 32–512 tokens), so short phrases are converted faster.
 
 ## Validation and limitations
 
@@ -136,7 +136,8 @@ Release validation separates graph accuracy, frontend/timing behaviour and perce
 
 - Component comparisons against PyTorch during export, and end-to-end comparison of full passages against the PyTorch reference path.
 - The distilled flow at 4 Euler steps compared with the base flow on the same passages, seeds and noise: closer to the base flow's 32-step output than the base flow's own 8 Heun steps, and compared blind with the 32-step base flow by listening across all fourteen voices.
-- Quantized bundles compared with full precision on real sentences (48 passages, six voices): identical phonemes; identical phone durations for 97.7% (ONNX), 97.9% (LiteRT) and 99.6% (WebGPU) of phones, the rest one frame apart; generated latents within 2% median relative error; followed by listening across all fourteen voices.
+- Quantized bundles compared with full precision on real sentences (48 passages, six voices): identical phonemes; identical phone durations for 97.7% (ONNX), 97.9% (LiteRT, the bundle of tag `v2-20261020`) and 99.6% (WebGPU) of phones, the rest one frame apart; generated latents within 2% median relative error; followed by listening across all fourteen voices.
+- The LiteRT bundle of tag `v2-20261020-litert` compared with the full-precision PyTorch graphs on every graph call the runtime makes speaking the runtime repository's sample text (`samples/gallery_script.json`'s line for each of the 84 voice/locale pairs and its delivery lines in three voices, and the first paragraph of `data/test_document.txt`: 103 requests, 1,091 graph calls): identical phonemes in all 136 G2P calls (the `v2-20261020` LiteRT G2P differs in 2); phone durations rounding to the same frame count for 97.9% of phones, at most 0.62 frames apart; flow velocity within 1.3% median relative error, latents after the 4 Euler steps within 2.1% (median); vocoder output 12.3 dB median SNR against the full-precision vocoder (6.9 dB for the `v2-20261020` bundle); and every graph identical with and without XNNPACK's weight cache.
 - G2P conversions compared with the full-precision G2P on multilingual text.
 - Core ML and Core AI bundles compared with the PyTorch model on every graph and on real passages, on each compute unit they are used with (GPU, CPU, and for Core AI the Neural Engine): identical phonemes apart from two near-tie stress marks also seen in FP16, fewer changed phone durations than the LiteRT bundle, and smaller latent and spectral differences. The Apple exports rewrite three computations into equivalent forms that FP16 and the Neural Engine evaluate exactly (span pooling, the modifier bit decoding, the duration model's combined phone/segment index), and scale the flow's residual stream; in FP32 the rewritten graphs are bit-identical to the trained ones.
 

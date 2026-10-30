@@ -79,7 +79,10 @@ def _add_synthesis_args(parser: argparse.ArgumentParser, *, group: bool) -> None
                                                 "per graph, e.g. gpu,g2p=cpu")
     parser.add_argument("--voice", default=None if group else "scylla")
     parser.add_argument("--language")
-    parser.add_argument("--delivery", help="e.g. energy=2.3,tension=2,valence=2.2,assertiveness=2; neutral; auto")
+    parser.add_argument("--emotion", help="models with styles: neutral (default), joy, sadness, anger, frustration, fear, hope, "
+                                          "relief, disgust (the bundle lists its own)")
+    parser.add_argument("--intensity", choices=("less", "normal", "more"), help="models with styles: default normal")
+    parser.add_argument("--delivery", help="older models only: e.g. energy=2.3,tension=2,valence=2.2,assertiveness=2; neutral; auto")
     parser.add_argument("--speed", type=float, default=1.0)
     parser.add_argument("--steps", type=int)
     parser.add_argument("--sampler", choices=SUPPORTED_SAMPLERS)
@@ -124,7 +127,8 @@ def _normalize(args: argparse.Namespace) -> int:
 
 def _speak(args: argparse.Namespace) -> int:
     runtime = _runtime(args)
-    records = records_from_text(_read_text(args), voice=args.voice, language=args.language, delivery=args.delivery)
+    records = records_from_text(_read_text(args), voice=args.voice, language=args.language, delivery=args.delivery,
+                                emotion=args.emotion, intensity=args.intensity)
     result = runtime.render_records(records, normalize=not args.no_normalize_text, progress=_progress(args), **_options(args))
     _write_outputs(args, result.audio, result.sample_rate, result.metadata)
     return 0
@@ -132,8 +136,10 @@ def _speak(args: argparse.Namespace) -> int:
 
 def _group_speak(args: argparse.Namespace) -> int:
     runtime = _runtime(args)
+    default = (dict(emotion=args.emotion, intensity=args.intensity, kind="style")
+               if (args.emotion or args.intensity) and not args.delivery else args.delivery)
     records = parse_group_lines(_read_text(args), default_voice=args.voice, default_language=args.language,
-                                default_delivery=args.delivery)
+                                default_delivery=default)
     if not records:
         raise ValueError("No speakable group-speak lines found")
     result = runtime.render_records(records, normalize=not args.no_normalize_text, progress=_progress(args), **_options(args))
@@ -143,7 +149,8 @@ def _group_speak(args: argparse.Namespace) -> int:
 
 def _stream(args: argparse.Namespace) -> int:
     runtime = _runtime(args)
-    records = records_from_text(_read_text(args), voice=args.voice, language=args.language, delivery=args.delivery)
+    records = records_from_text(_read_text(args), voice=args.voice, language=args.language, delivery=args.delivery,
+                                emotion=args.emotion, intensity=args.intensity)
     if args.output is not None:
         args.output.mkdir(parents=True, exist_ok=True)
     sink = args.events.open("w", encoding="utf-8") if args.events else sys.stdout
@@ -163,7 +170,8 @@ def _stream(args: argparse.Namespace) -> int:
 
 def _plan(args: argparse.Namespace) -> int:
     runtime = _runtime(args)
-    plan = runtime.plan_records(records_from_text(_read_text(args), voice=args.voice, language=args.language, delivery=args.delivery),
+    plan = runtime.plan_records(records_from_text(_read_text(args), voice=args.voice, language=args.language, delivery=args.delivery,
+                                emotion=args.emotion, intensity=args.intensity),
                                 normalize=not args.no_normalize_text)
     text = json.dumps(plan.to_dict(), indent=2, ensure_ascii=False)
     if args.output:

@@ -22,6 +22,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 import numpy as np
 
+from .styles import Styles
 from .events import frame_events, frames_to_durations, modifier_bits
 from .g2p import SILENCE, G2PFrontend
 
@@ -106,6 +107,8 @@ class Engine:
         self.phone_to_id: dict[str, int] = {str(k): int(v) for k, v in dict(vocab.get("token_to_id", vocab)).items()}
         self.voice_to_id = _index(self.bundle_dir / assets["voice_index"])
         self.language_to_id = _index(self.bundle_dir / assets["language_index"])
+        # Emotion + intensity styles (newer bundles): one duration / flow voice row per (voice, emotion).
+        self.styles = Styles(controls["styles"]) if controls.get("styles") else None
         self.bits = modifier_bits(self.phone_to_id)
         span = controls["span_conditioning"]
         self.span_width = int(span["context_max_phones"])
@@ -195,6 +198,23 @@ class Engine:
             raise ValueError(f"Unknown language {language!r}; available: {', '.join(sorted(self.language_to_id))}")
         return int(self.language_to_id[language])
 
+    def delivery_inputs(self, voice: str, request: Mapping[str, Any] | None) -> tuple[np.ndarray, np.ndarray, int, dict[str, Any]]:
+        """(delivery values, present, the duration / flow voice row, the resolved request) for a planned request."""
+        from .delivery import delivery_tensors
+        index = self.voice_index(voice)
+        styled = isinstance(request, Mapping) and request.get("kind") == "style"
+        if self.styles is not None:
+            if request is not None and not styled:
+                raise ValueError("This model takes an emotion and an intensity (less, normal, more) instead of numeric "
+                                 "delivery values; available emotions: " + ", ".join(self.styles.emotions))
+            resolved = self.styles.resolve(voice, request)
+            values, present = self.styles.tensors(resolved)
+            return values, present, self.styles.row(index, resolved["emotion"]), dict(resolved, kind="style")
+        if styled:
+            raise ValueError("This model has no emotion styles; update to the current model or use numeric delivery")
+        values, present, resolved = delivery_tensors(request)
+        return values, present, index, resolved
+
     # --- synthesis ----------------------------------------------------------------------------------------------------
     def durations(self, sentence: Sentence, *, voice: int, language: int, delivery: tuple[np.ndarray, np.ndarray],
                   speed: float = 1.0) -> list[int]:
@@ -215,8 +235,10 @@ class Engine:
     def synthesize_sentence(self, sentence: Sentence, *, voice: str, language: str, delivery: tuple[np.ndarray, np.ndarray],
                             prefix: np.ndarray | None = None, steps: int = 8, sampler: str = "heun", speed: float = 1.0,
                             noise_scale: float = 1.0, rng: np.random.Generator | None = None, noise: np.ndarray | None = None,
-                            durations: list[int] | None = None) -> SentenceResult:
-        voice_id, language_id = self.voice_index(voice), self.language_index(language)
+                            durations: list[int] | None = None, voice_row: int | None = None) -> SentenceResult:
+        """``voice_row``: the duration / flow voice row from delivery_inputs (styles bundles); defaults to the voice index."""
+        voice_id = self.voice_index(voice) if voice_row is None else int(voice_row)
+        language_id = self.language_index(language)
         if durations is None:
             durations = self.durations(sentence, voice=voice_id, language=language_id, delivery=delivery, speed=speed)
         length = int(sum(durations))
