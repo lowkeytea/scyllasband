@@ -213,7 +213,8 @@ def normalizer_cases() -> list[dict]:
               "She came 1st and 22nd.", "Email jane.doe+tts@example.co.uk or ping @scylla.", "Ok... OK?! ok!!", "Well -- that's it - right?",
               "e-mail, X-ray, T-shirt and A - B.", "Café café 2024-03-07.", "It's 3.14159 or 2,718.28 or 1,000,000.", "x = 5 and 20°",
               "12345678901234567890123 and ٣٤", "D.J. Stumpy charged $99.99. I met J.K. Rowling.", "He moved to the U.S. Then he left.",
-              "She lives in the U.S.", 'Call me at 9 a.m. "Sure," he said.']
+              "She lives in the U.S.", 'Call me at 9 a.m. "Sure," he said.',
+              "Whisper Large V3 beat v3.5 and v2.", "Play the MP3 in 4K on a 3D TV; H2O, B2B, 2FA and e2e.", "GPT4 on an RTX4090 and an A100, Python3, COVID19, iPhone15, x86 at 1080p and 60fps.", "Run it at 10am or 5 PM; the 1990s, the '80s, her 20s, the 2000s; wait 30s.", "On March 4, 1990 and 3/4/2005; test_voice2.py, user_42 and 3.5GB of 16GB.", "100s of 4s, two MP3s, Route 66's history, the 1500s and 1.5s; 68x faster on a 4x4 grid at 1920x1080, 1.5x, 100ms, 24 kHz, 1 GB, 5 mins and 30 mph.", "Edge cases: 4x4.5, 4x45a, 2X, 1.5.s, '1.5s, '1990s, 6's, 0x1F, 1,000s, 10 ms. and 1 fps.", "1,000s of people and 10,000s more, 1,000 ms, 1,500.5x and 1,0005s."]
     cases = []
     for language in ("en_us", "en_gb", "es", "it", "fr", "de", "vi"):
         for text in corpus:

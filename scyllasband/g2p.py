@@ -25,6 +25,7 @@ import numpy as np
 
 from .g2p_phrases import (DEFAULT_G2P_PHRASE_MAX_CHARS, g2p_phrase_segments, normalize_g2p_phrase_punctuation,
                           punctuation_run_phone_token)
+from .lexicon import Lexicon, has_lowercase, is_word_token, word_spans
 from .text_normalizer import SPOKEN_TEXT_NORMALIZER_SHA256
 
 CACHE_SIZE = 256
@@ -59,6 +60,10 @@ class G2PFrontend:
         overrides = assets.get("g2p_pronunciation_overrides")
         override_path = bundle_dir / overrides if overrides else None
         self.overrides = load_json(override_path) if override_path is not None and override_path.exists() else {}
+        phoneme_dict = assets.get("g2p_phoneme_dict")
+        phoneme_dict_path = bundle_dir / phoneme_dict if phoneme_dict else None
+        bundle_words = load_json(phoneme_dict_path) if phoneme_dict_path is not None and phoneme_dict_path.exists() else {}
+        self.lexicon = Lexicon(self.phone_to_id, bundle_words if isinstance(bundle_words, Mapping) else {})
         boundaries = dict(controls.get("word_boundaries") or {})
         self.word_boundary_symbol = str(boundaries.get("g2p_output_symbol", " "))
         fixed = dict(controls.get("fixed_shapes") or {})
@@ -97,12 +102,14 @@ class G2PFrontend:
         punctuation: list[dict[str, Any]] = []
         repairs: list[dict[str, Any]] = []
         applied_overrides: list[dict[str, Any]] = []
+        lexicon_entries: list[dict[str, Any]] = []
         confidences: list[float] = []
         for index, (segment, tokens) in enumerate(segments):
             prediction = self._predict_segment(segment, language=language)
             confidences.append(float(prediction.get("confidence", 0.0)))
             applied_overrides.extend(prediction.get("pronunciation_overrides", []))
             repairs.extend(prediction.get("terminal_tail_repairs", []))
+            lexicon_entries.extend(prediction.get("lexicon", []))
             predicted = [str(p) for p in prediction.get("phones", ())]
             word_open = False
             for position, phone in enumerate(predicted):
@@ -137,6 +144,8 @@ class G2PFrontend:
                       g2p_segments=[segment for segment, _ in segments], g2p_confidence=min(confidences) if confidences else 0.0)
         if applied_overrides:
             result["pronunciation_overrides"] = applied_overrides
+        if lexicon_entries:
+            result["lexicon"] = lexicon_entries
         if repairs:
             result["terminal_tail_repairs"] = repairs
         return result
@@ -152,6 +161,7 @@ class G2PFrontend:
         prediction = self._predict_raw(text, language=language)
         prediction = self._apply_overrides(prediction, text=text, language=language)
         prediction = self._repair_terminal_tail(prediction, text=text, language=language)
+        prediction = self._apply_lexicon(prediction, text=text, language=language)
         with self._lock:
             self._segment_cache[key] = copy.deepcopy(prediction)
             while len(self._segment_cache) > CACHE_SIZE:
@@ -234,6 +244,52 @@ class G2PFrontend:
         if not applied:
             return prediction
         return dict(prediction, phones=phones, pronunciation_overrides=applied)
+
+    def _apply_lexicon(self, prediction: dict[str, Any], *, text: str, language: str) -> dict[str, Any]:
+        """Replace the phones of lexicon words. When the prediction has one word group per word, each entry replaces its own
+        group; otherwise (the G2P joins some function words, "in the" -> ɪnðə) the text between lexicon words is predicted
+        on its own and joined with the entries."""
+        tokens = text.split()
+        initialisms = has_lowercase(text)
+        hits = {}
+        for index, token in enumerate(tokens):
+            entry = self.lexicon.lookup(token, language, initialisms=initialisms)
+            if entry:
+                hits[index] = entry
+        if not hits:
+            return prediction
+        phones = [str(p) for p in prediction.get("phones", [])]
+        words = [index for index, token in enumerate(tokens) if is_word_token(token)]
+        spans = word_spans(phones, WORD_BOUNDARY_MARKER, SILENCE_PHONES)
+        applied = []
+        if len(spans) == len(words):
+            group = {index: k for k, index in enumerate(words)}
+            for index in sorted(hits, reverse=True):
+                start, end = spans[group[index]]
+                phones[start:end] = list(hits[index])
+                applied.append(dict(word=tokens[index], phones=list(hits[index]), mode="group"))
+            return dict(prediction, phones=phones, lexicon=applied[::-1])
+        joined: list[str] = []
+        confidences: list[float] = []
+        piece: list[str] = []
+
+        def flush() -> None:
+            if piece:
+                part = self._predict_segment(" ".join(piece), language=language)
+                joined.extend(str(p) for p in part.get("phones", []))
+                confidences.append(float(part.get("confidence", 0.0)))
+                piece.clear()
+
+        for index, token in enumerate(tokens):
+            if index not in hits:
+                piece.append(token)
+                continue
+            flush()
+            joined.extend([WORD_BOUNDARY_MARKER, *hits[index], WORD_BOUNDARY_MARKER])
+            applied.append(dict(word=token, phones=list(hits[index]), mode="split"))
+        flush()
+        confidence = min(confidences) if confidences else 1.0
+        return dict(prediction, phones=joined, confidence=confidence, lexicon=applied)
 
     def _repair_terminal_tail(self, prediction: dict[str, Any], *, text: str, language: str) -> dict[str, Any]:
         """Trim a short CTC tail hallucination after a correctly decoded final word."""
