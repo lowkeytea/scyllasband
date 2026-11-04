@@ -19,10 +19,67 @@ typedef NS_ENUM(NSInteger, SBScyllasBandComputeUnit) {
     SBScyllasBandComputeUnitNeuralEngine = 3,
 };
 
+/** The delivery controls: the keys of `SBScyllasBandBundleInfo.deliveryRanges` and of the runtime's delivery string. */
+typedef NSString *SBScyllasBandDeliveryControl NS_TYPED_ENUM;
+/** Calm (negative) to intense (positive), in the voice's own standard deviations. */
+FOUNDATION_EXPORT SBScyllasBandDeliveryControl const SBScyllasBandDeliveryControlIntensity;
+/** Slower (negative) to faster (positive), words and pauses together, in the voice's own standard deviations. */
+FOUNDATION_EXPORT SBScyllasBandDeliveryControl const SBScyllasBandDeliveryControlPace;
+/** A shift of the voice's pitch in semitones. */
+FOUNDATION_EXPORT SBScyllasBandDeliveryControl const SBScyllasBandDeliveryControlPitch;
+
+/**
+ How a voice delivers a line: intensity, pace and pitch, each optional. A control left nil takes the voice's default
+ (`SBScyllasBandVoice.deliveryDefaults`; 0 for every voice in the released model), and 0 is the voice's own delivery.
+
+ - `intensity`: calm (negative) to intense (positive), in the voice's own standard deviations. The emotion itself comes
+   from the text.
+ - `pace`: slower (negative) to faster (positive), words and pauses together, in the voice's own standard deviations.
+ - `pitch`: a shift of the voice's pitch in semitones.
+
+ The released model supports -2 to 2 for each; the runtime clamps every request into the bundle's ranges
+ (`SBScyllasBandBundleInfo.deliveryRanges`). The v2 axes (energy, tension, valence, assertiveness, whisper) are gone.
+
+ From Swift: `SBScyllasBandDelivery(intensity: 1, pace: -0.5, pitch: nil)`; read a control as `delivery.pace?.floatValue`.
+ */
+@interface SBScyllasBandDelivery : NSObject <NSCopying>
+/** nil: the voice's default. */
+@property(nonatomic, copy, readonly, nullable) NSNumber *intensity;
+/** nil: the voice's default. */
+@property(nonatomic, copy, readonly, nullable) NSNumber *pace;
+/** nil: the voice's default. */
+@property(nonatomic, copy, readonly, nullable) NSNumber *pitch;
+/** No control set: every control takes the voice's default. The delivery string is empty. A request's initial delivery. */
+@property(class, nonatomic, readonly) SBScyllasBandDelivery *voiceDefault;
+/** Every control 0, the voice's own delivery, whatever the bundle's defaults: "intensity=0,pace=0,pitch=0". */
+@property(class, nonatomic, readonly) SBScyllasBandDelivery *neutral;
+/**
+ nil leaves a control at the voice's default. Finite values outside -2 to 2 are clamped into it (the runtime then clamps
+ into the bundle's ranges); NaN and infinities leave the control at the voice's default.
+ */
+- (instancetype)initWithIntensity:(nullable NSNumber *)intensity
+                             pace:(nullable NSNumber *)pace
+                            pitch:(nullable NSNumber *)pitch NS_DESIGNATED_INITIALIZER;
+/** The runtime's delivery string for the controls that are set, e.g. "intensity=1,pace=-0.5"; "" when none is. */
+@property(nonatomic, copy, readonly) NSString *specification;
+- (instancetype)init NS_UNAVAILABLE;
+@end
+
+/** The range the runtime clamps one delivery control into. */
+@interface SBScyllasBandDeliveryRange : NSObject
+@property(nonatomic, readonly) float minimum;
+@property(nonatomic, readonly) float maximum;
+/** "sd" (the voice's own standard deviations: intensity and pace) or "semitones" (pitch). */
+@property(nonatomic, copy, readonly) NSString *unit;
+- (instancetype)init NS_UNAVAILABLE;
+@end
+
 @interface SBScyllasBandVoice : NSObject
 @property(nonatomic, copy, readonly) NSString *identifier;
 @property(nonatomic, copy, readonly) NSArray<NSString *> *languages;
 @property(nonatomic, copy, readonly) NSString *defaultLanguage;
+/** What a request that leaves a control out uses for this voice, with every control set (0 = the voice's own). */
+@property(nonatomic, copy, readonly) SBScyllasBandDelivery *deliveryDefaults;
 - (instancetype)init NS_UNAVAILABLE;
 @end
 
@@ -33,31 +90,12 @@ typedef NS_ENUM(NSInteger, SBScyllasBandComputeUnit) {
 @property(nonatomic, readonly) NSInteger sampleRate;
 @property(nonatomic, copy, readonly) NSArray<SBScyllasBandVoice *> *voices;
 @property(nonatomic, copy, readonly) NSString *defaultVoice;
-- (nullable SBScyllasBandVoice *)voiceWithIdentifier:(NSString *)identifier;
-- (instancetype)init NS_UNAVAILABLE;
-@end
-
 /**
- Delivery controls on the 0–4 scale with 2 neutral; the runtime clamps them into the supported ranges (energy 1.4–2.3,
- tension 1.0–2.4, valence 1.4–2.2, assertiveness 1.8–2.4). Combinations give familiar deliveries, e.g. joyful energy 2.3
- tension 2 valence 2.2 assertiveness 2.2; angry energy 2.3 tension 2.4 valence 1.4 assertiveness 2.4. `whisper` is no longer
- supported and is ignored.
+ The range the runtime clamps each delivery control into (intensity and pace in standard deviations, pitch in
+ semitones; -2 to 2 for each in the released model). Holds all three controls.
  */
-@interface SBScyllasBandDelivery : NSObject <NSCopying>
-@property(nonatomic, readonly) float energy;
-@property(nonatomic, readonly) float tension;
-@property(nonatomic, readonly) float valence;
-@property(nonatomic, readonly) float assertiveness;
-@property(nonatomic, readonly) BOOL whisper;
-@property(class, nonatomic, readonly) SBScyllasBandDelivery *neutral;
-/** Values outside 0–4 are clamped. */
-- (instancetype)initWithEnergy:(float)energy
-                       tension:(float)tension
-                       valence:(float)valence
-                 assertiveness:(float)assertiveness
-                       whisper:(BOOL)whisper NS_DESIGNATED_INITIALIZER;
-/** The runtime's delivery string, e.g. "energy=2.3,tension=2,valence=2,assertiveness=2". */
-@property(nonatomic, copy, readonly) NSString *specification;
+@property(nonatomic, copy, readonly) NSDictionary<SBScyllasBandDeliveryControl, SBScyllasBandDeliveryRange *> *deliveryRanges;
+- (nullable SBScyllasBandVoice *)voiceWithIdentifier:(NSString *)identifier;
 - (instancetype)init NS_UNAVAILABLE;
 @end
 
@@ -66,12 +104,13 @@ typedef NS_ENUM(NSInteger, SBScyllasBandComputeUnit) {
 @property(nonatomic, copy) NSString *voiceIdentifier;
 /** nil: the voice's default language. */
 @property(nonatomic, copy, nullable) NSString *language;
+/** Initially `SBScyllasBandDelivery.voiceDefault`. */
 @property(nonatomic, copy) SBScyllasBandDelivery *delivery;
 /** nil: fresh noise for every request. Sentence i of the plan uses seed + i. */
 @property(nonatomic, copy, nullable) NSNumber *seed;
 /** Flow steps; 0 uses the bundle default (8). */
 @property(nonatomic) NSInteger steps;
-/** Duration scale; 1 is the model's own pace. */
+/** A plain time stretch on top of the delivery's pace; 1 is none. Must be positive. */
 @property(nonatomic) float speed;
 @property(nonatomic) BOOL normalizeText;
 - (instancetype)initWithText:(NSString *)text voiceIdentifier:(NSString *)voiceIdentifier NS_DESIGNATED_INITIALIZER;

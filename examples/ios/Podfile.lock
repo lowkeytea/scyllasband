@@ -1,5 +1,5 @@
 PODS:
-  - ScyllasBandKit (2.0.0)
+  - ScyllasBandKit (3.0.0)
 
 DEPENDENCIES:
   - ScyllasBandKit (from `../../libscyllasband`)
@@ -9,7 +9,7 @@ EXTERNAL SOURCES:
     :path: "../../libscyllasband"
 
 SPEC CHECKSUMS:
-  ScyllasBandKit: 7fcf9b98c9d4cbbbdc2a97f9b33748bae43b5673
+  ScyllasBandKit: 2907063d07042d950c43e5e55a215b3b30b649e5
 
 PODFILE CHECKSUM: 2c5702b8af2745fd64733accd5d97e0f08c5922d
 

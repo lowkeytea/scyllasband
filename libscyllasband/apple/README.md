@@ -1,8 +1,9 @@
 # ScyllasBandKit
 
-`ScyllasBandKit` is the Apple bridge for `libscyllasband`. It runs Core ML
-bundles on iOS 18 and visionOS 2 and later, and Core AI bundles on iOS and
-visionOS 27 and later, through
+`ScyllasBandKit` is the Apple bridge for `libscyllasband` (ABI 3.0.0, the
+Scylla's Band v3 model, `scyllasband_measured_controls_v3` bundles). It runs
+Core ML bundles on iOS 18 and visionOS 2 and later, and Core AI bundles on iOS
+and visionOS 27 and later, through
 the Apple graph backend (`src/scyllasband_graph_apple.mm`, with the Core AI
 Swift bridge `Sources/ScyllasBandCoreAI.swift`). Apps use only the
 Objective-C API in `Sources/include/ScyllasBandKit.h`, which Swift can call,
@@ -36,9 +37,12 @@ the pod targets in `post_install`.
 | `SBScyllasBand` | One runtime over one bundle: `initWithBundleURL:computeUnit:error:`, `warmUpWithVoice:error:`, `synthesizeRequest:chunkStarted:audioChunk:error:`, `requestCancellation`. |
 | `+[SBScyllasBand preferredBundleURLInDirectory:]` | Picks `coreai/` on iOS and visionOS 27 and later, otherwise `coreml/`, from a directory holding the bundle folders. |
 | `SBScyllasBandComputeUnit` | `Automatic` (the bundle's recommendation for each graph), `CPU`, `GPU`, `NeuralEngine`. |
-| `SBScyllasBandBundleInfo` | `backend` (`coreml` or `coreai`), `releaseIdentifier`, `sampleRate`, `voices` (identifier, languages, default language), `defaultVoice`. |
-| `SBScyllasBandRequest` | Text, voice, optional language, delivery, seed, flow steps, speed, text normalization. |
-| `SBScyllasBandDelivery` | Energy, tension, valence and assertiveness (0–4, 2 neutral; the runtime clamps each into its supported range); `+neutral`. `whisper` is no longer supported and is ignored. |
+| `SBScyllasBandBundleInfo` | `backend` (`coreml` or `coreai`), `releaseIdentifier`, `sampleRate`, `voices`, `defaultVoice`, and `deliveryRanges`: the range the runtime clamps each delivery control into, keyed by `SBScyllasBandDeliveryControl`. |
+| `SBScyllasBandVoice` | `identifier`, `languages`, `defaultLanguage`, and `deliveryDefaults`: what a request that leaves a control out uses for this voice (0 for each control in the released model). |
+| `SBScyllasBandRequest` | Text, voice, optional language, delivery (initially `+voiceDefault`), seed, flow steps, speed (a plain time stretch on top of pace), text normalization. |
+| `SBScyllasBandDelivery` | Intensity, pace and pitch as optional `NSNumber`s (nil: the voice's default); `specification` is the runtime's delivery string, e.g. `intensity=1,pace=-0.5` (empty when no control is set). `+voiceDefault` sets no control, `+neutral` sets each to 0. |
+| `SBScyllasBandDeliveryControl` | `.intensity`, `.pace`, `.pitch`: the keys of `deliveryRanges`. |
+| `SBScyllasBandDeliveryRange` | `minimum`, `maximum` and `unit` (`sd` for intensity and pace, `semitones` for pitch). |
 | `SBScyllasBandAudioChunk` | One sentence of mono Float32 PCM. The chunk owns its copy of the data. |
 
 ```swift
@@ -46,17 +50,44 @@ let runtime = try SBScyllasBand(bundleURL: bundleURL, computeUnit: .automatic)
 try runtime.warmUp(withVoice: nil)
 
 let request = SBScyllasBandRequest(text: "Keep this between us.", voiceIdentifier: "ink")
-request.delivery = SBScyllasBandDelivery(energy: 1.8, tension: 1, valence: 2.2, assertiveness: 2.1, whisper: false)
+request.delivery = SBScyllasBandDelivery(intensity: -1, pace: -0.5, pitch: nil)   // pitch: the voice's default
 try runtime.synthesizeRequest(request, chunkStarted: nil) { chunk in
     // Schedule chunk.pcmFloat32Data (chunk.sampleRate Hz) before returning; return false to stop.
     return true
 }
 ```
 
+### Delivery
+
+A delivery has three controls, each optional; 0 is the voice's own delivery.
+
+| Control | Negative | Positive | Unit |
+| --- | --- | --- | --- |
+| `intensity` | calmer | more intense | the voice's own standard deviations |
+| `pace` | slower | faster (words and pauses together) | the voice's own standard deviations |
+| `pitch` | lower | higher | semitones |
+
+The emotion itself comes from the text. The released model supports -2 to 2
+for each control: `SBScyllasBandDelivery` clamps finite values into that
+range, and the runtime clamps every request into the bundle's ranges
+(`bundleInfo.deliveryRanges`, read from `scyllasband_voices_json`). A control
+left nil takes the voice's default (`voice.deliveryDefaults`, from the
+manifest's `controls.delivery.defaults`). The v2 axes (energy, tension,
+valence, assertiveness, whisper) and their 0–4 scale are gone; the runtime
+rejects them.
+
+```swift
+let range = runtime.bundleInfo.deliveryRanges[.pitch]   // minimum -2, maximum 2, unit "semitones"
+let defaults = runtime.bundleInfo.voice(withIdentifier: "ink")?.deliveryDefaults   // intensity=0,pace=0,pitch=0
+let pace = request.delivery.pace?.floatValue   // nil: the voice's default
+```
+
 Rules:
 
-- Pass the URL of a complete bundle directory: `manifest.json`, `assets/`, and
-  `coreml/*.mlmodelc` or `coreai/*.aimodel`.
+- Pass the URL of a complete v3 bundle directory: `manifest.json`, `assets/`,
+  and `coreml/*.mlmodelc` or `coreai/*.aimodel` (`g2p`, `duration_predictor`,
+  `pitch_context_encoder`, `pitch_estimator`, `vector_context_encoder`,
+  `vector_estimator`, `vocoder`). Bundles from the v2 model don't load.
 - Create, warm, and call one runtime from a single serial queue, never the
   main thread. Callbacks run synchronously on that queue.
 - The first load of a Core AI bundle specializes its graphs for the device,
@@ -81,7 +112,7 @@ cmake -S libscyllasband -B build/apple -G Ninja \
 cmake --build build/apple
 
 build/apple/scyllasband_speak --bundle scyllasband/models/coreml \
-  --voice ariadne --delivery energy=2.3,tension=2,valence=2.2,assertiveness=2.2 --accelerator gpu \
+  --voice ariadne --delivery intensity=1,pace=-0.5 --accelerator gpu \
   --text "Hello from Core ML." --output /tmp/scyllasband.wav
 ```
 

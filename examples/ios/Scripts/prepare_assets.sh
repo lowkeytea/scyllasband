@@ -44,7 +44,8 @@ verify_bundle() {
         echo "error: the ${flavor} bundle at ${bundle} is missing assets/" >&2
         exit 1
     fi
-    for asset in g2p duration_predictor vector_context_encoder vector_estimator vocoder; do
+    # v3 bundles (scyllasband_measured_controls_v3) add the pitch predictor: pitch_context_encoder, then pitch_estimator.
+    for asset in g2p duration_predictor pitch_context_encoder pitch_estimator vector_context_encoder vector_estimator vocoder; do
         if [[ ! -d "${bundle}/${flavor}/${asset}.${extension}" ]]; then
             echo "error: the ${flavor} bundle at ${bundle} is missing ${flavor}/${asset}.${extension}" >&2
             exit 1

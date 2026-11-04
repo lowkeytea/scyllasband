@@ -1,122 +1,144 @@
 import Foundation
 import ScyllasBandKit
 
-/// The four delivery axes, each 0–4 with 2 neutral.
-enum DeliveryAxis: String, CaseIterable, Identifiable {
-    case energy
-    case tension
-    case valence
-    case assertiveness
+/// The three delivery controls. 0 is the voice's own delivery; the released model supports -2 to 2 for each.
+enum DeliveryControl: String, CaseIterable, Identifiable {
+    /// Calm (negative) to intense (positive), in the voice's own standard deviations. The emotion comes from the text.
+    case intensity
+    /// Slower (negative) to faster (positive), words and pauses together, in the voice's own standard deviations.
+    case pace
+    /// A shift of the voice's pitch in semitones.
+    case pitch
+
+    /// The released model's range for every control; ScyllasBandKit clamps any value into it.
+    static let modelRange: ClosedRange<Float> = -2...2
 
     var id: String { rawValue }
     var title: String { rawValue.capitalized }
 
-    var keyPath: WritableKeyPath<DeliverySettings, Float> {
+    var keyPath: WritableKeyPath<DeliverySettings, Float?> {
         switch self {
-        case .energy: return \.energy
-        case .tension: return \.tension
-        case .valence: return \.valence
-        case .assertiveness: return \.assertiveness
+        case .intensity: return \.intensity
+        case .pace: return \.pace
+        case .pitch: return \.pitch
         }
     }
 
-    /// The range the runtime supports for the control, where the voices render most reliably; the runtime clamps any
-    /// other request into it. 2 (neutral) lies inside each.
-    var supportedRange: ClosedRange<Float> {
+    var native: SBScyllasBandDeliveryControl {
         switch self {
-        case .energy: return 1.4...2.3
-        case .tension: return 1.0...2.4
-        case .valence: return 1.4...2.2
-        case .assertiveness: return 1.8...2.4
+        case .intensity: return .intensity
+        case .pace: return .pace
+        case .pitch: return .pitch
         }
     }
 
     /// What lowering and raising the control does.
-    var range: (low: String, high: String) {
+    var ends: (low: String, high: String) {
         switch self {
-        case .energy: return ("Darker, more pauses", "Brighter, projected")
-        case .tension: return ("Looser, steadier", "Tighter, wider pitch")
-        case .valence: return ("Flatter, slower", "Livelier, quicker")
-        case .assertiveness: return ("Hesitant", "Fast, clipped")
+        case .intensity: return ("Calm", "Intense")
+        case .pace: return ("Slower", "Faster")
+        case .pitch: return ("Lower", "Higher")
         }
+    }
+
+    var unit: String {
+        switch self {
+        case .intensity, .pace: return "standard deviations"
+        case .pitch: return "semitones"
+        }
+    }
+
+    /// The range the runtime clamps the control into, as the bundle reports it (-2 to 2 in the released model).
+    func range(in info: SBScyllasBandBundleInfo?) -> ClosedRange<Float> {
+        guard let range = info?.deliveryRanges[native] else { return Self.modelRange }
+        let low = max(range.minimum, Self.modelRange.lowerBound), high = min(range.maximum, Self.modelRange.upperBound)
+        return low <= high ? low...high : Self.modelRange
+    }
+
+    func value(in delivery: SBScyllasBandDelivery) -> Float? {
+        switch self {
+        case .intensity: return delivery.intensity?.floatValue
+        case .pace: return delivery.pace?.floatValue
+        case .pitch: return delivery.pitch?.floatValue
+        }
+    }
+
+    /// What the voice uses when the control is left unset (0 for every voice in the released model).
+    func defaultValue(for voice: SBScyllasBandVoice?) -> Float {
+        voice.flatMap { value(in: $0.deliveryDefaults) } ?? 0
     }
 }
 
+/// A segment's delivery. Each control is optional: nil takes the voice's default.
 struct DeliverySettings: Codable, Equatable {
-    static let neutralValue: Float = 2
-    /// What delivery tags may contain: the full 0–4 scale, clamped to each control's `supportedRange` when imported.
-    static let modelRange: ClosedRange<Float> = 0...4
-    static let neutral = DeliverySettings()
+    /// Every control unset: the voice's defaults.
+    static let voiceDefault = DeliverySettings()
 
-    var energy: Float = 2
-    var tension: Float = 2
-    var valence: Float = 2
-    var assertiveness: Float = 2
-
-    var isNeutral: Bool { self == .neutral }
+    var intensity: Float?
+    var pace: Float?
+    var pitch: Float?
 
     var native: SBScyllasBandDelivery {
         SBScyllasBandDelivery(
-            energy: energy,
-            tension: tension,
-            valence: valence,
-            assertiveness: assertiveness,
-            whisper: false
+            intensity: intensity.map { NSNumber(value: $0) },
+            pace: pace.map { NSNumber(value: $0) },
+            pitch: pitch.map { NSNumber(value: $0) }
         )
     }
 
-    /// "neutral", or the controls that differ from neutral, e.g. "energy 2.3 · valence 2.2".
+    /// "voice default", or the controls set away from 0, e.g. "intensity -1 · pace -0.5".
     var summary: String {
-        let parts = DeliveryAxis.allCases.compactMap { axis -> String? in
-            let value = self[keyPath: axis.keyPath]
-            return value == Self.neutralValue ? nil : "\(axis.rawValue) \(Self.format(value))"
+        let parts = DeliveryControl.allCases.compactMap { control -> String? in
+            guard let value = self[keyPath: control.keyPath], value != 0 else { return nil }
+            return "\(control.rawValue) \(Self.format(value))"
         }
-        return parts.isEmpty ? "neutral" : parts.joined(separator: " · ")
+        return parts.isEmpty ? "voice default" : parts.joined(separator: " · ")
     }
 
-    /// Clamps each control to its `supportedRange` and rounds to the slider step (0.1).
-    mutating func normalize() {
-        for axis in DeliveryAxis.allCases {
-            let value = self[keyPath: axis.keyPath]
-            let range = axis.supportedRange
-            self[keyPath: axis.keyPath] = value.isFinite
-                ? (min(max(value, range.lowerBound), range.upperBound) * 10).rounded() / 10
-                : Self.neutralValue
+    /// Every control set, unset ones from the voice's defaults.
+    func resolved(for voice: SBScyllasBandVoice?) -> DeliverySettings {
+        var resolved = self
+        for control in DeliveryControl.allCases where resolved[keyPath: control.keyPath] == nil {
+            resolved[keyPath: control.keyPath] = control.defaultValue(for: voice)
+        }
+        return resolved
+    }
+
+    /// Clamps each set control into the bundle's range, as the runtime would; values that aren't finite become unset.
+    mutating func normalize(using info: SBScyllasBandBundleInfo?) {
+        for control in DeliveryControl.allCases {
+            guard let value = self[keyPath: control.keyPath] else { continue }
+            let range = control.range(in: info)
+            self[keyPath: control.keyPath] = value.isFinite ? min(max(value, range.lowerBound), range.upperBound) : nil
         }
     }
 
     static func format(_ value: Float) -> String {
-        value.formatted(.number.precision(.fractionLength(0...1)))
+        value.formatted(.number.precision(.fractionLength(0...2)))
     }
 }
 
-/// Familiar deliveries made from the four controls, the same combinations as the main README; each lies within the
-/// supported ranges.
+/// The segment settings' quick reset, as in the Android sample: every control back to the voice's own delivery.
 enum DeliveryPreset: String, CaseIterable, Identifiable {
-    case neutral
-    case calm
-    case assertive
-    case joyful
-    case angry
-    case sad
+    case voiceDefault
 
     var id: String { rawValue }
-    var title: String { rawValue.capitalized }
+
+    var title: String {
+        switch self {
+        case .voiceDefault: return "Voice default"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .voiceDefault: return "arrow.counterclockwise"
+        }
+    }
 
     var delivery: DeliverySettings {
         switch self {
-        case .neutral:
-            return .neutral
-        case .calm:
-            return DeliverySettings(energy: 1.8, tension: 1, valence: 2.2, assertiveness: 2.1)
-        case .assertive:
-            return DeliverySettings(energy: 2.3, tension: 2.4, valence: 2.1, assertiveness: 2.4)
-        case .joyful:
-            return DeliverySettings(energy: 2.3, tension: 2, valence: 2.2, assertiveness: 2.2)
-        case .angry:
-            return DeliverySettings(energy: 2.3, tension: 2.4, valence: 1.4, assertiveness: 2.4)
-        case .sad:
-            return DeliverySettings(energy: 1.7, tension: 1.5, valence: 1.4, assertiveness: 2)
+        case .voiceDefault: return .voiceDefault
         }
     }
 }
@@ -124,7 +146,7 @@ enum DeliveryPreset: String, CaseIterable, Identifiable {
 struct SegmentSettings: Codable, Equatable {
     var voiceIdentifier: String
     var language: String
-    var delivery = DeliverySettings.neutral
+    var delivery = DeliverySettings.voiceDefault
 
     func request(text: String, seed: UInt64) -> SBScyllasBandRequest {
         let request = SBScyllasBandRequest(text: text, voiceIdentifier: voiceIdentifier)
@@ -142,7 +164,7 @@ struct SegmentSettings: Codable, Equatable {
         if !voice.languages.contains(language) {
             language = voice.defaultLanguage
         }
-        delivery.normalize()
+        delivery.normalize(using: info)
     }
 }
 
