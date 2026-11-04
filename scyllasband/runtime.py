@@ -23,10 +23,11 @@ class SynthesisRequest:
     text: str
     voice_id: str
     language: str | None = None
-    delivery: Mapping[str, Any] | str | None = None   # older models: numeric delivery values
-    emotion: str | None = None        # models with styles: neutral (default), joy, sadness, ...
-    intensity: str | None = None      # models with styles: less, normal (default), more
-    speed: float = 1.0
+    intensity: float | None = None    # calm (negative) to intense (positive), voice standard deviations; None = the voice's default
+    pace: float | None = None         # slower (negative) to faster (positive), words and pauses; None = the voice's default
+    pitch: float | None = None        # semitones; None = the voice's default (0)
+    delivery: Mapping[str, Any] | str | None = None   # the same three as one mapping or "intensity=1,pace=-0.5"
+    speed: float = 1.0                # a plain time stretch on top of pace (1 = none)
     steps: int | None = None          # bundle default (4)
     sampler: str | None = None        # bundle default (euler)
     seed: int | None = None
@@ -61,8 +62,19 @@ class ScyllasBandRuntime:
         self.default_sampler = str(controls.get("sampler", {}).get("default", "heun"))
 
     def available_emotions(self) -> list[str]:
-        """Emotions this model offers (empty for models without styles)."""
-        return list(self.engine.styles.emotions) if self.engine.styles is not None else []
+        """Always empty: the emotion comes from the text; delivery is intensity, pace and pitch."""
+        return []
+
+    def delivery_ranges(self) -> dict[str, tuple[float, float]]:
+        """The range each delivery control is clamped into: intensity and pace in standard deviations, pitch in semitones."""
+        from .delivery import DEFAULT_RANGES
+        return {**DEFAULT_RANGES, **self.engine.control_ranges}
+
+    def voice_delivery_defaults(self, voice_id: str) -> dict[str, float]:
+        """The delivery a voice uses for whatever a request leaves out."""
+        from .delivery import with_defaults
+        self.voice_for_id(voice_id)
+        return with_defaults({}, self.engine.voice_defaults.get(voice_id))
 
     @classmethod
     def from_bundle(cls, bundle_dir: str | Path, *, backend: str | None = None, backends: Sequence[str] | None = None,
@@ -117,10 +129,10 @@ class ScyllasBandRuntime:
     def plan_records(self, records: Sequence[Mapping[str, Any]], *, normalize: bool = True, source_kind: str = "text") -> SynthesisPlan:
         return plan_records(records, resolve_language=self.resolve_language_for_voice, normalize=normalize, source_kind=source_kind)
 
-    def plan_text(self, text: str, *, voice_id: str, language: str | None = None, delivery: Any = None, emotion: str | None = None,
-                  intensity: str | None = None, normalize: bool = True) -> SynthesisPlan:
-        return self.plan_records(records_from_text(text, voice=voice_id, language=language, delivery=delivery, emotion=emotion,
-                                                   intensity=intensity), normalize=normalize)
+    def plan_text(self, text: str, *, voice_id: str, language: str | None = None, delivery: Any = None, intensity: float | None = None,
+                  pace: float | None = None, pitch: float | None = None, normalize: bool = True) -> SynthesisPlan:
+        return self.plan_records(records_from_text(text, voice=voice_id, language=language, delivery=delivery, intensity=intensity,
+                                                   pace=pace, pitch=pitch), normalize=normalize)
 
     # --- synthesis ----------------------------------------------------------------------------------------------------
     def stream_options(self, *, steps: int | None = None, sampler: str | None = None, speed: float = 1.0, seed: int | None = None,
@@ -135,7 +147,7 @@ class ScyllasBandRuntime:
 
     def synthesize(self, request: SynthesisRequest, *, progress: TextIO | None = None) -> SynthesisResult:
         plan = self.plan_text(request.text, voice_id=request.voice_id, language=request.language, delivery=request.delivery,
-                              emotion=request.emotion, intensity=request.intensity, normalize=request.normalize_text)
+                              intensity=request.intensity, pace=request.pace, pitch=request.pitch, normalize=request.normalize_text)
         if not plan.chunks:
             raise ValueError("Nothing to speak: the text has no words")
         options = self.stream_options(steps=request.steps, sampler=request.sampler, speed=request.speed, seed=request.seed,

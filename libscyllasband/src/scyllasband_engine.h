@@ -5,12 +5,17 @@
 // For each target:
 // 1. its phones form the target of a before/target/after span whose context is up to 180 phones (silences
 //    excluded) of the neighbouring text of the same chain;
-// 2. the duration graph predicts frames for every span position; the target slice is rounded to integer frames;
+// 2. the duration graph predicts frames for every span position; the target slice is rounded to integer frames, with
+//    pauses scaled by the requested pace (controls.pace_pauses);
 // 3. per-frame phone ids and text events are built;
-// 4. the flow integrates noise to latents in the smallest fitting bucket, conditioned on the span and on the
+// 4. the pitch predictor integrates noise to a pitch and voicing contour; the pitch shift is added and the voice's soft
+//    limit applied (controls.pitch), giving the flow's melody input;
+// 5. the flow integrates noise to latents in the smallest fitting bucket, conditioned on the span, the melody and the
 //    last 96 latent frames already spoken (right-aligned prefix);
-// 5. the vocoder decodes the target with up to 48 frames of the preceding latents as left context, so
+// 6. the vocoder decodes the target with up to 48 frames of the preceding latents as left context, so
 //    consecutive targets join as one continuous waveform.
+// Delivery is intensity and pace (graph slots 0 and 1, standard deviations / z_scale) and a pitch shift in semitones; a
+// target with fewer than min_spoken_phones spoken phones gets neither slot, as in training.
 #pragma once
 
 #include "scyllasband_events.h"
@@ -18,6 +23,7 @@
 #include "scyllasband_graph.h"
 #include "scyllasband_json.h"
 
+#include <array>
 #include <atomic>
 #include <functional>
 #include <map>
@@ -59,6 +65,7 @@ struct Sentence {
 struct DeliveryTensors {
     float values[5];
     uint8_t present[5];
+    double pitch = 0.0;  // semitones added to the predicted pitch before the voice's soft limit
 };
 
 struct SentenceResult {
@@ -69,8 +76,9 @@ struct SentenceResult {
     Json metadata;
 };
 
-// Fills `out` ([latent_dim, frames], row-major) with the initial flow noise.
-using NoiseFn = std::function<void(int64_t frames, float* out)>;
+// Fills the initial noise of one target: `pitch` [2, frames] for the pitch predictor, `flow` [latent_dim, frames] for the flow
+// (row-major).
+using NoiseFn = std::function<void(int64_t frames, float* pitch, float* flow)>;
 
 class Engine {
 public:
@@ -93,6 +101,15 @@ public:
     int64_t max_target_frames() const { return max_target_frames_; }
     int default_steps() const { return default_steps_; }
     const std::string& default_sampler() const { return default_sampler_; }
+    int pitch_steps() const { return pitch_steps_; }
+    const std::string& pitch_sampler() const { return pitch_sampler_; }
+    // The graph inputs and pitch shift for a request: what it leaves out takes the voice's default; `resolved` (optional)
+    // receives {intensity, pace, pitch} as used.
+    DeliveryTensors delivery_tensors(const std::string& voice, const Delivery& delivery, Json* resolved = nullptr) const;
+    // {"ranges": {control: [low, high]}, "defaults": {voice: {control: value}}, "units": {...}}.
+    Json delivery_info() const;
+    // Pitch contour [2, frames] -> the flow's melody input [frames, 3] (pitch shifted and soft-limited, voicing, flag).
+    std::vector<float> melody(const std::vector<float>& contour, int64_t frames, const std::string& voice, double shift) const;
     std::string release() const;
     std::vector<int64_t> bucket_frames() const;
 
@@ -122,7 +139,7 @@ public:
 private:
     struct Bucket {
         int64_t frames;
-        std::string vector_estimator, vocoder;
+        std::string vector_estimator, vocoder, pitch_estimator;
         std::string vector_flow;  // optional: every flow step in one graph, for fused_sampler_/fused_steps_
         // Optional graphs without the prefix tokens, for targets that have no prefix (a chain's first target). Masked
         // prefix keys contribute nothing, so they return what the full graphs return there, for less work.
@@ -132,6 +149,9 @@ private:
     GraphOutput run(const std::string& component, const std::vector<TensorView>& inputs);
     const Bucket& bucket(int64_t frames) const;
     void validate() const;
+    // The delivery graph inputs for a target: none set when it has fewer than min_spoken_phones spoken phones.
+    void target_delivery(const std::vector<std::string>& phones, const DeliveryTensors& delivery, float values[5], uint8_t present[5]) const;
+    double pause_scale(const DeliveryTensors& delivery) const;
 
     std::unique_ptr<Backend> backend_;  // declared first: graphs are destroyed before their backend
     std::string bundle_dir_;
@@ -146,7 +166,7 @@ private:
     // masked and positions are absolute, so the narrowest graph that holds the span gives the same values.
     struct SpanBucket {
         int64_t phones;
-        std::string duration, context;
+        std::string duration, context, pitch_context;
     };
     std::vector<SpanBucket> span_buckets_;
     const SpanBucket* span_bucket(std::size_t phones) const;
@@ -157,6 +177,15 @@ private:
     int default_steps_ = 8;
     int64_t min_target_frames_ = 64, max_target_frames_ = 420;
     std::string default_sampler_ = "heun";
+    // Delivery (controls.delivery, controls.pace_pauses) and pitch (controls.pitch).
+    double z_scale_ = 5.0, z_limit_ = 2.5, pace_pause_per_sd_ = 0.0;
+    int min_spoken_phones_ = 4;
+    double ranges_[3][2] = {{-2.0, 2.0}, {-2.0, 2.0}, {-2.0, 2.0}};
+    std::map<std::string, std::array<double, 3>> voice_defaults_;
+    double pitch_center_ = 10.0, pitch_scale_ = 6.0, melody_center_ = 16.65, melody_scale_ = 24.0, voiced_threshold_ = 0.5, knee_ = 2.0;
+    std::map<std::string, std::pair<double, double>> pitch_edges_;
+    std::string pitch_context_ = "pitch_context_encoder", pitch_sampler_ = "euler";
+    int pitch_steps_ = 4;
     std::unique_ptr<G2P> g2p_;
     std::mutex graphs_mutex_;
     std::map<std::string, std::unique_ptr<Graph>> graphs_;
@@ -204,7 +233,8 @@ struct StreamEvent {
     Json metadata;
 };
 
-// Per-chunk noise source for tests: (chunk index, seed, has seed, frames, out [latent_dim, frames]).
+// Per-chunk noise source for tests: (chunk index, seed, has seed, frames, out [2 + latent_dim, frames]: the pitch predictor's
+// two rows, then the flow's).
 using ChunkNoiseFn = std::function<void(int, uint64_t, bool, int64_t, float*)>;
 
 // Plans `options.text` and speaks it target by target; `emit` returns false to stop. Returns the final metadata.

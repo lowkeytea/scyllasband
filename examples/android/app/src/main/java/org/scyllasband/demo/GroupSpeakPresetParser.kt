@@ -7,8 +7,8 @@ import org.scyllasband.android.ScyllasBandSegmentSettings
 /**
  * Converts `[voice:language:delivery]` tagged text into plain text plus speaker points.
  *
- * - `[voice:language:energy=2.3,valence=2.5]` sets voice, language and delivery. An empty voice or language
- *   part keeps the active one. A delivery part replaces the active delivery; unspecified axes are neutral.
+ * - `[voice:language:intensity=1,pace=-0.5]` sets voice, language and delivery. An empty voice or language
+ *   part keeps the active one. A delivery part replaces the active delivery; unspecified controls take the voice's own.
  * - `[es]` (a language) keeps the active voice and delivery; `[ink]` (anything else) switches voice only.
  * - Every line starts again from the defaults.
  */
@@ -39,34 +39,38 @@ object GroupSpeakPresetParser {
         return SpeakerDocumentSnapshot(output.toString().trimEnd(), points)
     }
 
-    /** Parses `energy=2.3,tension=1.8` into a delivery; omitted axes are neutral. Whisper is no longer supported. */
+    /**
+     * Parses `intensity=1,pace=-0.5,pitch=0` into a delivery; omitted controls take the voice's own. Values outside -2 to 2
+     * are clamped, as the runtime would.
+     */
     fun parseDelivery(spec: String): ScyllasBandDelivery {
         val clean = spec.trim().lowercase()
-        if (clean.isEmpty() || clean == "neutral") return ScyllasBandDelivery()
+        if (clean.isEmpty() || clean == "default" || clean == "neutral") return ScyllasBandDelivery()
         var delivery = ScyllasBandDelivery()
         val seen = mutableSetOf<String>()
         for (term in clean.split(',')) {
             val pair = term.split('=', limit = 2)
             require(pair.size == 2 && pair[0].isNotBlank()) { "Invalid delivery term '$term'" }
-            val axis = pair[0].trim()
+            val control = pair[0].trim()
             val raw = pair[1].trim()
-            require(seen.add(axis)) { "Delivery axis '$axis' is repeated" }
-            require(raw != "auto") { "'auto' delivery is not supported by this editor ('$axis')" }
-            require(axis != "whisper") { "Whisper is not supported; remove whisper from the delivery" }
-            val value = raw.toFloatOrNull()
-            require(value != null && value.isFinite() && value in ScyllasBandDelivery.MIN..ScyllasBandDelivery.MAX) {
-                "Delivery '$axis' must be within [0, 4]"
+            require(seen.add(control)) { "Delivery control '$control' is repeated" }
+            require(control !in V2_AXES) {
+                "This model takes intensity, pace and pitch ('$control' belonged to the v2 models)"
             }
-            delivery = when (axis) {
-                "energy" -> delivery.copy(energy = value)
-                "tension" -> delivery.copy(tension = value)
-                "valence" -> delivery.copy(valence = value)
-                "assertiveness" -> delivery.copy(assertiveness = value)
-                else -> error("Unknown delivery axis '$axis'")
+            if (raw == "default") continue
+            val value = raw.toFloatOrNull()
+            require(value != null && value.isFinite()) { "Delivery '$control' must be a number" }
+            val range = DELIVERY_UI_RANGES[control] ?: error("Unknown delivery control '$control'; use intensity, pace or pitch")
+            delivery = when (control) {
+                "intensity" -> delivery.copy(intensity = value.coerceIn(range))
+                "pace" -> delivery.copy(pace = value.coerceIn(range))
+                else -> delivery.copy(pitch = value.coerceIn(range))
             }
         }
         return delivery
     }
+
+    private val V2_AXES = setOf("energy", "tension", "valence", "assertiveness", "whisper", "emotion")
 
     private fun parseTag(
         label: String,
@@ -86,10 +90,7 @@ object GroupSpeakPresetParser {
                 language = parts[1]
                 explicitLanguage = true
             }
-            parts.getOrNull(2)?.takeIf { it.isNotBlank() }?.let {
-                // Tags use the 0-4 scale; clamp into each axis's supported range, as the runtime would.
-                delivery = parseDelivery(it).coerceToUiRange()
-            }
+            parts.getOrNull(2)?.takeIf { it.isNotBlank() }?.let { delivery = parseDelivery(it) }
         } else if (clean in languageTags) {
             language = clean
             explicitLanguage = true

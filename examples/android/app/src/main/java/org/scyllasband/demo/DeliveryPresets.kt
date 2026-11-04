@@ -4,44 +4,31 @@ import java.util.Locale
 import org.scyllasband.android.ScyllasBandDelivery
 
 /**
- * The sliders and imported tags keep each axis inside the range the runtime supports (the voices render most reliably
- * there; the runtime clamps any other request into it): energy 1.4-2.3, tension 1.0-2.4, valence 1.4-2.2 and
- * assertiveness 1.8-2.4, with 2 neutral in each. Every preset lies within them.
+ * The sliders and imported tags keep each control inside the range the runtime supports (-2 to 2): intensity and pace in
+ * the voice's own standard deviations, pitch in semitones. 0 is the voice's own delivery.
  */
-val DELIVERY_UI_RANGES = mapOf(
-    "energy" to 1.4f..2.3f,
-    "tension" to 1.0f..2.4f,
-    "valence" to 1.4f..2.2f,
-    "assertiveness" to 1.8f..2.4f,
-)
+val DELIVERY_UI_RANGES = ScyllasBandDelivery.DEFAULT_RANGES
 
 fun ScyllasBandDelivery.coerceToUiRange(): ScyllasBandDelivery = copy(
-    energy = energy.coerceIn(DELIVERY_UI_RANGES.getValue("energy")),
-    tension = tension.coerceIn(DELIVERY_UI_RANGES.getValue("tension")),
-    valence = valence.coerceIn(DELIVERY_UI_RANGES.getValue("valence")),
-    assertiveness = assertiveness.coerceIn(DELIVERY_UI_RANGES.getValue("assertiveness")),
+    intensity = intensity?.coerceIn(DELIVERY_UI_RANGES.getValue("intensity")),
+    pace = pace?.coerceIn(DELIVERY_UI_RANGES.getValue("pace")),
+    pitch = pitch?.coerceIn(DELIVERY_UI_RANGES.getValue("pitch")),
 )
 
-/** Quick delivery presets, the same combinations as the main README. */
+/** The point dialog's quick reset: every control back to the voice's own delivery. */
 enum class DeliveryPreset(val titleResource: Int, val delivery: ScyllasBandDelivery) {
-    NEUTRAL(R.string.preset_neutral, ScyllasBandDelivery()),
-    CALM(R.string.preset_calm, ScyllasBandDelivery(energy = 1.8f, tension = 1f, valence = 2.2f, assertiveness = 2.1f)),
-    ASSERTIVE(R.string.preset_assertive, ScyllasBandDelivery(energy = 2.3f, tension = 2.4f, valence = 2.1f, assertiveness = 2.4f)),
-    JOYFUL(R.string.preset_joyful, ScyllasBandDelivery(energy = 2.3f, tension = 2f, valence = 2.2f, assertiveness = 2.2f)),
-    ANGRY(R.string.preset_angry, ScyllasBandDelivery(energy = 2.3f, tension = 2.4f, valence = 1.4f, assertiveness = 2.4f)),
-    SAD(R.string.preset_sad, ScyllasBandDelivery(energy = 1.7f, tension = 1.5f, valence = 1.4f, assertiveness = 2f)),
+    DEFAULT(R.string.preset_default, ScyllasBandDelivery(intensity = 0f, pace = 0f, pitch = 0f)),
 }
 
-/** A short marker label for a delivery: "neutral", or the axes that differ from neutral. */
+/** A short marker label for a delivery: "default", or the controls that differ from the voice's own. */
 fun ScyllasBandDelivery.summary(): String {
     val parts = buildList {
-        if (energy != ScyllasBandDelivery.NEUTRAL) add("E ${formatAxis(energy)}")
-        if (tension != ScyllasBandDelivery.NEUTRAL) add("T ${formatAxis(tension)}")
-        if (valence != ScyllasBandDelivery.NEUTRAL) add("V ${formatAxis(valence)}")
-        if (assertiveness != ScyllasBandDelivery.NEUTRAL) add("A ${formatAxis(assertiveness)}")
+        intensity?.takeIf { it != 0f }?.let { add("intensity ${formatAxis(it)}") }
+        pace?.takeIf { it != 0f }?.let { add("pace ${formatAxis(it)}") }
+        pitch?.takeIf { it != 0f }?.let { add("pitch ${formatAxis(it)}") }
     }
-    return if (parts.isEmpty()) "neutral" else parts.joinToString(" ")
+    return if (parts.isEmpty()) "default" else parts.joinToString(" ")
 }
 
 fun formatAxis(value: Float): String =
-    String.format(Locale.US, "%.2f", value).trimEnd('0').trimEnd('.')
+    String.format(Locale.US, "%.2f", value).trimEnd('0').trimEnd('.').let { if (it == "-0") "0" else it }

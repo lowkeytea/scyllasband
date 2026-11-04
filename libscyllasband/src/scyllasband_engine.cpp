@@ -14,7 +14,7 @@
 
 namespace scyllasband {
 
-const char* const kGraphContract = "scyllasband_measured_delivery_v2";
+const char* const kGraphContract = "scyllasband_measured_controls_v3";
 
 namespace {
 
@@ -25,12 +25,16 @@ const std::vector<std::string> kContextInputs = {"span_context_phone_ids", "span
 const std::vector<std::string> kVectorInputs = {"noise", "time", "expanded_phone_ids", "voice_id", "language_id", "delivery_values",
                                                 "delivery_present", "latent_mask", "span_context_hidden", "prefix_latents", "prefix_mask",
                                                 "expanded_boundary_event_ids", "expanded_modifier_event_ids", "expanded_phone_phase",
-                                                "expanded_phone_log_duration", "expanded_sentence_type_ids"};
+                                                "expanded_phone_log_duration", "expanded_sentence_type_ids", "expanded_melody"};
+const std::vector<std::string> kPitchInputs = {"noise", "time", "expanded_phone_ids", "voice_id", "language_id", "delivery_values",
+                                               "delivery_present", "latent_mask", "span_context_hidden", "expanded_boundary_event_ids",
+                                               "expanded_modifier_event_ids", "expanded_phone_phase", "expanded_phone_log_duration",
+                                               "expanded_sentence_type_ids"};
 const std::vector<std::string> kVocoderInputs = {"latents", "latent_mask", "voice_id", "language_id", "emotion_id"};
 const std::vector<std::string> kFlowInputs = {"noise", "expanded_phone_ids", "voice_id", "language_id", "delivery_values", "delivery_present",
                                               "latent_mask", "span_context_hidden", "prefix_latents", "prefix_mask", "expanded_boundary_event_ids",
                                               "expanded_modifier_event_ids", "expanded_phone_phase", "expanded_phone_log_duration",
-                                              "expanded_sentence_type_ids"};
+                                              "expanded_sentence_type_ids", "expanded_melody"};
 const std::vector<std::string> kRequiredAssets = {"phone_vocab", "voice_index", "language_index", "g2p_config", "g2p_tokenizer", "g2p_language_map"};
 
 std::map<std::string, int64_t> load_index(const std::string& path) {
@@ -126,7 +130,8 @@ Engine::Engine(const BackendOptions& options, std::unique_ptr<Backend> backend) 
     default_sampler_ = controls.get("sampler").get("default").str("heun");
     for (const Json& b : controls.get("target_buckets").get("buckets").elements()) {
         buckets_.push_back(Bucket{b.get("latent_frames").integer(), b.get("vector_estimator").str(), b.get("vocoder").str(),
-                                  b.get("vector_flow").str(), b.get("vector_estimator_first").str(), b.get("vector_flow_first").str()});
+                                  b.get("pitch_estimator").str(), b.get("vector_flow").str(), b.get("vector_estimator_first").str(),
+                                  b.get("vector_flow_first").str()});
     }
     std::sort(buckets_.begin(), buckets_.end(), [](const Bucket& a, const Bucket& b) { return a.frames < b.frames; });
     // v2 was trained on targets of 64 to 420 latent frames (about 1.4 to 9 seconds): shorter targets lose their prosody and
@@ -140,9 +145,40 @@ Engine::Engine(const BackendOptions& options, std::unique_ptr<Backend> backend) 
     for (const Json& b : controls.get("g2p_buckets").elements()) g2p_buckets_.emplace_back(b.get("text_tokens").integer(), b.get("component").str());
     std::sort(g2p_buckets_.begin(), g2p_buckets_.end());
     for (const Json& b : controls.get("span_buckets").elements()) {
-        span_buckets_.push_back(SpanBucket{b.get("phones").integer(), b.get("duration_predictor").str(), b.get("vector_context_encoder").str()});
+        span_buckets_.push_back(SpanBucket{b.get("phones").integer(), b.get("duration_predictor").str(), b.get("vector_context_encoder").str(),
+                                           b.get("pitch_context_encoder").str()});
     }
     std::sort(span_buckets_.begin(), span_buckets_.end(), [](const SpanBucket& a, const SpanBucket& b) { return a.phones < b.phones; });
+    const Json& delivery = controls.get("delivery");
+    z_scale_ = delivery.get("z_scale").num(5.0);
+    z_limit_ = delivery.get("z_limit").num(2.5);
+    min_spoken_phones_ = static_cast<int>(delivery.get("min_spoken_phones").integer(4));
+    for (std::size_t i = 0; i < 3; ++i) {
+        const Json& range = delivery.get("ranges").get(kDeliveryControls[i]);
+        if (range.size() == 2) {
+            ranges_[i][0] = range.elements()[0].num(ranges_[i][0]);
+            ranges_[i][1] = range.elements()[1].num(ranges_[i][1]);
+        }
+    }
+    for (const auto& [voice_id, values] : delivery.get("defaults").items()) {
+        std::array<double, 3> defaults{};
+        for (std::size_t i = 0; i < 3; ++i) defaults[i] = values.get(kDeliveryControls[i]).num(0.0);
+        voice_defaults_[voice_id] = defaults;
+    }
+    pace_pause_per_sd_ = controls.get("pace_pauses").get("per_sd").num(0.0);
+    const Json& pitch = controls.get("pitch");
+    pitch_center_ = pitch.get("center").num(10.0);
+    pitch_scale_ = pitch.get("scale").num(6.0);
+    melody_center_ = pitch.get("melody_center").num(16.65);
+    melody_scale_ = pitch.get("melody_scale").num(24.0);
+    voiced_threshold_ = pitch.get("voiced_threshold").num(0.5);
+    knee_ = pitch.get("knee").num(2.0);
+    pitch_context_ = pitch.get("context_encoder").str("pitch_context_encoder");
+    pitch_sampler_ = unicode::encode(unicode::lower(unicode::decode(pitch.get("sampler").get("default").str("euler"))));
+    pitch_steps_ = static_cast<int>(pitch.get("steps").get("default").integer(4));
+    for (const auto& [voice_id, edges] : pitch.get("edges").items()) {
+        pitch_edges_[voice_id] = {edges.elements().at(0).num(), edges.elements().at(1).num()};
+    }
     for (const Json& v : manifest_.get("voices").elements()) {
         Voice voice{v.get("id").str(), {}, v.get("default_language").str()};
         for (const Json& language : v.get("languages").elements()) voice.languages.push_back(language.str());
@@ -190,9 +226,12 @@ void Engine::validate() const {
     const Json& buckets = controls.get("target_buckets").get("buckets");
     if (buckets.size() == 0) throw std::invalid_argument("Bundle declares no latent-frame buckets");
     std::vector<std::pair<std::string, const std::vector<std::string>*>> expected = {
-        {"g2p", nullptr}, {"duration_predictor", &kDurationInputs}, {"vector_context_encoder", &kContextInputs}};
+        {"g2p", nullptr}, {"duration_predictor", &kDurationInputs}, {"vector_context_encoder", &kContextInputs},
+        {controls.get("pitch").get("context_encoder").str("pitch_context_encoder"), &kContextInputs}};
     for (const Json& b : buckets.elements()) {
+        if (b.get("pitch_estimator").str().empty()) throw std::invalid_argument("Bundle bucket has no pitch_estimator");
         expected.emplace_back(b.get("vector_estimator").str(), &kVectorInputs);
+        expected.emplace_back(b.get("pitch_estimator").str(), &kPitchInputs);
         expected.emplace_back(b.get("vocoder").str(), &kVocoderInputs);
         if (!b.get("vector_estimator_first").str().empty()) expected.emplace_back(b.get("vector_estimator_first").str(), &kVectorInputs);
         if (!b.get("vector_flow").str().empty()) expected.emplace_back(b.get("vector_flow").str(), &kFlowInputs);
@@ -201,6 +240,7 @@ void Engine::validate() const {
     for (const Json& b : controls.get("span_buckets").elements()) {
         if (!b.get("duration_predictor").str().empty()) expected.emplace_back(b.get("duration_predictor").str(), &kDurationInputs);
         if (!b.get("vector_context_encoder").str().empty()) expected.emplace_back(b.get("vector_context_encoder").str(), &kContextInputs);
+        if (!b.get("pitch_context_encoder").str().empty()) expected.emplace_back(b.get("pitch_context_encoder").str(), &kContextInputs);
     }
     const Json& components = manifest_.get("components");
     const std::string backend = backend_->name();
@@ -224,7 +264,84 @@ void Engine::validate() const {
     if (voices.size() == 0) throw std::invalid_argument("Bundle voices must each declare their languages");
     for (const Json& v : voices.elements()) {
         if (v.get("languages").size() == 0) throw std::invalid_argument("Bundle voices must each declare their languages");
+        if (controls.get("pitch").get("edges").get(v.get("id").str()).size() != 2) {
+            throw std::invalid_argument("Bundle pitch edges lack voice '" + v.get("id").str() + "'");
+        }
     }
+}
+
+DeliveryTensors Engine::delivery_tensors(const std::string& voice_id, const Delivery& delivery, Json* resolved) const {
+    voice(voice_id);
+    std::array<double, 3> value{};
+    auto found = voice_defaults_.find(voice_id);
+    for (std::size_t i = 0; i < 3; ++i) {
+        const double fallback = found != voice_defaults_.end() ? found->second[i] : 0.0;
+        value[i] = delivery.controls[i] ? std::min(std::max(*delivery.controls[i], ranges_[i][0]), ranges_[i][1]) : fallback;
+    }
+    DeliveryTensors out{};
+    for (std::size_t i = 0; i < 2; ++i) {
+        out.values[i] = static_cast<float>(std::min(std::max(value[i], -z_limit_), z_limit_) / z_scale_);
+        out.present[i] = 1;
+    }
+    out.pitch = value[2];
+    if (resolved) {
+        Json json{Json::Object{}};
+        for (std::size_t i = 0; i < 3; ++i) json.set(kDeliveryControls[i], Json(value[i]));
+        *resolved = std::move(json);
+    }
+    return out;
+}
+
+Json Engine::delivery_info() const {
+    Json ranges{Json::Object{}}, defaults{Json::Object{}}, units{Json::Object{}};
+    for (std::size_t i = 0; i < 3; ++i) ranges.set(kDeliveryControls[i], Json(Json::Array{Json(ranges_[i][0]), Json(ranges_[i][1])}));
+    for (const Voice& v : voices_) {
+        Json value{Json::Object{}};
+        auto found = voice_defaults_.find(v.id);
+        for (std::size_t i = 0; i < 3; ++i) value.set(kDeliveryControls[i], Json(found != voice_defaults_.end() ? found->second[i] : 0.0));
+        defaults.set(v.id, value);
+    }
+    units.set("intensity", Json("sd"));
+    units.set("pace", Json("sd"));
+    units.set("pitch", Json("semitones"));
+    Json out{Json::Object{}};
+    out.set("ranges", ranges);
+    out.set("defaults", defaults);
+    out.set("units", units);
+    return out;
+}
+
+void Engine::target_delivery(const std::vector<std::string>& phones, const DeliveryTensors& delivery, float values[5], uint8_t present[5]) const {
+    int spoken = 0;
+    for (const std::string& phone : phones) spoken += phone.rfind("<", 0) != 0 && !is_non_acoustic_modifier(phone);
+    for (int i = 0; i < 5; ++i) {
+        values[i] = delivery.values[i];
+        present[i] = spoken < min_spoken_phones_ ? 0 : delivery.present[i];
+    }
+}
+
+double Engine::pause_scale(const DeliveryTensors& delivery) const {
+    const double pace = delivery.present[1] ? static_cast<double>(delivery.values[1]) * z_scale_ : 0.0;
+    return std::exp(pace_pause_per_sd_ * pace);
+}
+
+std::vector<float> Engine::melody(const std::vector<float>& contour, int64_t frames, const std::string& voice, double shift) const {
+    const auto edges = pitch_edges_.at(voice);
+    const double low = edges.first, high = edges.second, knee = std::min(knee_, (high - low) / 4.0);
+    const double top = high - knee, bottom = low + knee;
+    const std::size_t T = static_cast<std::size_t>(frames);
+    std::vector<float> out(T * 3);
+    for (std::size_t t = 0; t < T; ++t) {
+        double st = static_cast<double>(contour[t]) * pitch_scale_ + pitch_center_ + shift;
+        if (st > top) st = top + knee * std::tanh((st - top) / knee);
+        if (st < bottom) st = bottom - knee * std::tanh((bottom - st) / knee);
+        const double probability = std::min(std::max((static_cast<double>(contour[T + t]) + 1.0) / 2.0, 0.0), 1.0);
+        const double voiced = probability > voiced_threshold_ ? 1.0 : 0.0;
+        out[t * 3] = static_cast<float>((st - melody_center_) / melody_scale_ * voiced);
+        out[t * 3 + 1] = static_cast<float>(probability);
+        out[t * 3 + 2] = static_cast<float>(voiced);
+    }
+    return out;
 }
 
 std::string Engine::release() const { return manifest_.get("controls").get("delivery").get("release_id").str(); }
@@ -336,14 +453,17 @@ std::vector<int> Engine::durations(const Sentence& sentence, int64_t voice, int6
     std::vector<int64_t> ids = pad(span, padded), segs = pad(segments, padded);
     std::vector<uint8_t> mask = pad(std::vector<uint8_t>(span.size(), 1), padded);
     int64_t voice_id = voice, language_id = language;
+    float values[5];
+    uint8_t present[5];
+    target_delivery(sentence.phones, delivery, values, present);
     GraphOutput frames = run(narrow && !narrow->duration.empty() ? narrow->duration : std::string("duration_predictor"), {view(DType::i64, {1, width}, ids.data()), view(DType::i64, {1, width}, segs.data()),
                                                     view(DType::b8, {1, width}, mask.data()), view(DType::i64, {1}, &voice_id),
-                                                    view(DType::i64, {1}, &language_id), view(DType::f32, {1, 5}, delivery.values),
-                                                    view(DType::b8, {1, 5}, delivery.present)});
+                                                    view(DType::i64, {1}, &language_id), view(DType::f32, {1, 5}, values),
+                                                    view(DType::b8, {1, 5}, present)});
     std::size_t offset = static_cast<std::size_t>(std::count(segments.begin(), segments.end(), int64_t{0}));
-    std::vector<float> values(frames.values.begin() + static_cast<std::ptrdiff_t>(offset),
-                              frames.values.begin() + static_cast<std::ptrdiff_t>(offset + target.size()));
-    return frames_to_durations(values, sentence.phones, 1.0 / speed);
+    std::vector<float> predicted(frames.values.begin() + static_cast<std::ptrdiff_t>(offset),
+                                 frames.values.begin() + static_cast<std::ptrdiff_t>(offset + target.size()));
+    return frames_to_durations(predicted, sentence.phones, 1.0 / speed, pause_scale(delivery));
 }
 
 SentenceResult Engine::synthesize_sentence(const Sentence& sentence, const std::string& voice, const std::string& language,
@@ -377,6 +497,18 @@ SentenceResult Engine::synthesize_sentence(const Sentence& sentence, const std::
     std::vector<uint8_t> span_mask = pad(std::vector<uint8_t>(span.size(), 1), padded);
     GraphOutput hidden = run(narrow_context ? narrow->context : std::string("vector_context_encoder"), {view(DType::i64, {1, width}, span_ids.data()), view(DType::i64, {1, width}, span_segs.data()),
                                                         view(DType::b8, {1, width}, span_mask.data())});
+    // The pitch predictor's own span encoder, at its narrowest graph that holds the span.
+    const bool narrow_pitch = narrow && !narrow->pitch_context.empty();
+    const std::size_t pitch_padded = narrow_pitch ? static_cast<std::size_t>(narrow->phones) : span_width_;
+    const int64_t pitch_width = static_cast<int64_t>(pitch_padded);
+    std::vector<int64_t> pitch_span_ids = pad(span, pitch_padded), pitch_span_segs = pad(segments, pitch_padded);
+    std::vector<uint8_t> pitch_span_mask = pad(std::vector<uint8_t>(span.size(), 1), pitch_padded);
+    GraphOutput pitch_hidden = run(narrow_pitch ? narrow->pitch_context : pitch_context_,
+                                   {view(DType::i64, {1, pitch_width}, pitch_span_ids.data()), view(DType::i64, {1, pitch_width}, pitch_span_segs.data()),
+                                    view(DType::b8, {1, pitch_width}, pitch_span_mask.data())});
+    float delivery_values[5];
+    uint8_t delivery_present[5];
+    target_delivery(sentence.phones, delivery, delivery_values, delivery_present);
 
     std::vector<float> prefix_latents(D * P, 0.0f);
     std::vector<uint8_t> prefix_mask(P, 0);
@@ -396,8 +528,46 @@ SentenceResult Engine::synthesize_sentence(const Sentence& sentence, const std::
     std::vector<int64_t> boundary = pad(events.boundary, F), modifier = pad(events.modifier, F), sentence_type = pad(events.sentence, F);
     std::vector<float> phase = pad(events.phase, F), log_duration = pad(events.log_duration, F);
 
-    std::vector<float> x(D * F, 0.0f), noise_values(D * static_cast<std::size_t>(length));
-    noise(length, noise_values.data());
+    const std::size_t L = static_cast<std::size_t>(length);
+    std::vector<float> x(D * F, 0.0f), noise_values(D * L), pitch_noise(2 * L);
+    noise(length, pitch_noise.data(), noise_values.data());
+
+    // Pitch contour: the predictor integrates its own noise over the same frames and events (no audio prefix, no melody).
+    std::vector<float> c(2 * F, 0.0f), c_probe(2 * F);
+    for (std::size_t r = 0; r < 2; ++r) std::copy_n(pitch_noise.begin() + static_cast<std::ptrdiff_t>(r * L), L, c.begin() + static_cast<std::ptrdiff_t>(r * F));
+    float pitch_time = 0.0f;
+    auto pitch_velocity = [&](const std::vector<float>& state, float time) {
+        pitch_time = time;
+        return run(chosen.pitch_estimator,
+                   {view(DType::f32, {1, 2, frames}, state.data()), view(DType::f32, {1}, &pitch_time),
+                    view(DType::i64, {1, frames}, expanded.data()), view(DType::i64, {1}, &voice_id), view(DType::i64, {1}, &language_id),
+                    view(DType::f32, {1, 5}, delivery_values), view(DType::b8, {1, 5}, delivery_present), view(DType::b8, {1, frames}, latent_mask.data()),
+                    view(DType::f32, pitch_hidden.shape, pitch_hidden.values.data()), view(DType::i64, {1, frames}, boundary.data()),
+                    view(DType::i64, {1, frames}, modifier.data()), view(DType::f32, {1, frames}, phase.data()),
+                    view(DType::f32, {1, frames}, log_duration.data()), view(DType::i64, {1, frames}, sentence_type.data())})
+            .values;
+    };
+    const int pitch_steps = pitch_steps_;
+    const float pn = static_cast<float>(pitch_steps), pn2 = static_cast<float>(2 * pitch_steps);
+    for (int step = 0; step < pitch_steps; ++step) {
+        std::vector<float> a = pitch_velocity(c, static_cast<float>(static_cast<double>(step) / pitch_steps));
+        if (pitch_sampler_ == "heun") {
+            for (std::size_t i = 0; i < c.size(); ++i) c_probe[i] = c[i] + a[i] / pn;
+            std::vector<float> b = pitch_velocity(c_probe, static_cast<float>(static_cast<double>(step + 1) / pitch_steps));
+            for (std::size_t i = 0; i < c.size(); ++i) c[i] = c[i] + (a[i] + b[i]) / pn2;
+        } else {
+            for (std::size_t i = 0; i < c.size(); ++i) c[i] = c[i] + a[i] / pn;
+        }
+        for (std::size_t r = 0; r < 2; ++r) {
+            for (std::size_t t = 0; t < F; ++t) c[r * F + t] = c[r * F + t] * static_cast<float>(latent_mask[t]);
+        }
+    }
+    std::vector<float> contour(2 * L);
+    for (std::size_t r = 0; r < 2; ++r) std::copy_n(c.begin() + static_cast<std::ptrdiff_t>(r * F), L, contour.begin() + static_cast<std::ptrdiff_t>(r * L));
+    std::vector<float> melody_values = melody(contour, length, voice, delivery.pitch);
+    std::vector<float> expanded_melody(F * 3, 0.0f);
+    std::copy(melody_values.begin(), melody_values.end(), expanded_melody.begin());
+
     for (std::size_t d = 0; d < D; ++d) {
         std::copy_n(noise_values.begin() + static_cast<std::ptrdiff_t>(d * static_cast<std::size_t>(length)), static_cast<std::size_t>(length),
                     x.begin() + static_cast<std::ptrdiff_t>(d * F));
@@ -413,11 +583,12 @@ SentenceResult Engine::synthesize_sentence(const Sentence& sentence, const std::
         return run(estimator,
                    {view(DType::f32, {1, latent_dim_, frames}, state.data()), view(DType::f32, {1}, &time_value),
                     view(DType::i64, {1, frames}, expanded.data()), view(DType::i64, {1}, &voice_id), view(DType::i64, {1}, &language_id),
-                    view(DType::f32, {1, 5}, delivery.values), view(DType::b8, {1, 5}, delivery.present), view(DType::b8, {1, frames}, latent_mask.data()),
+                    view(DType::f32, {1, 5}, delivery_values), view(DType::b8, {1, 5}, delivery_present), view(DType::b8, {1, frames}, latent_mask.data()),
                     view(DType::f32, hidden.shape, hidden.values.data()), view(DType::f32, {1, latent_dim_, prefix_frames_}, prefix_latents.data()),
                     view(DType::b8, {1, prefix_frames_}, prefix_mask.data()), view(DType::i64, {1, frames}, boundary.data()),
                     view(DType::i64, {1, frames}, modifier.data()), view(DType::f32, {1, frames}, phase.data()),
-                    view(DType::f32, {1, frames}, log_duration.data()), view(DType::i64, {1, frames}, sentence_type.data())})
+                    view(DType::f32, {1, frames}, log_duration.data()), view(DType::i64, {1, frames}, sentence_type.data()),
+                    view(DType::f32, {1, frames, 3}, expanded_melody.data())})
             .values;
     };
     const bool heun = sampler == "heun";
@@ -425,11 +596,12 @@ SentenceResult Engine::synthesize_sentence(const Sentence& sentence, const std::
     if (fused) {
         x = run(flow,
                 {view(DType::f32, {1, latent_dim_, frames}, x.data()), view(DType::i64, {1, frames}, expanded.data()), view(DType::i64, {1}, &voice_id),
-                 view(DType::i64, {1}, &language_id), view(DType::f32, {1, 5}, delivery.values), view(DType::b8, {1, 5}, delivery.present),
+                 view(DType::i64, {1}, &language_id), view(DType::f32, {1, 5}, delivery_values), view(DType::b8, {1, 5}, delivery_present),
                  view(DType::b8, {1, frames}, latent_mask.data()), view(DType::f32, hidden.shape, hidden.values.data()),
                  view(DType::f32, {1, latent_dim_, prefix_frames_}, prefix_latents.data()), view(DType::b8, {1, prefix_frames_}, prefix_mask.data()),
                  view(DType::i64, {1, frames}, boundary.data()), view(DType::i64, {1, frames}, modifier.data()), view(DType::f32, {1, frames}, phase.data()),
-                 view(DType::f32, {1, frames}, log_duration.data()), view(DType::i64, {1, frames}, sentence_type.data())})
+                 view(DType::f32, {1, frames}, log_duration.data()), view(DType::i64, {1, frames}, sentence_type.data()),
+                 view(DType::f32, {1, frames, 3}, expanded_melody.data())})
                 .values;
     }
     const float n = static_cast<float>(steps), n2 = static_cast<float>(2 * steps);
@@ -463,6 +635,10 @@ SentenceResult Engine::synthesize_sentence(const Sentence& sentence, const std::
     metadata.set("bucket", Json(frames));
     metadata.set("steps", Json(steps));
     metadata.set("sampler", Json(sampler));
+    metadata.set("pitch_steps", Json(pitch_steps));
+    metadata.set("pitch_sampler", Json(pitch_sampler_));
+    metadata.set("pitch_shift", Json(delivery.pitch));
+    metadata.set("delivery_set", Json(delivery_present[0] != 0));
     metadata.set("fused_flow", Json(fused));
     metadata.set("flow_graph", Json(fused ? flow : estimator));
     metadata.set("prefix_frames", Json(static_cast<int64_t>(kept)));
@@ -511,7 +687,8 @@ Json PlanChunk::to_json() const {
     out.set("chain_id", Json(chain_id));
     out.set("voice", Json(voice));
     out.set("language", Json(language));
-    out.set("delivery", delivery.to_json());
+    const bool unset = std::none_of(delivery.controls.begin(), delivery.controls.end(), [](const auto& v) { return v.has_value(); });
+    out.set("delivery", unset ? Json() : delivery.to_json());   // as the Python plan: null when nothing is set
     out.set("text", Json(text));
     out.set("source_text", Json(source_text));
     out.set("paragraph_end", Json(paragraph_end));
@@ -883,8 +1060,8 @@ Json synthesize_plan_stream(Engine& engine, const Plan& plan, const SynthesisOpt
             chain.push_back(&plan.chunks[begin]);
         }
         ChainStream stream(engine, std::move(chain));
-        DeliveryTensors delivery{};
-        stream.front().delivery.tensors(delivery.values, delivery.present);
+        Json resolved;
+        const DeliveryTensors delivery = engine.delivery_tensors(stream.front().voice, stream.front().delivery, &resolved);
         std::vector<float> tail;  // [D, tail_frames]: the chain's last latents, the next target's prefix and decode context
         int64_t tail_frames = 0;
         std::size_t start = 0;
@@ -895,9 +1072,19 @@ Json synthesize_plan_stream(Engine& engine, const Plan& plan, const SynthesisOpt
             send(StreamEvent{StreamEvent::kChunkStarted, &chunk, 0, nullptr, chunk.to_json()});
 
             const uint64_t draw_seed = seed ? *seed : (static_cast<uint64_t>(entropy()) << 32) ^ entropy();
-            NoiseFn noise = [&](int64_t frames, float* out) {
-                if (chunk_noise) chunk_noise(chunk.index, seed.value_or(0), seed.has_value(), frames, out);
-                else gaussian_noise(draw_seed, static_cast<int64_t>(D) * frames, static_cast<float>(options.temperature), out);
+            // One draw of (2 + latent_dim) x frames per target: the pitch predictor's two rows (unscaled), then the flow's (scaled by
+            // the temperature).
+            NoiseFn noise = [&](int64_t frames, float* pitch, float* flow) {
+                const std::size_t T = static_cast<std::size_t>(frames);
+                std::vector<float> all((2 + D) * T);
+                if (chunk_noise) {
+                    chunk_noise(chunk.index, seed.value_or(0), seed.has_value(), frames, all.data());
+                } else {
+                    gaussian_noise(draw_seed, static_cast<int64_t>(all.size()), 1.0f, all.data());
+                    for (std::size_t i = 2 * T; i < all.size(); ++i) all[i] *= static_cast<float>(options.temperature);
+                }
+                std::copy_n(all.begin(), 2 * T, pitch);
+                std::copy_n(all.begin() + static_cast<std::ptrdiff_t>(2 * T), D * T, flow);
             };
             SentenceResult result = engine.synthesize_sentence(target.sentence, chunk.voice, chunk.language, delivery, tail, tail_frames,
                                                                settings.steps, settings.sampler, options.speed, noise, &target.durations);
@@ -920,6 +1107,7 @@ Json synthesize_plan_stream(Engine& engine, const Plan& plan, const SynthesisOpt
             metadata.set("chunk", chunk.to_json());
             for (const auto& [key, value] : result.metadata.items()) metadata.set(key, value);
             metadata.set("seed", seed ? Json(static_cast<int64_t>(*seed)) : Json());
+            metadata.set("delivery", resolved);
             metadata.set("first_audio_ms", Json(round1(*first_audio_ms)));
             chunk_metadata.push(metadata);
             send(StreamEvent{StreamEvent::kAudio, &chunk, 0, &audio, metadata});

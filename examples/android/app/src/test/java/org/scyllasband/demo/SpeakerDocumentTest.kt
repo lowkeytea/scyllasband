@@ -7,8 +7,8 @@ import org.junit.Test
 
 class SpeakerDocumentTest {
     private val default = ScyllasBandSegmentSettings("scylla", "en_us")
-    private val spanishJoyful = ScyllasBandSegmentSettings("ariadne", "es", DeliveryPreset.JOYFUL.delivery)
-    private val italianSoft = ScyllasBandSegmentSettings("ink", "it", ScyllasBandDelivery(energy = 1.6f, tension = 1.2f))
+    private val spanishJoyful = ScyllasBandSegmentSettings("ariadne", "es", ScyllasBandDelivery(intensity = 1f))
+    private val italianSoft = ScyllasBandSegmentSettings("ink", "it", ScyllasBandDelivery(intensity = -1f, pace = -0.5f))
 
     @Test
     fun pointAppliesUntilTheNextPoint() {

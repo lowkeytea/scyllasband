@@ -7,6 +7,8 @@ data class ScyllasBandVoice(
     val displayName: String,
     val languages: List<String>,
     val defaultLanguage: String,
+    /** What a request that leaves a control out uses for this voice (0 = the voice's own average). */
+    val deliveryDefaults: ScyllasBandDelivery = ScyllasBandDelivery(intensity = 0f, pace = 0f, pitch = 0f),
 )
 
 data class ScyllasBandBundleInfo(
@@ -15,6 +17,8 @@ data class ScyllasBandBundleInfo(
     val sampleRate: Int,
     val releaseId: String,
     val voices: List<ScyllasBandVoice>,
+    /** The range the runtime clamps each control into: intensity and pace in standard deviations, pitch in semitones. */
+    val deliveryRanges: Map<String, ClosedFloatingPointRange<Float>> = ScyllasBandDelivery.DEFAULT_RANGES,
 )
 
 /** Where the LiteRT graphs run. ONNX Runtime builds always run on the CPU. */
@@ -29,38 +33,39 @@ enum class ScyllasBandAccelerator(internal val code: Int) {
 }
 
 /**
- * Four continuous delivery axes on 0-4 (2 is neutral). [spec] is the ABI delivery string. [whisper] is no longer supported by
- * the runtime and is ignored.
+ * How a voice delivers a line. Each control is optional; null takes the voice's default.
+ *
+ * - [intensity]: calm (negative) to intense (positive), in the voice's own standard deviations. The emotion itself comes from
+ *   the text.
+ * - [pace]: slower (negative) to faster (positive), words and pauses together, in the voice's own standard deviations.
+ * - [pitch]: a shift of the voice's pitch in semitones.
+ *
+ * The released model supports -2 to 2 for each ([ScyllasBandBundleInfo.deliveryRanges]). [spec] is the ABI delivery string.
  */
 data class ScyllasBandDelivery(
-    val energy: Float = NEUTRAL,
-    val tension: Float = NEUTRAL,
-    val valence: Float = NEUTRAL,
-    val assertiveness: Float = NEUTRAL,
-    val whisper: Boolean = false,
+    val intensity: Float? = null,
+    val pace: Float? = null,
+    val pitch: Float? = null,
 ) {
     init {
-        require(listOf(energy, tension, valence, assertiveness).all { it.isFinite() && it in MIN..MAX }) {
-            "Delivery axes must be finite and within [$MIN, $MAX]"
+        require(listOfNotNull(intensity, pace, pitch).all { it.isFinite() && it in MIN..MAX }) {
+            "Delivery controls must be finite and within [$MIN, $MAX]"
         }
     }
 
-    fun spec(): String = String.format(
-        Locale.US,
-        "energy=%s,tension=%s,valence=%s,assertiveness=%s",
-        format(energy),
-        format(tension),
-        format(valence),
-        format(assertiveness),
-    )
+    /** "intensity=1,pace=-0.5,pitch=0" for the controls that are set; "" (every voice default) when none is. */
+    fun spec(): String = listOf("intensity" to intensity, "pace" to pace, "pitch" to pitch)
+        .filter { it.second != null }
+        .joinToString(",") { (name, value) -> "$name=${format(value!!)}" }
 
     companion object {
-        const val MIN = 0f
-        const val MAX = 4f
-        const val NEUTRAL = 2f
+        const val MIN = -2f
+        const val MAX = 2f
+        val DEFAULT_RANGES: Map<String, ClosedFloatingPointRange<Float>> =
+            mapOf("intensity" to MIN..MAX, "pace" to MIN..MAX, "pitch" to MIN..MAX)
 
         private fun format(value: Float): String =
-            String.format(Locale.US, "%.2f", value).trimEnd('0').trimEnd('.')
+            String.format(Locale.US, "%.2f", value).trimEnd('0').trimEnd('.').let { if (it == "-0") "0" else it }
     }
 }
 

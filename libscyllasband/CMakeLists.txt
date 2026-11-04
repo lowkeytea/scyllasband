@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(libscyllasband VERSION 2.0.0 LANGUAGES CXX)
+project(libscyllasband VERSION 3.0.0 LANGUAGES CXX)
 
 set(SCYLLASBAND_BACKEND "litert" CACHE STRING "Graph runtime linked into libscyllasband: litert, onnx or apple (Core ML and Core AI)")
 set_property(CACHE SCYLLASBAND_BACKEND PROPERTY STRINGS litert onnx apple)

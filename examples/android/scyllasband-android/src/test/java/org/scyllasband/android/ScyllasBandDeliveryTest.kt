@@ -6,27 +6,23 @@ import org.junit.Test
 
 class ScyllasBandDeliveryTest {
     @Test
-    fun neutralSpecIsAllTwos() {
+    fun unsetControlsTakeTheVoiceDefaults() {
+        assertEquals("", ScyllasBandDelivery().spec())
+        assertEquals("pace=-0.5", ScyllasBandDelivery(pace = -0.5f).spec())
+    }
+
+    @Test
+    fun specListsTheSetControlsAndKeepsFractions() {
         assertEquals(
-            "energy=2,tension=2,valence=2,assertiveness=2",
-            ScyllasBandDelivery().spec(),
+            "intensity=1.25,pace=-1,pitch=0",
+            ScyllasBandDelivery(intensity = 1.25f, pace = -1f, pitch = -0f).spec(),
         )
     }
 
     @Test
-    fun specHasNoLegacyPrefixAndKeepsFractions() {
-        val delivery = ScyllasBandDelivery(energy = 3.3f, tension = 0.8f, valence = 3.5f, assertiveness = 4f, whisper = true)
-
-        assertEquals(
-            "energy=3.3,tension=0.8,valence=3.5,assertiveness=4",
-            delivery.spec(),
-        )
-    }
-
-    @Test
-    fun rejectsAxesOutsideZeroToFour() {
-        assertThrows(IllegalArgumentException::class.java) { ScyllasBandDelivery(energy = 4.1f) }
-        assertThrows(IllegalArgumentException::class.java) { ScyllasBandDelivery(valence = -0.1f) }
-        assertThrows(IllegalArgumentException::class.java) { ScyllasBandDelivery(tension = Float.NaN) }
+    fun rejectsControlsOutsideTheSupportedRange() {
+        assertThrows(IllegalArgumentException::class.java) { ScyllasBandDelivery(intensity = 2.1f) }
+        assertThrows(IllegalArgumentException::class.java) { ScyllasBandDelivery(pace = -2.5f) }
+        assertThrows(IllegalArgumentException::class.java) { ScyllasBandDelivery(pitch = Float.NaN) }
     }
 }

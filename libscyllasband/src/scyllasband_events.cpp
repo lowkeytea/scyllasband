@@ -12,8 +12,8 @@
 namespace scyllasband {
 
 const char* const kSilencePhone = "<sil>";
-const char* const kDeliveryAxes[4] = {"energy", "tension", "valence", "assertiveness"};
-const double kDeliveryRanges[4][2] = {{1.4, 2.3}, {1.0, 2.4}, {1.4, 2.2}, {1.8, 2.4}};
+const char* const kDeliveryControls[3] = {"intensity", "pace", "pitch"};
+const double kDeliveryRanges[3][2] = {{-2.0, 2.0}, {-2.0, 2.0}, {-2.0, 2.0}};
 
 namespace {
 
@@ -98,11 +98,13 @@ bool is_punctuation_pause(const std::string& phone) {
 
 bool is_punctuation_phone(const std::string& phone) { return punctuation_phones().count(phone) > 0; }
 
-std::vector<int> frames_to_durations(const std::vector<float>& values, const std::vector<std::string>& phones, double scale) {
+std::vector<int> frames_to_durations(const std::vector<float>& values, const std::vector<std::string>& phones, double scale,
+                                     double pause_scale) {
     std::vector<int> durations;
     durations.reserve(phones.size());
     for (std::size_t i = 0; i < phones.size() && i < values.size(); ++i) {
-        int frames = static_cast<int>(std::nearbyint(std::max(0.0, static_cast<double>(values[i])) * scale));
+        const double factor = scale * (phones[i] == kSilencePhone ? pause_scale : 1.0);
+        int frames = static_cast<int>(std::nearbyint(std::max(0.0, static_cast<double>(values[i])) * factor));
         if (phones[i] == kSilencePhone) {
         } else if (is_non_acoustic_modifier(phones[i]) || is_punctuation_pause(phones[i])) {
             frames = 0;
@@ -244,76 +246,59 @@ Delivery Delivery::parse(const char* spec) {
     if (spec == nullptr) return out;
     std::string value(spec);
     std::string folded = unicode::encode(unicode::lower(unicode::strip(unicode::decode(value))));
-    if (folded.empty() || folded == "neutral") return out;
-    if (folded == "auto") {
-        out.axes = {std::nullopt, std::nullopt, std::nullopt, std::nullopt};
-        return out;
-    }
+    if (folded.empty() || folded == "default" || folded == "neutral") return out;
     std::vector<std::pair<std::string, std::string>> fields;
     std::size_t start = 0;
     while (true) {
-        std::size_t comma = value.find(',', start);
-        std::string part = unicode::encode(unicode::strip(unicode::decode(value.substr(start, comma == std::string::npos ? std::string::npos : comma - start))));
+        std::size_t comma = folded.find(',', start);
+        std::string part = unicode::encode(unicode::strip(unicode::decode(folded.substr(start, comma == std::string::npos ? std::string::npos : comma - start))));
         std::size_t eq = part.find('=');
         std::string key = eq == std::string::npos ? part : part.substr(0, eq);
         bool duplicate = std::any_of(fields.begin(), fields.end(), [&](const auto& f) { return f.first == key; });
-        if (eq == std::string::npos || duplicate) throw std::invalid_argument("Delivery must contain unique axis=value entries or 'auto'");
+        if (eq == std::string::npos || duplicate) {
+            throw std::invalid_argument("Delivery must be unique control=value entries, e.g. intensity=1,pace=-0.5,pitch=0");
+        }
         fields.emplace_back(key, unicode::encode(unicode::strip(unicode::decode(part.substr(eq + 1)))));
         if (comma == std::string::npos) break;
         start = comma + 1;
     }
+    static const std::set<std::string> old_keys = {"energy", "tension", "valence", "assertiveness", "whisper", "emotion", "kind"};
     for (const auto& [key, raw] : fields) {
-        if (key == "whisper") throw std::invalid_argument("Whisper is not supported; remove whisper from the delivery");
-    }
-    for (const auto& [key, raw] : fields) {
-        auto axis = std::find_if(std::begin(kDeliveryAxes), std::end(kDeliveryAxes), [&](const char* name) { return key == name; });
-        if (axis == std::end(kDeliveryAxes)) throw std::invalid_argument("Delivery accepts only energy, tension, valence, assertiveness");
-    }
-    auto field = [&](const std::string& key) -> const std::string* {
-        for (const auto& item : fields) {
-            if (item.first == key) return &item.second;
+        if (old_keys.count(key)) {
+            throw std::invalid_argument("This model takes intensity, pace and pitch (energy, tension, valence, assertiveness and emotion "
+                                        "styles belonged to the v2 models)");
         }
-        return nullptr;
-    };
-    for (std::size_t index = 0; index < 4; ++index) {
-        const std::string key = kDeliveryAxes[index];
-        const std::string* raw = field(key);
-        if (raw == nullptr) continue;
-        if (unicode::encode(unicode::lower(unicode::decode(*raw))) == "auto") {
-            out.axes[index] = std::nullopt;
-            continue;
+    }
+    for (const auto& field : fields) {
+        const std::string& key = field.first;
+        auto control = std::find_if(std::begin(kDeliveryControls), std::end(kDeliveryControls), [&](const char* name) { return key == name; });
+        if (control == std::end(kDeliveryControls)) throw std::invalid_argument("Delivery accepts only intensity, pace, pitch; got " + key);
+    }
+    for (std::size_t index = 0; index < 3; ++index) {
+        const std::string key = kDeliveryControls[index];
+        for (const auto& [name, raw] : fields) {
+            if (name != key) continue;
+            if (raw.empty() || raw == "default" || raw == "auto") break;
+            double number = 0.0;
+            if (!python_float(raw, number)) throw std::invalid_argument("Delivery " + key + " must be a number");
+            if (!std::isfinite(number)) throw std::invalid_argument("Delivery " + key + " must be finite");
+            out.controls[index] = std::min(std::max(number, kDeliveryRanges[index][0]), kDeliveryRanges[index][1]);
         }
-        double number = 0.0;
-        if (!python_float(*raw, number)) throw std::invalid_argument("Delivery " + key + " must be a number in [0, 4] or auto");
-        if (!std::isfinite(number) || number < 0.0 || number > 4.0) throw std::invalid_argument("Delivery " + key + " must be finite and within [0, 4]");
-        out.axes[index] = std::min(std::max(number, kDeliveryRanges[index][0]), kDeliveryRanges[index][1]);
     }
     return out;
 }
 
-void Delivery::tensors(float values[5], uint8_t present[5]) const {
-    for (int i = 0; i < 5; ++i) {
-        values[i] = 0.0f;
-        present[i] = 0;
-    }
-    for (std::size_t i = 0; i < 4; ++i) {
-        if (axes[i]) {
-            values[i] = static_cast<float>((*axes[i] - 2.0) / 4.0);
-            present[i] = 1;
-        }
-    }
-    present[4] = 1;  // whisper: always off
-}
-
 Json Delivery::to_json() const {
     Json out{Json::Object{}};
-    for (std::size_t i = 0; i < 4; ++i) out.set(kDeliveryAxes[i], axes[i] ? Json(*axes[i]) : Json());
+    for (std::size_t i = 0; i < 3; ++i) out.set(kDeliveryControls[i], controls[i] ? Json(*controls[i]) : Json());
     return out;
 }
 
 std::string Delivery::spec() const {
     std::string out;
-    for (std::size_t i = 0; i < 4; ++i) out += (i ? "," : "") + std::string(kDeliveryAxes[i]) + "=" + (axes[i] ? format_float(*axes[i]) : "auto");
+    for (std::size_t i = 0; i < 3; ++i) {
+        out += (i ? "," : "") + std::string(kDeliveryControls[i]) + "=" + (controls[i] ? format_float(*controls[i]) : "default");
+    }
     return out;
 }
 

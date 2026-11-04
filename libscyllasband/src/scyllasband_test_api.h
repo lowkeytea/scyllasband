@@ -25,7 +25,7 @@ SCYLLASBAND_API int32_t scyllasband_test_phonemize(ScyllasBandRuntime* runtime, 
 /*
  * One sentence from explicit inputs. request_json: {"phones", "word_starts", "before_ids", "after_ids", "voice", "language",
  * "delivery", "steps", "sampler", "speed", "durations" (optional: skip the duration graph)}.
- * noise: [latent_dim, noise_frames] row-major; noise_frames must equal the sentence's latent frames. NULL noise only
+ * noise: [2 + latent_dim, noise_frames] row-major (the pitch predictor's two rows, then the flow's); noise_frames must equal the sentence's latent frames. NULL noise only
  * predicts durations. prefix: [latent_dim, prefix_frames] previously spoken latents (flow prefix and decode context).
  * out_json: {"durations", "latent_frames", "bucket", ...}; out_latents [latent_dim, frames]; out_audio samples.
  */

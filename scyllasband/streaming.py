@@ -25,7 +25,6 @@ from typing import Any, Iterator, TextIO
 
 import numpy as np
 
-from .delivery import delivery_tensors
 from .engine import Engine, Sentence
 from .events import SILENCE
 from .planner import PlanChunk, SynthesisPlan
@@ -82,15 +81,16 @@ def synthesize_plan_stream(engine: Engine, plan: SynthesisPlan, options: StreamO
     for chain in _chains(plan.chunks):
         stream = _ChainStream(engine, chain)
         values, present, row, resolved = engine.delivery_inputs(chain[0].voice, chain[0].delivery)
+        delivery = (values, present, resolved.get("pitch", 0.0))
         tail: np.ndarray | None = None
         start = 0
         while True:
-            end, sentence, durations = _next_target(engine, stream, start, spoken == 0, (values, present), options.speed, row)
+            end, sentence, durations = _next_target(engine, stream, start, spoken == 0, delivery, options.speed, row)
             chunk = stream.target_chunk(start, end)
             seed = None if options.seed is None else int(options.seed) + chunk.index
             yield StreamingEvent(type="chunk_started", chunk=chunk)
             _progress(progress, f"[scyllasband] {chunk.chunk_id} {chunk.voice}/{chunk.language}: {chunk.text[:80]}")
-            result = engine.synthesize_sentence(sentence, voice=chunk.voice, language=chunk.language, delivery=(values, present),
+            result = engine.synthesize_sentence(sentence, voice=chunk.voice, language=chunk.language, delivery=delivery,
                                                 prefix=tail, steps=options.steps, sampler=options.sampler, speed=options.speed,
                                                 noise_scale=options.temperature, rng=np.random.default_rng(seed), durations=durations,
                                                 voice_row=row)
@@ -219,7 +219,7 @@ class _ChainStream:
 
 
 def _next_target(engine: Engine, stream: _ChainStream, start: int, first: bool,
-                 delivery: tuple[np.ndarray, np.ndarray], speed: float, voice_row: int | None = None) -> tuple[int, Sentence, list[int]]:
+                 delivery: tuple, speed: float, voice_row: int | None = None) -> tuple[int, Sentence, list[int]]:
     """The end of the next target, its sentence and durations."""
     shortest, longest = engine.min_target_frames, engine.max_target_frames
     voice = engine.voice_index(stream.chunks[0].voice) if voice_row is None else int(voice_row)

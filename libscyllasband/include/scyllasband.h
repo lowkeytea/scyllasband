@@ -1,5 +1,5 @@
 /*
- * Scylla's Band native runtime: text-to-speech for scyllasband_measured_delivery_v2 bundles.
+ * Scylla's Band native runtime: text-to-speech for scyllasband_measured_controls_v3 bundles.
  *
  * One graph backend is linked into each build: ONNX Runtime (bundle flavor "onnx"), LiteRT ("litert"), or on Apple
  * platforms Core ML and Core AI ("coreml", iOS 18 / macOS 15; "coreai", iOS 27 / macOS 27). scyllasband_backend() names it.
@@ -27,7 +27,7 @@
 extern "C" {
 #endif
 
-#define SCYLLASBAND_ABI_VERSION "2.0.0"
+#define SCYLLASBAND_ABI_VERSION "3.0.0"
 
 typedef struct ScyllasBandRuntime ScyllasBandRuntime;
 
@@ -63,11 +63,12 @@ typedef struct {
     const char* text;
     const char* voice_id;
     const char* language;     /* NULL or "": the voice's default language ("en" also selects it) */
-    /* NULL, "" or "neutral": neutral delivery. "auto": unconditioned. Otherwise axis=value pairs, e.g.
-       "energy=2.2,tension=2,valence=2,assertiveness=2": axes on 0-4 (2 = neutral) or "auto", clamped into the supported
-       ranges (energy 1.4-2.3, tension 1.0-2.4, valence 1.4-2.2, assertiveness 1.8-2.4); omitted axes stay neutral. */
+    /* NULL, "" or "default": the voice's own delivery. Otherwise control=value pairs, e.g. "intensity=1,pace=-0.5,pitch=0":
+       intensity (calm, negative, to intense, positive) and pace (slower to faster, words and pauses together) in the voice's
+       own standard deviations, pitch as a shift in semitones; each clamped into the bundle's ranges (-2 to 2 for all three
+       in the released model, see scyllasband_voices_json "delivery"); omitted controls take the voice's default. */
     const char* delivery;
-    float speed;              /* duration scale; 1.0 = the model's own pace; must be positive */
+    float speed;              /* a plain time stretch on top of pace; 1.0 = none; must be positive */
     int32_t steps;            /* flow steps; 0 = bundle default (8) */
     ScyllasBandSampler sampler;
     uint64_t seed;            /* sentence i of the plan draws its noise from seed + i */
@@ -114,7 +115,8 @@ SCYLLASBAND_API void scyllasband_request_init(ScyllasBandRequest* request);
 SCYLLASBAND_API ScyllasBandStatus scyllasband_runtime_create(const ScyllasBandRuntimeOptions* options, ScyllasBandRuntime** out_runtime);
 SCYLLASBAND_API void scyllasband_runtime_destroy(ScyllasBandRuntime* runtime);
 
-/* {"backend", "accelerator", "sample_rate", "release_id", "default_voice", "voices": [{"id", "languages", "default_language"}]}.
+/* {"backend", "accelerator", "sample_rate", "release_id", "default_voice", "voices": [{"id", "languages", "default_language"}],
+   "delivery": {"ranges": {control: [low, high]}, "defaults": {voice: {control: value}}, "units": {control: unit}}}.
    Owned by the runtime. */
 SCYLLASBAND_API const char* scyllasband_voices_json(ScyllasBandRuntime* runtime);
 
