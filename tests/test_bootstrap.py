@@ -11,7 +11,7 @@ import unittest
 from unittest import mock
 
 from scyllasband import download
-from scyllasband.bootstrap import plan_setup, wanted_backend, wants_onnx
+from scyllasband.bootstrap import _extra, missing_packages, plan_setup, wanted_backend, wants_onnx
 
 MISSING = {"ai_edge_litert": "ai-edge-litert"}
 
@@ -61,6 +61,18 @@ class WantsOnnxTest(unittest.TestCase):
             Path(tmp, "manifest.json").write_text(json.dumps(dict(preferred_backends=["onnx"])))
             self.assertTrue(wants_onnx(["speak", "--bundle", tmp]))
             self.assertFalse(wants_onnx(["speak", "--bundle", tmp, "--backend", "litert"]))
+
+
+class CudaExtraTest(unittest.TestCase):
+    def test_gpu_on_onnx_installs_onnx_runtime_for_cuda(self):
+        self.assertEqual(_extra(["speak", "--backend", "onnx", "--compute-units", "gpu", "hi"]), "cuda")
+        self.assertEqual(_extra(["speak", "--backend", "onnx", "--compute-units=cpu,vector_estimator=cuda"]), "cuda")
+        self.assertEqual(_extra(["speak", "--backend", "onnx", "--compute-units", "cpu"]), "onnx")
+        self.assertEqual(_extra(["speak", "--backend", "onnx"]), "onnx")
+        self.assertIsNone(_extra(["speak", "--backend", "litert", "--compute-units", "gpu"]))
+        with mock.patch("importlib.util.find_spec", return_value=None):
+            missing = missing_packages(["speak", "--backend", "onnx", "--compute-units", "gpu"])
+        self.assertEqual(missing["onnxruntime"], "onnxruntime-gpu")
 
 
 class WantedBackendTest(unittest.TestCase):

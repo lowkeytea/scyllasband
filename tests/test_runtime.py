@@ -240,6 +240,59 @@ class ContractTest(unittest.TestCase):
                 validate_bundle_layout(bundle)
 
 
+class OnnxProvidersTest(unittest.TestCase):
+    def test_compute_units_pick_execution_providers(self):
+        from scyllasband.engine import onnx_providers
+        cpu, cuda = ["CPUExecutionProvider"], ["CUDAExecutionProvider", "CPUExecutionProvider"]
+        for value in (None, "", "auto", "cpu"):
+            self.assertEqual(onnx_providers(value)("vector_estimator_256"), cpu)
+        per_graph = onnx_providers("gpu,g2p=cpu")
+        self.assertEqual(per_graph("vector_estimator_256"), cuda)
+        self.assertEqual(per_graph("g2p"), cpu)
+        self.assertEqual(onnx_providers("cuda")("vocoder"), cuda)
+        self.assertEqual(onnx_providers({"vocoder": "gpu"})("vocoder"), cuda)
+        with self.assertRaises(ValueError):
+            onnx_providers("ane")
+
+    def test_a_cuda_session_that_falls_back_to_the_cpu_is_an_error(self):
+        import sys
+        import types
+        from unittest import mock
+        from scyllasband.engine import OnnxSession, _preload_cuda
+
+        class Session:
+            def __init__(self, path, options, providers):
+                pass
+
+            def get_providers(self):
+                return ["CPUExecutionProvider"]
+
+            def get_inputs(self):
+                return []
+
+        fake = types.SimpleNamespace(SessionOptions=lambda: types.SimpleNamespace(), InferenceSession=Session,
+                                     preload_dlls=lambda: None)
+        _preload_cuda.cache_clear()
+        with mock.patch.dict(sys.modules, {"onnxruntime": fake}):
+            OnnxSession(Path("g2p.onnx"))   # CPU only: nothing to check
+            with self.assertRaisesRegex(RuntimeError, r"\.\[cuda\]"):
+                OnnxSession(Path("g2p.onnx"), providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
+        _preload_cuda.cache_clear()
+
+    def test_gpu_requests_use_the_webgpu_bundle(self):
+        import argparse
+        from scyllasband.cli import _default_bundle, wants_gpu
+        self.assertTrue(wants_gpu("gpu") and wants_gpu("cuda") and wants_gpu("cpu,vector_estimator=gpu"))
+        self.assertFalse(wants_gpu(None) or wants_gpu("cpu") or wants_gpu("gpu_like=cpu"))
+        with tempfile.TemporaryDirectory() as tmp:
+            for flavor in ("onnx", "webgpu"):
+                Path(tmp, flavor).mkdir()
+                Path(tmp, flavor, "manifest.json").write_text("{}")
+            args = lambda units: argparse.Namespace(models_dir=tmp, backend="onnx", compute_units=units)
+            self.assertEqual(_default_bundle(args("gpu")).name, "webgpu")
+            self.assertEqual(_default_bundle(args(None)).name, "onnx")
+
+
 class EngineTest(unittest.TestCase):
     def test_bucket_padding_prefix_and_decode(self):
         engine = _fake_engine()

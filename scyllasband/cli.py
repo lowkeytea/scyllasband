@@ -76,7 +76,8 @@ def _add_synthesis_args(parser: argparse.ArgumentParser, *, group: bool) -> None
     parser.add_argument("--threads", type=int, help="CPU threads per graph")
     parser.add_argument("--compute-units", help="Core ML / Core AI: auto (default: the bundle's recommendation), gpu, cpu, ane "
                                                 "(the graphs the bundle marks for the Neural Engine, the rest on the CPU), or "
-                                                "per graph, e.g. gpu,g2p=cpu")
+                                                "per graph, e.g. gpu,g2p=cpu. ONNX Runtime: cpu (default) or gpu (NVIDIA, "
+                                                "CUDA; uses the webgpu bundle)")
     parser.add_argument("--voice", default=None if group else "scylla")
     parser.add_argument("--language")
     parser.add_argument("--intensity", type=float, help="calm (negative) to intense (positive), in the voice's standard deviations "
@@ -186,10 +187,17 @@ def _plan(args: argparse.Namespace) -> int:
 
 
 # --- helpers ---------------------------------------------------------------------------------------------------------
+def wants_gpu(compute_units: str | None) -> bool:
+    """True when --compute-units puts any graph on the GPU ("gpu", "cuda", or per graph, e.g. "cpu,vector_estimator=gpu")."""
+    return any(part.split("=")[-1].strip() in ("gpu", "cuda") for part in str(compute_units or "").split(","))
+
+
 def _default_bundle(args: argparse.Namespace) -> Path:
     """The --backend's bundle, else the best installed bundle this machine can run."""
     models_dir = getattr(args, "models_dir", DEFAULT_MODELS_DIR)
     flavor = getattr(args, "backend", None) or default_installed_flavor(models_dir)
+    if flavor == "onnx" and wants_gpu(getattr(args, "compute_units", None)):
+        flavor = "webgpu"   # 8-bit weights that run on CUDA; the ONNX bundle's dynamic INT8 falls back to the CPU there
     if flavor is None:
         raise FileNotFoundError(f"No model installed under {Path(models_dir).resolve()}. Run: python -m scyllasband download")
     path = bundle_dir(models_dir, flavor)

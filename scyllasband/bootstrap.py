@@ -22,7 +22,8 @@ import sys
 MIN_PYTHON = (3, 10)
 REQUIRED = {"numpy": "numpy", "huggingface_hub": "huggingface_hub", "ai_edge_litert": "ai-edge-litert"}
 # Optional extras (pyproject) by graph backend: module -> package.
-EXTRAS = {"onnx": {"onnxruntime": "onnxruntime"}, "coreml": {"coremltools": "coremltools"}, "coreai": {"coreai": "coreai-core"}}
+EXTRAS = {"onnx": {"onnxruntime": "onnxruntime"}, "cuda": {"onnxruntime": "onnxruntime-gpu"}, "coreml": {"coremltools": "coremltools"},
+          "coreai": {"coreai": "coreai-core"}}
 MODEL_COMMANDS = ("speak", "group-speak", "stream", "plan", "list-voices", "validate-bundle")
 REPO_ROOT = Path(__file__).resolve().parents[1]
 VENV_DIR = REPO_ROOT / ".venv"
@@ -97,7 +98,7 @@ def plan_setup(missing, *, checkout, venv_ready, in_venv, in_repo_venv, python_o
 
 def missing_packages(argv):
     needed = dict(REQUIRED)
-    needed.update(EXTRAS.get(wanted_backend(argv), {}))
+    needed.update(EXTRAS.get(_extra(argv), {}))
     return {module: package for module, package in needed.items() if importlib.util.find_spec(module) is None}
 
 
@@ -138,6 +139,9 @@ def _option(args, flag):
 
 def _extra(argv):
     backend = wanted_backend(argv)
+    units = _option(list(argv), "--compute-units") or ""
+    if backend == "onnx" and any(unit.split("=")[-1].strip() in ("gpu", "cuda") for unit in units.split(",")):
+        return "cuda"
     return backend if backend in EXTRAS else None
 
 
@@ -162,7 +166,7 @@ def in_repo_venv():
 
 def _install(python, extra):
     target = f"{REPO_ROOT}[{extra}]" if extra else str(REPO_ROOT)
-    names = {"onnx": "ONNX Runtime", "coreml": "Core ML Tools", "coreai": "Core AI"}
+    names = {"onnx": "ONNX Runtime", "cuda": "ONNX Runtime for CUDA", "coreml": "Core ML Tools", "coreai": "Core AI"}
     print(f"Installing the Scylla's Band runtime{' with ' + names[extra] if extra else ''} ...", file=sys.stderr)
     subprocess.run([str(python), "-m", "pip", "install", "--disable-pip-version-check", "-e", target], check=True)
 

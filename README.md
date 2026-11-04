@@ -41,7 +41,7 @@ Requirements: Python 3.10–3.14 on macOS with Apple silicon, Linux (x86_64 or a
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -e .                   # ".[onnx]", ".[coreml]" or ".[coreai]" for the other backends
+pip install -e .                   # ".[onnx]", ".[cuda]", ".[coreml]" or ".[coreai]" for the other backends
 ```
 
 The model is downloaded from [`spybyscript/scyllasband`](https://huggingface.co/spybyscript/scyllasband), pinned to the tag `v3-20261104-apple` (release `v3-20261104` with its Core ML and Core AI bundles), into `scyllasband/models/<bundle>` (`litert`, `coreai`, `coreml` or `onnx`). Voice conditioning is embedded in the graphs; no separate voice files are needed.
@@ -96,7 +96,7 @@ python -m scyllasband plan --voice scylla "Print the sentence plan as JSON."
 | `--seed`, `--temperature` | random, 1.0 | Repeatable output; scale of the sampling noise |
 | `--threads` | backend default | CPU threads per graph |
 | `--backend`, `--bundle` | the installed bundle for this machine (Core ML on a Mac, LiteRT elsewhere) | Choose another installed bundle |
-| `--compute-units` | `auto` | Core ML / Core AI: `auto` (the bundle's recommendation), `gpu`, `cpu` or `ane`; see [Backends](#backends) |
+| `--compute-units` | `auto` | Core ML / Core AI: `auto` (the bundle's recommendation), `gpu`, `cpu` or `ane`. ONNX Runtime: `cpu`, or `gpu` for NVIDIA GPUs. See [Backends](#backends) |
 | `--pause-ms` | 0 | Extra silence where the voice, language or delivery changes |
 | `--metadata` | none | Write phones, durations and timings as JSON |
 | `--no-normalize-text` | off | Skip spoken-text normalization for text that is already normalized |
@@ -109,8 +109,19 @@ python -m scyllasband plan --voice scylla "Print the sentence plan as JSON."
 | Core AI | iOS, iPadOS and visionOS 27 apps; also runs on macOS 27 | 178 MB | `coreai-core`, installed the first time a Core AI bundle runs (or `pip install -e ".[coreai]"`) |
 | LiteRT | Linux, Windows, Android and Intel Macs | 229 MB | `ai-edge-litert` (installed with this package) |
 | ONNX Runtime | anywhere ONNX Runtime runs | 291 MB | `onnxruntime`, installed the first time you use `--backend onnx` (or `pip install -e ".[onnx]"`) |
+| WebGPU (ONNX) | browsers through ONNX Runtime Web; NVIDIA GPUs through ONNX Runtime with CUDA | 291 MB | `onnxruntime-gpu` for NVIDIA GPUs: `pip install -e ".[cuda]"` |
 
 `python -m scyllasband download` fetches the Core ML bundle on an Apple silicon Mac and the LiteRT bundle elsewhere. A Mac that can build apps for iOS, iPadOS or visionOS 27 (macOS 27, or an Xcode with those SDKs) is also offered the Core AI bundle those apps use; the Mac itself keeps running Core ML. `--flavor` downloads a particular bundle. Commands use the installed bundle for the machine; `--backend` and `--bundle` select another, for example `--backend coreai` on macOS 27. Every bundle holds INT8 weights for the transformers and the G2P; LiteRT, Core ML and Core AI also quantize the vocoder. `--threads` sets the CPU threads per graph. Sampling uses Euler with 4 steps by default (`--sampler`, `--steps`).
+
+On an NVIDIA GPU, ONNX Runtime runs the WebGPU bundle, whose 8-bit weights stay on the GPU (the ONNX bundle's dynamic INT8 falls back to the CPU there). Install ONNX Runtime for CUDA in an environment without the CPU-only `onnxruntime` package; the `cuda` extra brings the CUDA and cuDNN libraries it needs:
+
+```bash
+pip install -e ".[cuda]"
+python -m scyllasband download --flavor webgpu
+python -m scyllasband speak --backend onnx --compute-units gpu --voice tuesday -o hello.wav "Hello from the GPU."
+```
+
+`--backend onnx --compute-units gpu` picks the installed WebGPU bundle; per-graph choices such as `gpu,g2p=cpu` also work. With the Python runtime on an NVIDIA RTX PRO 6000 (Blackwell), the three-sentence passage in the table below runs at about 90× real time with 58 ms to first audio when warm, against about 7× and 680 ms for the ONNX bundle on the same machine's CPU (Ryzen 7 7800X3D).
 
 On Core ML and Core AI, `--compute-units` chooses where the graphs run: `auto` (the bundle's recommendation: the GPU), `gpu`, `cpu`, or `ane`, which runs the graphs the bundle marks as accurate on the Neural Engine there (Core AI's flow and pitch predictor) and the rest on the CPU. iOS does not allow GPU work from background apps, so an app that keeps speaking in the background uses `ane` (Core AI) or `cpu`. The first load of a Core AI bundle specializes its graphs for the device (seconds to tens of seconds; see the table below); the system caches that until the next OS update.
 

@@ -9,15 +9,17 @@ from __future__ import annotations
 
 from pathlib import Path
 import threading
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 import numpy as np
 
 COMPUTE_UNITS = {"cpu": "CPU_ONLY", "gpu": "CPU_AND_GPU", "ane": "CPU_AND_NE", "all": "ALL"}
 
 
-def parse_compute_units(value: str | Mapping[str, str] | None, default: str = "gpu") -> Callable[[str], str]:
+def parse_compute_units(value: str | Mapping[str, str] | None, default: str = "gpu",
+                        units: Iterable[str] = COMPUTE_UNITS) -> Callable[[str], str]:
     """``"gpu"`` for every asset, or ``"gpu,g2p=cpu,duration_predictor=cpu"``: a default plus per-asset choices."""
+    units = tuple(units)
     if isinstance(value, Mapping):
         table, fallback = {str(k): str(v) for k, v in value.items()}, default
     else:
@@ -29,8 +31,8 @@ def parse_compute_units(value: str | Mapping[str, str] | None, default: str = "g
             else:
                 fallback = key
     for unit in (fallback, *table.values()):
-        if unit not in COMPUTE_UNITS:
-            raise ValueError(f"Unknown compute unit {unit!r}; choose one of {', '.join(COMPUTE_UNITS)}")
+        if unit not in units:
+            raise ValueError(f"Unknown compute unit {unit!r}; choose one of {', '.join(units)}")
     return lambda asset: table.get(asset, fallback)
 
 
