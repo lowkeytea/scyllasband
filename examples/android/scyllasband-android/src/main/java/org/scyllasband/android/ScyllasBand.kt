@@ -162,12 +162,28 @@ class ScyllasBand private constructor(
             }
         }
         check(voices.isNotEmpty()) { "The Scylla's Band bundle lists no voices" }
+        val delivery = root.optJSONObject("delivery")
+        val defaults = delivery?.optJSONObject("defaults")
+        val ranges = delivery?.optJSONObject("ranges")
         return ScyllasBandBundleInfo(
             backend = root.optString("backend", ScyllasBandNative.backend()),
             accelerator = root.optString("accelerator", "cpu"),
             sampleRate = root.getInt("sample_rate"),
             releaseId = root.optString("release_id"),
-            voices = voices,
+            voices = voices.map { voice ->
+                val values = defaults?.optJSONObject(voice.id) ?: return@map voice
+                voice.copy(
+                    deliveryDefaults = ScyllasBandDelivery(
+                        intensity = values.optDouble("intensity", 0.0).toFloat(),
+                        pace = values.optDouble("pace", 0.0).toFloat(),
+                        pitch = values.optDouble("pitch", 0.0).toFloat(),
+                    ),
+                )
+            },
+            deliveryRanges = ScyllasBandDelivery.DEFAULT_RANGES.mapValues { (name, fallback) ->
+                val range = ranges?.optJSONArray(name)
+                if (range == null || range.length() != 2) fallback else range.getDouble(0).toFloat()..range.getDouble(1).toFloat()
+            },
         )
     }
 

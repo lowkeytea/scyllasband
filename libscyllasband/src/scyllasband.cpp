@@ -89,7 +89,7 @@ SynthesisOptions options_from(const ScyllasBandRequest* request) {
 
 ChunkNoiseFn test_noise(ScyllasBandRuntime* runtime) {
     if (runtime->test_noise == nullptr) return nullptr;
-    const int dim = runtime->engine->latent_dim();
+    const int dim = 2 + runtime->engine->latent_dim();   // the pitch predictor's two rows, then the flow's
     return [runtime, dim](int index, uint64_t seed, bool has_seed, int64_t frames, float* out) {
         runtime->test_noise(index, seed, has_seed ? 1 : 0, dim, frames, out, runtime->test_noise_user);
     };
@@ -166,6 +166,7 @@ ScyllasBandStatus scyllasband_runtime_create(const ScyllasBandRuntimeOptions* op
             voices.push_back(std::move(item));
         }
         info.set("voices", Json(std::move(voices)));
+        info.set("delivery", engine.delivery_info());
         runtime->voices_json = info.dump();
         *out_runtime = runtime.release();
     });
@@ -215,11 +216,8 @@ ScyllasBandStatus scyllasband_synthesize(ScyllasBandRuntime* runtime, const Scyl
         Json delivery;
         Json summary = synthesize_stream(engine, options, [&](const StreamEvent& event) {
             if (event.type == StreamEvent::kAudio) samples.insert(samples.end(), event.audio->begin(), event.audio->end());
-            if (event.type == StreamEvent::kPlan) {
-                const Json& first = event.metadata.get("chunks")[0];
-                language = first.get("language").str();
-                delivery = first.get("delivery");
-            }
+            if (event.type == StreamEvent::kPlan) language = event.metadata.get("chunks")[0].get("language").str();
+            if (event.type == StreamEvent::kAudio && delivery.is_null()) delivery = event.metadata.get("delivery");   // as used
             return true;
         }, test_noise(runtime));
         const int steps = options.steps > 0 ? options.steps : engine.default_steps();
@@ -337,8 +335,8 @@ int32_t scyllasband_test_synthesize_sentence(ScyllasBandRuntime* runtime, const 
         sentence.after_ids = int_list(request.get("after_ids"));
         const std::string voice = request.get("voice").str(), language = request.get("language").str();
         const std::string delivery_spec = request.get("delivery").str();
-        DeliveryTensors delivery{};
-        Delivery::parse(request.get("delivery").is_null() ? nullptr : delivery_spec.c_str()).tensors(delivery.values, delivery.present);
+        const DeliveryTensors delivery =
+            engine.delivery_tensors(voice, Delivery::parse(request.get("delivery").is_null() ? nullptr : delivery_spec.c_str()));
         const double speed = request.get("speed").num(1.0);
         Json out{Json::Object{}};
         std::vector<int> forced;
@@ -358,9 +356,11 @@ int32_t scyllasband_test_synthesize_sentence(ScyllasBandRuntime* runtime, const 
         SentenceResult result = engine.synthesize_sentence(
             sentence, voice, language, delivery, prefix_values, prefix ? prefix_frames : 0, static_cast<int>(request.get("steps").integer(8)),
             request.get("sampler").str("heun"), speed,
-            [&](int64_t frames, float* values) {
+            [&](int64_t frames, float* pitch, float* flow) {   // noise: [2 + latent_dim, frames], the pitch rows first
                 if (frames != noise_frames) throw std::invalid_argument("noise has " + std::to_string(noise_frames) + " frames; the sentence needs " + std::to_string(frames));
-                std::copy_n(noise, dim * static_cast<std::size_t>(frames), values);
+                const std::size_t T = static_cast<std::size_t>(frames);
+                std::copy_n(noise, 2 * T, pitch);
+                std::copy_n(noise + 2 * T, dim * T, flow);
             },
             forced.empty() ? nullptr : &forced);
         std::vector<float> audio = engine.decode(result.latents, result.frames, voice, language, prefix_values, prefix ? prefix_frames : 0);

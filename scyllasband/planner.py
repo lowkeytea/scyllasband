@@ -11,8 +11,7 @@ from dataclasses import asdict, dataclass, field
 import re
 from typing import Any, Iterable, Mapping, Sequence
 
-from .delivery import delivery_spec, resolve_delivery
-from .styles import is_style_request, parse_style, style_spec
+from .delivery import CONTROLS, delivery_spec, resolve_delivery
 from .text_normalizer import normalize_spoken_text
 
 # A sentence ends after a terminal punctuation run (and any closing quotes/brackets) followed by whitespace.
@@ -29,7 +28,7 @@ class PlanChunk:
     chain_id: str
     voice: str
     language: str
-    delivery: dict[str, Any] | None   # numeric delivery, a style ({emotion, intensity}) or None (the bundle default)
+    delivery: dict[str, Any] | None   # {intensity, pace, pitch} (None = the voice's default) or None for all defaults
     text: str
     source_text: str
     paragraph_end: bool = False
@@ -115,38 +114,31 @@ def plan_records(records: Sequence[Mapping[str, Any]], *, resolve_language, norm
 
 
 def normalize_request(record: Mapping[str, Any]) -> dict[str, Any] | None:
-    """A record's delivery request: a style ({emotion, intensity}, from its emotion / intensity fields or a style
-    string), numeric delivery values (older bundles), or None for the bundle's default."""
+    """A record's delivery: intensity, pace and pitch from its own fields or from its ``delivery`` (a mapping or
+    "intensity=1,pace=-0.5,pitch=0"), each None for the voice's default; None when nothing is set."""
+    if record.get("emotion") is not None:
+        raise ValueError("This model has no emotion choice: the emotion comes from the text. Use intensity, pace and pitch")
     value = record.get("delivery")
-    style = {k: record.get(k) for k in ("emotion", "intensity") if record.get(k) is not None}
-    if style:
+    fields = {k: record.get(k) for k in CONTROLS if record.get(k) is not None}
+    if fields:
         if value is not None:
-            raise ValueError("Give either an emotion / intensity or a delivery, not both")
-        return dict(parse_style(style), kind="style")
-    if isinstance(value, Mapping) and value.get("kind") == "style":
-        return dict(value)
-    if is_style_request(value):
-        return dict(parse_style(value), kind="style")
-    if value is None:
-        return None
-    return resolve_delivery(value)
+            raise ValueError("Give intensity / pace / pitch either as fields or as a delivery, not both")
+        value = fields
+    resolved = resolve_delivery(value)
+    return None if all(v is None for v in resolved.values()) else resolved
 
 
 def request_spec(request: Mapping[str, Any] | None) -> str:
-    if request is None:
-        return "default"
-    if request.get("kind") == "style":
-        return style_spec(request)
-    return delivery_spec(request)
+    return "default" if request is None else delivery_spec(request)
 
 
-def records_from_text(text: str, *, voice: str, language: str | None, delivery: Any = None, emotion: str | None = None,
-                      intensity: str | None = None) -> list[dict[str, Any]]:
-    return [dict(text=text, voice=voice, language=language, delivery=delivery, emotion=emotion, intensity=intensity)]
+def records_from_text(text: str, *, voice: str, language: str | None, delivery: Any = None, intensity: float | None = None,
+                      pace: float | None = None, pitch: float | None = None) -> list[dict[str, Any]]:
+    return [dict(text=text, voice=voice, language=language, delivery=delivery, intensity=intensity, pace=pace, pitch=pitch)]
 
 
-# --- group-speak markup: "[voice]", "[voice:language]", "[voice:language:joy,more]" (or "[voice::joy,more]"), "[language]";
-# older bundles take numeric delivery in the third part: "[voice:language:energy=2.3,valence=2.2]" ----
+# --- group-speak markup: "[voice]", "[voice:language]", "[voice:language:intensity=1,pace=-0.5]" (or "[voice::pace=-1]"),
+# "[language]" ----
 GROUP_TAG_RE = re.compile(r"\[([-A-Za-z0-9_.,:=]+)\]")
 GROUP_LANGUAGE_TAGS = frozenset({"en", "en_us", "en_gb", "es", "it", "de", "fr", "vi"})
 
@@ -175,8 +167,7 @@ def _parse_group_tag(label: str, voice, language, delivery):
         voice = voice_part.strip() or voice
         language = language_part.strip() or language
         if rest and rest[0].strip():
-            spec = rest[0].strip()   # a new delivery tag replaces the active request
-            delivery = normalize_request(dict(delivery=spec)) if is_style_request(spec) else delivery_spec(spec)
+            delivery = normalize_request(dict(delivery=rest[0].strip()))   # a new delivery tag replaces the active request
     elif clean in GROUP_LANGUAGE_TAGS:
         language = clean
     elif clean:

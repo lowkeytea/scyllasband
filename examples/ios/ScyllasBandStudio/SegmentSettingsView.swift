@@ -32,23 +32,22 @@ struct SegmentSettingsView: View {
                     }
                 }
 
-                Section("Presets") {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 8)], spacing: 8) {
-                        ForEach(DeliveryPreset.allCases) { preset in
-                            presetButton(preset)
-                        }
-                    }
-                    .padding(.vertical, 4)
-                }
-
                 Section {
-                    ForEach(DeliveryAxis.allCases) { axis in
-                        DeliverySlider(axis: axis, value: $settings.delivery[dynamicMember: axis.keyPath])
+                    ForEach(DeliveryControl.allCases) { control in
+                        DeliverySlider(
+                            control: control,
+                            range: control.range(in: bundleInfo),
+                            isVoiceDefault: deliveryValue(control) == control.defaultValue(for: selectedVoice),
+                            value: deliveryBinding(control)
+                        )
+                    }
+                    ForEach(DeliveryPreset.allCases) { preset in
+                        presetButton(preset)
                     }
                 } header: {
                     Text("Delivery")
                 } footer: {
-                    Text("2 is neutral. Each slider covers the range the voices render most reliably, which is also the range the runtime keeps any request within. How far a control moves the delivery varies with voice, language, and text, so start near 2 and listen as you move away from it.")
+                    Text("0 is the voice’s own delivery. Intensity runs from calm (left) to intense (right) and pace from slower to faster, in the voice’s own range; pitch shifts the voice in semitones. The emotion comes from the text.")
                 }
             }
             .navigationTitle("Speaker settings")
@@ -64,50 +63,60 @@ struct SegmentSettingsView: View {
         }
     }
 
-    @ViewBuilder
+    /// The control's value, or the voice's default when the segment leaves it unset.
+    private func deliveryValue(_ control: DeliveryControl) -> Float {
+        settings.delivery[keyPath: control.keyPath] ?? control.defaultValue(for: selectedVoice)
+    }
+
+    /// Moving a slider sets its control, on the slider's 0.1 grid (so -2 + 2.3 reads back as 0.3).
+    private func deliveryBinding(_ control: DeliveryControl) -> Binding<Float> {
+        Binding(
+            get: { deliveryValue(control) },
+            set: { settings.delivery[keyPath: control.keyPath] = ($0 * 10).rounded() / 10 }
+        )
+    }
+
     private func presetButton(_ preset: DeliveryPreset) -> some View {
-        let button = Button {
+        let applied = settings.delivery.resolved(for: selectedVoice) == preset.delivery.resolved(for: selectedVoice)
+        return Button {
             settings.delivery = preset.delivery
         } label: {
-            Text(preset.title)
-                .frame(maxWidth: .infinity)
+            Label(preset.title, systemImage: preset.systemImage)
         }
-        .accessibilityHint("Applies the \(preset.title.lowercased()) delivery")
-        if settings.delivery == preset.delivery {
-            button.buttonStyle(.borderedProminent)
-                .accessibilityAddTraits(.isSelected)
-        } else {
-            button.buttonStyle(.bordered)
-        }
+        .disabled(applied)
+        .accessibilityHint("Sets intensity, pace and pitch back to the voice’s own")
     }
 }
 
 private struct DeliverySlider: View {
-    let axis: DeliveryAxis
+    let control: DeliveryControl
+    let range: ClosedRange<Float>
+    let isVoiceDefault: Bool
     @Binding var value: Float
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text(axis.title)
+                Text(control.title)
                 Spacer()
-                Text(value, format: .number.precision(.fractionLength(1)))
+                Text(value, format: .number.precision(.fractionLength(1...2)).sign(strategy: .always(includingZero: false)))
                     .monospacedDigit()
-                    .foregroundStyle(value == DeliverySettings.neutralValue ? Color(uiColor: .secondaryLabel) : .accentColor)
+                    .foregroundStyle(isVoiceDefault ? Color(uiColor: .secondaryLabel) : .accentColor)
             }
-            Slider(value: $value, in: axis.supportedRange, step: 0.1) {
-                Text(axis.title)
+            Slider(value: $value, in: range, step: 0.1) {
+                Text(control.title)
             }
+            .accessibilityValue("\(DeliverySettings.format(value)) \(control.unit)")
             HStack {
-                Text(axis.range.low)
+                Text(control.ends.low)
                 Spacer()
-                Text(axis.range.high)
+                Text(control.ends.high)
             }
             .font(.caption2)
             .foregroundStyle(Color(uiColor: .secondaryLabel))
             .accessibilityHidden(true)
         }
         .accessibilityElement(children: .contain)
-        .accessibilityHint("Lower: \(axis.range.low). Higher: \(axis.range.high).")
+        .accessibilityHint("Lower: \(control.ends.low.lowercased()). Higher: \(control.ends.high.lowercased()).")
     }
 }

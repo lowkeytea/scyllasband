@@ -27,6 +27,7 @@ from pathlib import Path
 
 import numpy as np
 
+DELIVERY = "intensity=1.5,pace=-1,pitch=1.5"   # every control away from the default, on one sentence per voice
 TEXTS = (
     ("exclamatory", "You thought the clock had run out, but the referee was still watching the ball! There's one more play! We're still in this!"),
     ("trailing", "I kept the letter for years... I never opened it. Maybe I was afraid of what it would say..."),
@@ -175,9 +176,9 @@ class Native:
         wav = np.ctypeslib.as_array(ctypes.cast(audio, fp), shape=(sample_count.value,)).copy()
         self.lib.scyllasband_test_free(latents)
         self.lib.scyllasband_test_free(audio)
-        return meta, lat.reshape(noise.shape[0], -1), wav
+        return meta, lat.reshape(-1, noise.shape[-1]), wav
 
-    def _request(self, text: str, voice: str, seed: int | None, steps: int = 0, sampler: str | None = None):
+    def _request(self, text: str, voice: str, seed: int | None, steps: int = 0, sampler: str | None = None, delivery: str | None = None):
         class Request(ctypes.Structure):
             _fields_ = [("text", ctypes.c_char_p), ("voice_id", ctypes.c_char_p), ("language", ctypes.c_char_p), ("delivery", ctypes.c_char_p),
                         ("speed", ctypes.c_float), ("steps", ctypes.c_int32), ("sampler", ctypes.c_int), ("seed", ctypes.c_uint64),
@@ -185,14 +186,16 @@ class Native:
         request = Request()
         self.lib.scyllasband_request_init(ctypes.byref(request))
         request.text, request.voice_id = text.encode(), voice.encode()
+        if delivery is not None:
+            request.delivery = delivery.encode()
         request.steps, request.sampler = steps, {None: 0, "heun": 1, "euler": 2}[sampler]
         if seed is not None:
             request.seed, request.has_seed = seed, 1
         return request
 
-    def plan(self, text: str, voice: str) -> dict:
+    def plan(self, text: str, voice: str, delivery: str | None = None) -> dict:
         out = ctypes.c_void_p()
-        request = self._request(text, voice, None)
+        request = self._request(text, voice, None, delivery=delivery)
         self._check(self.lib.scyllasband_plan_json(self.runtime, ctypes.byref(request), ctypes.byref(out)), "plan_json")
         value = ctypes.cast(out, ctypes.c_char_p).value.decode()
         self.lib.scyllasband_test_free(out)
@@ -297,16 +300,16 @@ def check_frontend(native: Native, report: dict, failures: list[str]) -> None:
 def python_targets(engine, plan, speed: float = 1.0):
     """The targets the Python streaming loop speaks for ``plan``, without synthesizing them:
     (chunk, sentence, durations, delivery, first of its chain)."""
-    from scyllasband.delivery import delivery_tensors
     from scyllasband.streaming import _chains, _ChainStream, _next_target
     spoken = 0
     for chain in _chains(plan.chunks):
         stream = _ChainStream(engine, chain)
-        values, present, _ = delivery_tensors(chain[0].delivery)
+        values, present, _, resolved = engine.delivery_inputs(chain[0].voice, chain[0].delivery)
+        delivery = (values, present, resolved["pitch"])
         start = 0
         while True:
-            end, sentence, durations = _next_target(engine, stream, start, spoken == 0, (values, present), speed)
-            yield stream.target_chunk(start, end), sentence, durations, (values, present), start == 0
+            end, sentence, durations = _next_target(engine, stream, start, spoken == 0, delivery, speed)
+            yield stream.target_chunk(start, end), sentence, durations, delivery, start == 0
             spoken += 1
             if stream.at_end(end):
                 break
@@ -325,9 +328,9 @@ def compare_targets(native: Native, engine, plan, voice: str, label: str, failur
                        voice=voice, language=language, delivery=delivery_spec(chunk.delivery), steps=args.steps, sampler=args.sampler, speed=1.0)
         native_durations = native.sentence(request, None, None)[0]["durations"]
         length = int(sum(python_durations))
-        noise = np.random.default_rng(SEED + 31 * index).standard_normal((engine.latent_dim, length)).astype(np.float32)
+        noise = np.random.default_rng(SEED + 31 * index).standard_normal((2 + engine.latent_dim, length)).astype(np.float32)
         result = engine.synthesize_sentence(sentence, voice=voice, language=language, delivery=delivery, prefix=tail, steps=args.steps,
-                                            sampler=args.sampler, noise=noise, durations=python_durations)
+                                            sampler=args.sampler, pitch_noise=noise[:2], noise=noise[2:], durations=python_durations)
         python_audio = engine.decode(result.latents, voice=voice, language=language, left=tail)
         native_meta, native_latents, native_audio = native.sentence(dict(request, durations=python_durations), noise, tail)
         latent_rel = rel_error(result.latents, native_latents)
@@ -366,13 +369,14 @@ def check_sentences(native: Native, runtime, report: dict, failures: list[str], 
     engine = runtime.engine
     rows = []
     g2p_identical = True
-    for voice in args.voices:
-        for kind, text in TEXTS:
-            plan = runtime.plan_text(text, voice_id=voice)
-            if native.plan(text, voice) != json.loads(json.dumps(plan.to_dict())):
-                failures.append(f"plan differs: {voice}/{kind}")
-            g2p_identical &= compare_g2p(native, engine, plan, f"{voice}/{kind}", failures)
-            rows += compare_targets(native, engine, plan, voice, kind, failures, args)
+    cases = [(voice, kind, text, None) for voice in args.voices for kind, text in TEXTS]
+    cases += [(voice, "statement+delivery", TEXTS[-1][1], DELIVERY) for voice in args.voices]
+    for voice, kind, text, delivery in cases:
+        plan = runtime.plan_text(text, voice_id=voice, delivery=delivery)
+        if native.plan(text, voice, delivery) != json.loads(json.dumps(plan.to_dict())):
+            failures.append(f"plan differs: {voice}/{kind}")
+        g2p_identical &= compare_g2p(native, engine, plan, f"{voice}/{kind}", failures)
+        rows += compare_targets(native, engine, plan, voice, kind, failures, args)
     report["sentences"] = dict(rows=rows, count=len(rows), worst=worst_of(rows), g2p_identical=g2p_identical,
                                durations_identical=all(r["durations_identical"] for r in rows))
 

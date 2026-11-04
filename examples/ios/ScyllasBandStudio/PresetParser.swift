@@ -18,9 +18,9 @@ enum PresetParserError: LocalizedError {
 
 /// Converts `[voice:language:delivery]` tagged text (data/walkthrough_demo.txt) into speaker segments.
 ///
-/// - `[ariadne:en_us:energy=2.3,valence=2.5]` sets voice, language and delivery. An empty voice or language part
+/// - `[ariadne:en_us:intensity=1,pace=-0.5]` sets voice, language and delivery. An empty voice or language part
 ///   keeps the active one (a language the voice lacks becomes its default); a delivery part replaces the active
-///   delivery, with unspecified controls neutral (2).
+///   delivery, and controls it leaves out take the voice's own.
 /// - A language tag such as `[es]` keeps the active voice and delivery; `en` selects the voice's own English.
 /// - Any other single word, such as `[ink]`, switches voice and uses that voice's default language.
 /// - Every line starts again from the defaults. Consecutive text with the same settings forms one segment.
@@ -73,35 +73,40 @@ enum PresetParser {
         return segments
     }
 
-    /// `energy=2.3,valence=2.1`: omitted controls are neutral; "neutral" alone resets every control. Values may use the
-    /// full 0–4 scale; each is clamped to its control's supported range, as the runtime would. Whisper is no longer
-    /// supported.
-    static func parseDelivery(_ specification: String, tag: String) throws -> DeliverySettings {
-        var delivery = DeliverySettings.neutral
-        let clean = specification.trimmingCharacters(in: .whitespaces)
-        guard clean != "neutral" else { return delivery }
+    /// The v2 delivery axes, which this model rejects.
+    private static let v2Axes: Set<String> = ["energy", "tension", "valence", "assertiveness", "whisper", "emotion"]
+
+    /// `intensity=1,pace=-0.5,pitch=0`: omitted controls take the voice's own; "default" (or "neutral") alone, or as a
+    /// value, leaves controls at the voice's default. Values outside the bundle's range (-2 to 2) are clamped, as the
+    /// runtime would. The v2 axes (energy, tension, valence, assertiveness, whisper) are rejected.
+    static func parseDelivery(_ specification: String, tag: String, bundleInfo: SBScyllasBandBundleInfo?) throws -> DeliverySettings {
+        var delivery = DeliverySettings.voiceDefault
+        let clean = specification.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !clean.isEmpty, clean != "default", clean != "neutral" else { return delivery }
         var seen = Set<String>()
         for term in clean.split(separator: ",", omittingEmptySubsequences: false) {
-            let pair = term.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+            let pair = term.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
             guard pair.count == 2, !pair[0].isEmpty else {
-                throw PresetParserError.invalidTag(tag, "expected control=value, found “\(term)”")
+                throw PresetParserError.invalidTag(tag, "invalid delivery term “\(term)”")
             }
-            let (control, raw) = (pair[0], pair[1])
-            guard seen.insert(control).inserted else {
-                throw PresetParserError.invalidTag(tag, "\(control) is repeated")
+            let (name, raw) = (pair[0], pair[1])
+            guard seen.insert(name).inserted else {
+                throw PresetParserError.invalidTag(tag, "delivery control “\(name)” is repeated")
             }
-            if control == "whisper" {
-                throw PresetParserError.invalidTag(tag, "whisper is not supported; remove it from the delivery")
-            } else if let axis = DeliveryAxis(rawValue: control) {
-                guard let value = Float(raw), value.isFinite, DeliverySettings.modelRange.contains(value) else {
-                    throw PresetParserError.invalidTag(tag, "\(control) must be a number from 0 to 4")
-                }
-                delivery[keyPath: axis.keyPath] = value
-            } else {
-                throw PresetParserError.invalidTag(tag, "unknown control “\(control)”")
+            guard !v2Axes.contains(name) else {
+                throw PresetParserError.invalidTag(tag, "this model takes intensity, pace and pitch (“\(name)” belonged to the v2 models)")
             }
+            guard let control = DeliveryControl(rawValue: name) else {
+                throw PresetParserError.invalidTag(tag, "unknown delivery control “\(name)”; use intensity, pace or pitch")
+            }
+            if raw == "default" { continue }
+            guard let value = Float(raw), value.isFinite else {
+                throw PresetParserError.invalidTag(tag, "delivery “\(name)” must be a number")
+            }
+            let range = control.range(in: bundleInfo)
+            delivery[keyPath: control.keyPath] = min(max(value, range.lowerBound), range.upperBound)
         }
-        delivery.normalize()
         return delivery
     }
 
@@ -119,7 +124,7 @@ enum PresetParser {
             if !parts[0].isEmpty { next.voiceIdentifier = parts[0] }
             if parts.count > 1, !parts[1].isEmpty { explicitLanguage = parts[1] }
             if parts.count > 2, !parts[2].isEmpty {
-                next.delivery = try parseDelivery(parts[2], tag: label)
+                next.delivery = try parseDelivery(parts[2], tag: label, bundleInfo: bundleInfo)
             }
         } else if languages.contains(clean) {
             explicitLanguage = clean

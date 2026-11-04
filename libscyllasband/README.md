@@ -1,7 +1,7 @@
 # libscyllasband
 
 `libscyllasband` is the native C++ runtime for Scylla's Band model bundles (graph contract
-`scyllasband_measured_delivery_v2`). It implements the same pipeline as the Python runtime and produces
+`scyllasband_measured_controls_v3`). It implements the same pipeline as the Python runtime and produces
 the same durations, latents and audio for the same inputs. The public C ABI is `include/scyllasband.h`.
 
 Each build links one graph runtime:
@@ -30,12 +30,16 @@ read as one stream of phones, as connected text. The stream is spoken as targets
 to another. For each target:
 
 1. the duration graph predicts frames for a 512-phone span of the target plus up to 180 context phones on
-   each side from the neighbouring text, and the target's frames are rounded to integers;
+   each side from the neighbouring text, and the target's frames are rounded to integers, with pauses scaled
+   by the requested pace (`controls.pace_pauses`);
 2. per-frame phone ids and text events (punctuation, word starts, stress and length marks, phone phase,
    sentence type) are built;
-3. the flow integrates noise to latents with Euler (default, 4 steps) or Heun steps in the smallest fitting
-   latent-frame bucket, conditioned on the span and on the last 96 latent frames already spoken;
-4. the vocoder decodes the target with up to 48 frames of the preceding latents as left context, so
+3. the pitch predictor integrates noise to a pitch and voicing contour for those frames (its sampler and steps
+   come from `controls.pitch`); the pitch shift is added, the voice's soft limit applied, and the contour becomes
+   the flow's melody input;
+4. the flow integrates noise to latents with Euler (default, 4 steps) or Heun steps in the smallest fitting
+   latent-frame bucket, conditioned on the span, the melody and the last 96 latent frames already spoken;
+5. the vocoder decodes the target with up to 48 frames of the preceding latents as left context, so
    consecutive targets form one continuous waveform with no inserted pauses or crossfades.
 
 Every target is sized by its predicted durations to stay within the 64 to 420 latent frames (about 1.4 to 9
@@ -64,7 +68,7 @@ ScyllasBandRequest request;
 scyllasband_request_init(&request);
 request.text = "Did you really leave the gate open all night?";
 request.voice_id = "scylla";
-request.delivery = "energy=2.3,tension=2,valence=2,assertiveness=2";
+request.delivery = "intensity=1,pace=-0.5";   /* NULL: the voice's own delivery */
 request.seed = 2027;
 request.has_seed = 1;
 
@@ -79,7 +83,7 @@ scyllasband_runtime_destroy(runtime);
 | Function | Purpose |
 | --- | --- |
 | `scyllasband_runtime_create` / `_destroy` | Load a bundle; reuse one runtime for every request. |
-| `scyllasband_voices_json` | Backend, sample rate, release and voices with their languages. |
+| `scyllasband_voices_json` | Backend, sample rate, release, voices with their languages, and the delivery ranges and per-voice defaults. |
 | `scyllasband_warmup` | Load the graphs a short sentence needs before interactive use. |
 | `scyllasband_plan_json` | The normalized sentence plan for a request, without synthesizing. |
 | `scyllasband_synthesize` | One waveform plus JSON metadata (phones, durations, buckets, timings). |
@@ -92,8 +96,8 @@ Request fields:
 | --- | --- |
 | `text`, `voice_id` | Required. |
 | `language` | `NULL` or `en`: the voice's own English dialect; otherwise one of the voice's languages. |
-| `delivery` | `NULL`/`neutral`, `auto`, or `energy=…,tension=…,valence=…,assertiveness=…`; axes on the 0–4 scale (2 neutral), clamped into energy 1.4–2.3, tension 1.0–2.4, valence 1.4–2.2, assertiveness 1.8–2.4; `auto` per axis. Omitted axes stay neutral. |
-| `speed` | Duration scale; 1 is the model's own pace. |
+| `delivery` | `NULL`/`default`, or `intensity=…,pace=…,pitch=…`: intensity (calm, negative, to intense, positive) and pace (slower to faster, words and pauses) in the voice's own standard deviations, pitch as a shift in semitones; each clamped into the bundle's ranges (−2 to 2 in the released model). Omitted controls take the voice's default. A target of fewer than four spoken phones (a lone "Yes.") gets the voice's own intensity and pace, as in training. |
+| `speed` | A plain time stretch on top of pace; 1 is none. |
 | `steps`, `sampler` | Flow steps (0: the bundle default, 4) and sampler (default: the bundle's, Euler). |
 | `seed`, `has_seed` | Sentence *i* of the plan draws its noise from `seed + i`; without a seed every request differs. |
 | `temperature` | Noise scale (1 = default). |
@@ -160,7 +164,7 @@ library from the directory of `libLiteRt` and run the ops it supports on the GPU
 
 ```bash
 build/litert/scyllasband_speak --bundle ../scyllasband/models/litert --voice ink \
-    --delivery energy=2.3 --seed 2027 \
+    --delivery intensity=1.5,pace=-0.5 --seed 2027 \
     --text "Keep this between us." --output keep.wav --metadata keep.json
 ```
 

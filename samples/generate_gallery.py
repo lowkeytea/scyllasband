@@ -143,7 +143,7 @@ def render_page(ctx: dict) -> str:
         cards = "".join(f'''
             <article class="demo-card" id="{v["id"]}-{d["id"]}">
               <h4>{escape(d["title"])}</h4>
-              <p class="delivery">{escape(d["delivery"].replace(",", ", "))}</p>
+              <p class="delivery">{escape(d["delivery"].replace(",", ", ") or "voice default")}</p>
               <p class="line">{escape(d["line"])}</p>
               {_audio(d["src"], f'{v["id"].title()}, {d["title"].lower()} delivery')}
             </article>''' for d in v["deliveries"])
@@ -169,8 +169,8 @@ def render_page(ctx: dict) -> str:
   <header class="hero shell">
     <p class="eyebrow">Spybyscript presents</p>
     <h1>Scylla's Band<br>Voice Gallery</h1>
-    <p class="lede">Fourteen voices speaking {escape(language_names)}, with delivery set by energy, tension, valence and
-      assertiveness on 0–4 scales.</p>
+    <p class="lede">Fourteen voices speaking {escape(language_names)}, with delivery set by intensity, pace and pitch; the emotion
+      comes from the text.</p>
     <div class="metrics" aria-label="Gallery summary">
       <span class="metric"><strong>{len(voices)}</strong> voices</span>
       <span class="metric"><strong>{len(script["languages"])}</strong> languages</span>
@@ -210,8 +210,8 @@ def render_page(ctx: dict) -> str:
     <section id="delivery">
       <div class="section-heading">
         <h2>Delivery</h2>
-        <p>Each line was written for its delivery and uses the settings shown. Values run from 0 to 4 with 2 as neutral; the axes
-          interact, and their useful range varies by voice.</p>
+        <p>Each line carries its own emotion, and the settings shown set how it is delivered: intensity from calm (negative) to
+          intense (positive) and pace from slower to faster, in the voice's own range from -2 to 2; 0 is the voice's own delivery.</p>
       </div>{"".join(delivery_sections)}
     </section>
   </main>
@@ -227,7 +227,7 @@ def render_readme(ctx: dict) -> str:
     rule = "| --- |" + " --- |" * len(script["languages"])
     rows = [f'| {v["id"].title()} | ' + " | ".join(f'[Listen]({GALLERY_URL}#{v["id"]}-{l["id"]})' for l in v["languages"]) + " |"
             for v in voices]
-    deliveries = "\n".join(f'| {d["title"]} | `{d["delivery"]}` | {d["line"]} |' for d in script["deliveries"])
+    deliveries = "\n".join(f'| {d["title"]} | `{d["delivery"] or "voice default"}` | {d["line"]} |' for d in script["deliveries"])
     long_form = "\n".join(f'- [{item["title"]}]({GALLERY_URL}#{item["id"]}) ({_duration(item["seconds"])}), from `{item["file"]}`'
                           for item in ctx["long_form"])
     return f"""# Scylla's Band Voice Samples

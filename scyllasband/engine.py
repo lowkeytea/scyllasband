@@ -4,12 +4,18 @@ Long text is spoken as targets of 64 to 420 latent frames cut by :mod:`scyllasba
 
 1. its phones (from :mod:`scyllasband.g2p`) form the target of a before/target/after span whose context is up
    to 180 phones (silences excluded) of the neighbouring text;
-2. the duration graph predicts frames for every span position; the target slice is rounded to integer frames;
+2. the duration graph predicts frames for every span position; the target slice is rounded to integer frames, with
+   pauses scaled by the requested pace (``controls.pace_pauses``);
 3. per-frame phone ids and text events are built (:mod:`scyllasband.events`);
-4. the flow integrates noise to latents in the smallest fitting fixed-shape bucket, conditioned on the span and
-   on the last 96 latent frames already spoken (right-aligned prefix);
-5. the vocoder decodes the target's latents with up to 48 frames of the preceding latents as left context, so
+4. the pitch predictor integrates noise to a pitch and voicing contour for those frames; the requested pitch shift is
+   added and the voice's soft limit applied (``controls.pitch``), giving the flow's melody input;
+5. the flow integrates noise to latents in the smallest fitting fixed-shape bucket, conditioned on the span, the melody
+   and the last 96 latent frames already spoken (right-aligned prefix);
+6. the vocoder decodes the target's latents with up to 48 frames of the preceding latents as left context, so
    consecutive targets join as one continuous decode.
+
+Delivery is intensity and pace (graph slots 0 and 1, in the voice's standard deviations / z_scale) plus a pitch shift in
+semitones. A target with fewer than ``min_spoken_phones`` spoken phones gets neither slot, as in training.
 """
 
 from __future__ import annotations
@@ -22,11 +28,11 @@ from typing import Any, Callable, Mapping, Sequence
 
 import numpy as np
 
-from .styles import Styles
 from .events import frame_events, frames_to_durations, modifier_bits
+from .g2p_phrases import is_non_acoustic_phone_modifier
 from .g2p import SILENCE, G2PFrontend
 
-GRAPH_CONTRACT = "scyllasband_measured_delivery_v2"
+GRAPH_CONTRACT = "scyllasband_measured_controls_v3"
 LATENT_HOP = 512
 # Target lengths v2 was trained on, in latent frames (about 1.4 to 9 seconds): shorter targets lose their prosody and
 # longer ones their intelligibility. A bundle can state its own as controls.chunking.min/max_target_frames.
@@ -107,8 +113,16 @@ class Engine:
         self.phone_to_id: dict[str, int] = {str(k): int(v) for k, v in dict(vocab.get("token_to_id", vocab)).items()}
         self.voice_to_id = _index(self.bundle_dir / assets["voice_index"])
         self.language_to_id = _index(self.bundle_dir / assets["language_index"])
-        # Emotion + intensity styles (newer bundles): one duration / flow voice row per (voice, emotion).
-        self.styles = Styles(controls["styles"]) if controls.get("styles") else None
+        delivery = controls["delivery"]
+        self.z_scale, self.z_limit = float(delivery.get("z_scale", 5.0)), float(delivery.get("z_limit", 2.5))
+        self.min_spoken_phones = int(delivery.get("min_spoken_phones", 4))
+        self.control_ranges = {str(k): tuple(v) for k, v in (delivery.get("ranges") or {}).items()}
+        self.voice_defaults = {str(k): dict(v) for k, v in (delivery.get("defaults") or {}).items()}
+        self.pace_pause_per_sd = float((controls.get("pace_pauses") or {}).get("per_sd", 0.0))
+        self.pitch = dict(controls["pitch"])
+        self.pitch_sampler = str(self.pitch.get("sampler", {}).get("default", "euler")).lower()
+        self.pitch_steps = int(self.pitch.get("steps", {}).get("default", 4))
+        self.pitch_context = str(self.pitch.get("context_encoder", "pitch_context_encoder"))
         self.bits = modifier_bits(self.phone_to_id)
         span = controls["span_conditioning"]
         self.span_width = int(span["context_max_phones"])
@@ -118,6 +132,7 @@ class Engine:
         self.latent_dim = int(self.manifest["audio"]["latent_dim"])
         buckets = controls["target_buckets"]["buckets"]
         self.buckets = sorted((int(b["latent_frames"]), str(b["vector_estimator"]), str(b["vocoder"])) for b in buckets)
+        self.pitch_graphs = {int(b["latent_frames"]): str(b["pitch_estimator"]) for b in buckets}
         # Optional graphs that run every flow step in one call, for one sampler and step count: {latent_frames: component}.
         fused = controls.get("fused_flow") or {}
         self.fused_flow = (str(fused.get("sampler", "")).lower(), int(fused.get("steps", 0)))
@@ -133,8 +148,8 @@ class Engine:
         self.g2p_buckets = sorted((int(b["text_tokens"]), str(b["component"])) for b in controls.get("g2p_buckets") or [])
         # Optional narrower span graphs: padding is masked and positions are absolute, so the narrowest that holds the span
         # gives the same values. [(phones, duration component, context encoder component)], smallest first.
-        self.span_buckets = sorted((int(b["phones"]), str(b.get("duration_predictor") or ""), str(b.get("vector_context_encoder") or ""))
-                                   for b in controls.get("span_buckets") or [])
+        self.span_buckets = sorted((int(b["phones"]), str(b.get("duration_predictor") or ""), str(b.get("vector_context_encoder") or ""),
+                                    str(b.get("pitch_context_encoder") or "")) for b in controls.get("span_buckets") or [])
         self._session_factory = session_factory or self._onnx_session
         self._sessions: dict[str, Any] = {}
         self._lock = threading.RLock()
@@ -198,22 +213,44 @@ class Engine:
             raise ValueError(f"Unknown language {language!r}; available: {', '.join(sorted(self.language_to_id))}")
         return int(self.language_to_id[language])
 
-    def delivery_inputs(self, voice: str, request: Mapping[str, Any] | None) -> tuple[np.ndarray, np.ndarray, int, dict[str, Any]]:
-        """(delivery values, present, the duration / flow voice row, the resolved request) for a planned request."""
-        from .delivery import delivery_tensors
+    def delivery_inputs(self, voice: str, request: Mapping[str, Any] | str | None) -> tuple[np.ndarray, np.ndarray, int, dict[str, Any]]:
+        """(delivery values, present, the voice row, the resolved {intensity, pace, pitch}) for a planned request; whatever the
+        request leaves out takes the voice's default."""
+        from .delivery import delivery_tensors, resolve_delivery, with_defaults
         index = self.voice_index(voice)
-        styled = isinstance(request, Mapping) and request.get("kind") == "style"
-        if self.styles is not None:
-            if request is not None and not styled:
-                raise ValueError("This model takes an emotion and an intensity (less, normal, more) instead of numeric "
-                                 "delivery values; available emotions: " + ", ".join(self.styles.emotions))
-            resolved = self.styles.resolve(voice, request)
-            values, present = self.styles.tensors(resolved)
-            return values, present, self.styles.row(index, resolved["emotion"]), dict(resolved, kind="style")
-        if styled:
-            raise ValueError("This model has no emotion styles; update to the current model or use numeric delivery")
-        values, present, resolved = delivery_tensors(request)
+        if isinstance(request, Mapping) and request.get("kind") == "style":
+            raise ValueError("This model takes intensity, pace and pitch; emotion styles belonged to the v2 models")
+        resolved = with_defaults(resolve_delivery(request, self.control_ranges), self.voice_defaults.get(voice))
+        values, present = delivery_tensors(resolved, z_scale=self.z_scale, z_limit=self.z_limit)
         return values, present, index, resolved
+
+    def target_delivery(self, phones: Sequence[str], delivery: Sequence[Any]) -> tuple[np.ndarray, np.ndarray]:
+        """The graph's delivery for a target: none at all when it has fewer than ``min_spoken_phones`` spoken phones (training
+        never set intensity or pace on such short views)."""
+        values, present = np.asarray(delivery[0], np.float32), np.asarray(delivery[1], bool)
+        spoken = sum(1 for p in phones if not str(p).startswith("<") and not is_non_acoustic_phone_modifier(p))
+        return (values, np.zeros_like(present)) if spoken < self.min_spoken_phones else (values, present)
+
+    def pause_scale(self, delivery: Sequence[Any]) -> float:
+        """Pause frames move with pace: exp(per_sd * pace), pace in standard deviations (graph slot 1 x z_scale)."""
+        values, present = np.asarray(delivery[0], np.float32), np.asarray(delivery[1], bool)
+        pace = float(values[0, 1]) * self.z_scale if present[0, 1] else 0.0
+        return float(np.exp(self.pace_pause_per_sd * pace))
+
+    def melody(self, contour: np.ndarray, voice: str, shift: float = 0.0) -> np.ndarray:
+        """Pitch contour [2, T] -> the flow's melody input [T, 3]: pitch shifted, soft-limited inside the voice's edges, on the
+        melody scale where voiced; voicing probability; voiced flag (``controls.pitch.rule``)."""
+        p = self.pitch
+        st = contour[0].astype(np.float64) * float(p["scale"]) + float(p["center"]) + float(shift)
+        low, high = (float(e) for e in p["edges"][voice])
+        knee = min(float(p["knee"]), (high - low) / 4)
+        top, bottom = high - knee, low + knee
+        st = np.where(st > top, top + knee * np.tanh((st - top) / knee), st)
+        st = np.where(st < bottom, bottom - knee * np.tanh((bottom - st) / knee), st)
+        probability = np.clip((contour[1].astype(np.float64) + 1.0) / 2.0, 0.0, 1.0)
+        voiced = (probability > float(p["voiced_threshold"])).astype(np.float64)
+        pitch = (st - float(p["melody_center"])) / float(p["melody_scale"]) * voiced
+        return np.stack([pitch, probability, voiced], -1).astype(np.float32)
 
     # --- synthesis ----------------------------------------------------------------------------------------------------
     def durations(self, sentence: Sentence, *, voice: int, language: int, delivery: tuple[np.ndarray, np.ndarray],
@@ -226,17 +263,20 @@ class Engine:
                                           sentence.after_ids[:self.context_phones], self.span_width)
         width, graph = self._span_graph(len(span), 0, "duration_predictor")
         ids, segs, mask = _pad(span, width), _pad(segments, width), _pad([True] * len(span), width, False)
-        values, present = delivery
+        values, present = self.target_delivery(sentence.phones, delivery)
         frames = self._run(graph, span_phone_ids=ids, span_segment_ids=segs, span_mask=mask,
                            voice_id=_scalar(voice), language_id=_scalar(language), delivery_values=values, delivery_present=present)
         offset = int(((segs == 0) & mask).sum())
-        return frames_to_durations(frames[0, offset:offset + len(target)].tolist(), sentence.phones, scale=1.0 / float(speed))
+        return frames_to_durations(frames[0, offset:offset + len(target)].tolist(), sentence.phones, scale=1.0 / float(speed),
+                                   pause_scale=self.pause_scale(delivery))
 
-    def synthesize_sentence(self, sentence: Sentence, *, voice: str, language: str, delivery: tuple[np.ndarray, np.ndarray],
+    def synthesize_sentence(self, sentence: Sentence, *, voice: str, language: str, delivery: Sequence[Any],
                             prefix: np.ndarray | None = None, steps: int = 8, sampler: str = "heun", speed: float = 1.0,
                             noise_scale: float = 1.0, rng: np.random.Generator | None = None, noise: np.ndarray | None = None,
-                            durations: list[int] | None = None, voice_row: int | None = None) -> SentenceResult:
-        """``voice_row``: the duration / flow voice row from delivery_inputs (styles bundles); defaults to the voice index."""
+                            durations: list[int] | None = None, voice_row: int | None = None, pitch_noise: np.ndarray | None = None,
+                            pitch_steps: int | None = None, pitch_sampler: str | None = None) -> SentenceResult:
+        """``delivery``: (values, present[, pitch shift in semitones]) from delivery_inputs. ``voice_row``: the duration / flow
+        voice row; defaults to the voice index. The pitch predictor draws its noise from ``rng`` before the flow does."""
         voice_id = self.voice_index(voice) if voice_row is None else int(voice_row)
         language_id = self.language_index(language)
         if durations is None:
@@ -251,8 +291,15 @@ class Engine:
         span, segments = balanced_context(sentence.before_ids[-self.context_phones:], target, sentence.after_ids[:self.context_phones],
                                           self.span_width)
         width, graph = self._span_graph(len(span), 1, "vector_context_encoder")
-        hidden = self._run(graph, span_context_phone_ids=_pad(span, width), span_context_segment_ids=_pad(segments, width),
-                           span_context_mask=_pad([True] * len(span), width, False))
+        span_feeds = dict(span_context_phone_ids=_pad(span, width), span_context_segment_ids=_pad(segments, width),
+                          span_context_mask=_pad([True] * len(span), width, False))
+        hidden = self._run(graph, **span_feeds)
+        pitch_width, pitch_graph = self._span_graph(len(span), 2, self.pitch_context)
+        pitch_hidden = (self._run(pitch_graph, **span_feeds) if pitch_width == width else
+                        self._run(pitch_graph, span_context_phone_ids=_pad(span, pitch_width), span_context_segment_ids=_pad(segments, pitch_width),
+                                  span_context_mask=_pad([True] * len(span), pitch_width, False)))
+        values, present = self.target_delivery(sentence.phones, delivery)
+        shift = float(delivery[2]) if len(delivery) > 2 and delivery[2] is not None else 0.0
         prefix_latents = np.zeros((1, self.latent_dim, self.prefix_frames), np.float32)
         prefix_mask = np.zeros((1, self.prefix_frames), bool)
         if prefix is not None and prefix.shape[-1]:
@@ -260,13 +307,20 @@ class Engine:
             prefix_latents[0, :, self.prefix_frames - tail.shape[-1]:] = tail
             prefix_mask[0, self.prefix_frames - tail.shape[-1]:] = True
         mask = _pad([True] * length, frames, False)
-        feeds = dict(expanded_phone_ids=_pad(np.repeat(target, durations), frames), voice_id=_scalar(voice_id),
-                     language_id=_scalar(language_id), delivery_values=delivery[0], delivery_present=delivery[1], latent_mask=mask,
-                     span_context_hidden=hidden, prefix_latents=prefix_latents, prefix_mask=prefix_mask,
-                     **{k: _pad(v, frames, 0) for k, v in events.items()})
+        common = dict(expanded_phone_ids=_pad(np.repeat(target, durations), frames), voice_id=_scalar(voice_id),
+                      language_id=_scalar(language_id), delivery_values=values, delivery_present=present, latent_mask=mask,
+                      **{k: _pad(v, frames, 0) for k, v in events.items()})
+        rng = rng if rng is not None else np.random.default_rng()
+        if pitch_noise is None:
+            pitch_noise = rng.standard_normal((2, length)).astype(np.float32)
+        contour = self._integrate(self.pitch_graphs[frames], np.asarray(pitch_noise, np.float32).reshape(2, length), frames, mask,
+                                  dict(common, span_context_hidden=pitch_hidden), int(pitch_steps or self.pitch_steps),
+                                  str(pitch_sampler or self.pitch_sampler).lower() == "heun")
+        melody = np.zeros((1, frames, 3), np.float32)
+        melody[0, :length] = self.melody(contour, voice, shift)
+        feeds = dict(common, span_context_hidden=hidden, prefix_latents=prefix_latents, prefix_mask=prefix_mask, expanded_melody=melody)
         x = np.zeros((1, self.latent_dim, frames), np.float32)
         if noise is None:
-            rng = rng if rng is not None else np.random.default_rng()
             noise = rng.standard_normal((self.latent_dim, length)).astype(np.float32) * float(noise_scale)
         x[0, :, :length] = noise
         heun = str(sampler).lower() == "heun"
@@ -286,10 +340,28 @@ class Engine:
                 x = x + a / steps
             x = x * mask[:, None, :]
         metadata = dict(phones=sentence.phones, durations=durations, latent_frames=length, bucket=frames, steps=int(steps), sampler=sampler,
+                        pitch_steps=int(pitch_steps or self.pitch_steps), pitch_sampler=str(pitch_sampler or self.pitch_sampler),
+                        pitch_shift=shift, delivery_set=bool(present.any()),
                         fused_flow=fused is not None, flow_graph=fused if fused is not None else vector_name,
                         prefix_frames=int(prefix_mask.sum()), context_before=min(len(sentence.before_ids), self.context_phones),
                         context_after=min(len(sentence.after_ids), self.context_phones))
         return SentenceResult(latents=x[0, :, :length].copy(), durations=durations, bucket=frames, metadata=metadata)
+
+    def _integrate(self, graph: str, noise: np.ndarray, frames: int, mask: np.ndarray, feeds: Mapping[str, np.ndarray], steps: int,
+                   heun: bool) -> np.ndarray:
+        """The pitch predictor's contour [2, T] for ``noise`` [2, T] in a ``frames`` bucket, Euler or Heun on a uniform grid."""
+        length = noise.shape[-1]
+        x = np.zeros((1, noise.shape[0], frames), np.float32)
+        x[0, :, :length] = noise
+        for step in range(steps):
+            a = self._run(graph, noise=x, time=np.array([step / steps], np.float32), **feeds)
+            if heun:
+                b = self._run(graph, noise=x + a / steps, time=np.array([(step + 1) / steps], np.float32), **feeds)
+                x = x + (a + b) / (2 * steps)
+            else:
+                x = x + a / steps
+            x = x * mask[:, None, :]
+        return x[0, :, :length]
 
     def decode(self, latents: np.ndarray, *, voice: str, language: str, left: np.ndarray | None = None) -> np.ndarray:
         """Waveform for ``latents`` [24, T], decoded after up to ``decoding.context_frames`` frames of ``left`` context."""

@@ -1,6 +1,6 @@
 Pod::Spec.new do |spec|
   spec.name = 'ScyllasBandKit'
-  spec.version = '2.0.0'
+  spec.version = '3.0.0'
   spec.summary = "Scylla's Band text-to-speech for iOS and visionOS on Core ML and Core AI."
   spec.description = <<-DESC
     ScyllasBandKit packages libscyllasband with its Apple graph backend: Core ML bundles on iOS 18 and visionOS 2

@@ -20,8 +20,10 @@ bool is_non_acoustic_modifier(const std::string& phone);  // stress, length and 
 bool is_punctuation_pause(const std::string& phone);
 bool is_punctuation_phone(const std::string& phone);
 
-// Rounded frames (half to even): punctuation and modifiers 0, <sil> may be 0, every other phone at least 1.
-std::vector<int> frames_to_durations(const std::vector<float>& values, const std::vector<std::string>& phones, double scale);
+// Rounded frames (half to even): punctuation and modifiers 0, <sil> may be 0, every other phone at least 1. `pause_scale`
+// multiplies <sil> frames on top of `scale` (pace moves pauses with the words).
+std::vector<int> frames_to_durations(const std::vector<float>& values, const std::vector<std::string>& phones, double scale,
+                                     double pause_scale = 1.0);
 
 // Modifier tokens in id order, each with its own bit.
 std::map<std::string, int64_t> modifier_bits(const std::map<std::string, int>& token_to_id);
@@ -42,19 +44,19 @@ FrameEvents frame_events(const std::vector<std::string>& phones, const std::vect
 std::pair<std::vector<int64_t>, std::vector<int64_t>> balanced_context(const std::vector<int64_t>& before, const std::vector<int64_t>& target,
                                                                        const std::vector<int64_t>& after, std::size_t max_phones);
 
-// Delivery: energy, tension, valence and assertiveness on 0-4 (2 = neutral, nullopt = auto), clamped into each axis's
-// supported range (kDeliveryRanges). The graphs' fifth delivery input (whisper, from training) is always sent as off.
+// Delivery (see delivery.py): intensity (calm to intense) and pace (slower to faster, words and pauses), both in the voice's
+// own standard deviations, and pitch, a shift in semitones. nullopt takes the voice's default. Values are clamped into the
+// default ranges here (kDeliveryRanges) and into the bundle's own ranges by the engine.
 struct Delivery {
-    std::array<std::optional<double>, 4> axes{2.0, 2.0, 2.0, 2.0};
+    std::array<std::optional<double>, 3> controls{};  // intensity, pace, pitch
 
-    // NULL, "" or "neutral": neutral; "auto": every channel unconditioned; else "axis=value,..." pairs.
+    // NULL, "", "default" or "neutral": every control at the voice's default; else "control=value,..." pairs.
     static Delivery parse(const char* spec);
-    void tensors(float values[5], uint8_t present[5]) const;
     Json to_json() const;
     std::string spec() const;  // canonical text, used to group sentences into chains
 };
 
-extern const char* const kDeliveryAxes[4];
-extern const double kDeliveryRanges[4][2];  // [low, high] per axis, the same as the Python runtime's DELIVERY_RANGES
+extern const char* const kDeliveryControls[3];
+extern const double kDeliveryRanges[3][2];  // [low, high] per control, the same as the Python runtime's DEFAULT_RANGES
 
 }  // namespace scyllasband

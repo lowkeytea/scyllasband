@@ -8,6 +8,9 @@
 #include <string>
 
 NSErrorDomain const ScyllasBandErrorDomain = @"org.scyllasband.ScyllasBandKit";
+SBScyllasBandDeliveryControl const SBScyllasBandDeliveryControlIntensity = @"intensity";
+SBScyllasBandDeliveryControl const SBScyllasBandDeliveryControlPace = @"pace";
+SBScyllasBandDeliveryControl const SBScyllasBandDeliveryControlPitch = @"pitch";
 
 namespace {
 
@@ -39,22 +42,118 @@ id json_object(const char *text) {
 }
 
 NSString *format_value(float value) {
-    // Shortest form: 2 -> "2", 2.5 -> "2.5".
-    return [NSString stringWithFormat:@"%g", std::round(value * 1000.0f) / 1000.0f];
+    // Shortest form: 1 -> "1", -0.5 -> "-0.5"; -0.0001 -> "0", not "-0".
+    return [NSString stringWithFormat:@"%g", std::round(value * 1000.0f) / 1000.0f + 0.0f];
+}
+
+// The released model's range for every control; the C runtime clamps into it, then into the bundle's ranges.
+constexpr float kDeliveryMinimum = -2.0f;
+constexpr float kDeliveryMaximum = 2.0f;
+
+NSArray<SBScyllasBandDeliveryControl> *delivery_controls() {
+    return @[SBScyllasBandDeliveryControlIntensity, SBScyllasBandDeliveryControlPace, SBScyllasBandDeliveryControlPitch];
+}
+
+// nil for nil, NaN and infinities (the voice's default); finite values clamped into -2 to 2.
+NSNumber *_Nullable delivery_value(NSNumber *_Nullable value) {
+    if (![value isKindOfClass:NSNumber.class]) return nil;
+    const float number = value.floatValue;
+    if (!std::isfinite(number)) return nil;
+    return @(std::clamp(number, kDeliveryMinimum, kDeliveryMaximum));
+}
+
+NSNumber *_Nullable json_number(id value) {
+    return [value isKindOfClass:NSNumber.class] && std::isfinite([value doubleValue]) ? value : nil;
 }
 
 }  // namespace
 
+@implementation SBScyllasBandDelivery
+
++ (SBScyllasBandDelivery *)voiceDefault {
+    return [[SBScyllasBandDelivery alloc] initWithIntensity:nil pace:nil pitch:nil];
+}
+
++ (SBScyllasBandDelivery *)neutral {
+    return [[SBScyllasBandDelivery alloc] initWithIntensity:@0 pace:@0 pitch:@0];
+}
+
+- (instancetype)initWithIntensity:(nullable NSNumber *)intensity pace:(nullable NSNumber *)pace pitch:(nullable NSNumber *)pitch {
+    if ((self = [super init])) {
+        _intensity = delivery_value(intensity);
+        _pace = delivery_value(pace);
+        _pitch = delivery_value(pitch);
+    }
+    return self;
+}
+
+- (NSString *)specification {
+    NSMutableArray<NSString *> *terms = [NSMutableArray arrayWithCapacity:3];
+    auto append = [terms](SBScyllasBandDeliveryControl control, NSNumber *value) {
+        if (value != nil) [terms addObject:[NSString stringWithFormat:@"%@=%@", control, format_value(value.floatValue)]];
+    };
+    append(SBScyllasBandDeliveryControlIntensity, self.intensity);
+    append(SBScyllasBandDeliveryControlPace, self.pace);
+    append(SBScyllasBandDeliveryControlPitch, self.pitch);
+    return [terms componentsJoinedByString:@","];
+}
+
+- (id)copyWithZone:(NSZone *)zone {
+    return self;   // immutable
+}
+
+- (BOOL)isEqual:(id)other {
+    if (![other isKindOfClass:SBScyllasBandDelivery.class]) return NO;
+    return [self.specification isEqualToString:[other specification]];
+}
+
+- (NSUInteger)hash {
+    return self.specification.hash;
+}
+
+- (NSString *)description {
+    NSString *specification = self.specification;
+    return [NSString stringWithFormat:@"<SBScyllasBandDelivery %@>", specification.length ? specification : @"voice default"];
+}
+
+@end
+
+@interface SBScyllasBandDeliveryRange ()
+- (instancetype)initWithMinimum:(float)minimum maximum:(float)maximum unit:(NSString *)unit;
+@end
+
+@implementation SBScyllasBandDeliveryRange
+- (instancetype)initWithMinimum:(float)minimum maximum:(float)maximum unit:(NSString *)unit {
+    if ((self = [super init])) {
+        _minimum = minimum;
+        _maximum = maximum;
+        _unit = unit.copy;
+    }
+    return self;
+}
+
+- (NSString *)description {
+    return [NSString stringWithFormat:@"<SBScyllasBandDeliveryRange %@ to %@ %@>", format_value(self.minimum), format_value(self.maximum), self.unit];
+}
+@end
+
 @interface SBScyllasBandVoice ()
-- (instancetype)initWithIdentifier:(NSString *)identifier languages:(NSArray<NSString *> *)languages defaultLanguage:(NSString *)defaultLanguage;
+- (instancetype)initWithIdentifier:(NSString *)identifier
+                         languages:(NSArray<NSString *> *)languages
+                   defaultLanguage:(NSString *)defaultLanguage
+                  deliveryDefaults:(SBScyllasBandDelivery *)deliveryDefaults;
 @end
 
 @implementation SBScyllasBandVoice
-- (instancetype)initWithIdentifier:(NSString *)identifier languages:(NSArray<NSString *> *)languages defaultLanguage:(NSString *)defaultLanguage {
+- (instancetype)initWithIdentifier:(NSString *)identifier
+                         languages:(NSArray<NSString *> *)languages
+                   defaultLanguage:(NSString *)defaultLanguage
+                  deliveryDefaults:(SBScyllasBandDelivery *)deliveryDefaults {
     if ((self = [super init])) {
         _identifier = identifier.copy;
         _languages = languages.copy;
         _defaultLanguage = defaultLanguage.copy;
+        _deliveryDefaults = deliveryDefaults;
     }
     return self;
 }
@@ -71,15 +170,39 @@ NSString *format_value(float value) {
         _backend = [json[@"backend"] isKindOfClass:NSString.class] ? json[@"backend"] : @"";
         _releaseIdentifier = [json[@"release_id"] isKindOfClass:NSString.class] ? json[@"release_id"] : @"";
         _sampleRate = [json[@"sample_rate"] integerValue];
+        // "delivery": {"ranges": {control: [low, high]}, "defaults": {voice: {control: value}}, "units": {control: unit}}
+        NSDictionary *delivery = [json[@"delivery"] isKindOfClass:NSDictionary.class] ? json[@"delivery"] : @{};
+        NSDictionary *ranges = [delivery[@"ranges"] isKindOfClass:NSDictionary.class] ? delivery[@"ranges"] : @{};
+        NSDictionary *units = [delivery[@"units"] isKindOfClass:NSDictionary.class] ? delivery[@"units"] : @{};
+        NSDictionary *defaults = [delivery[@"defaults"] isKindOfClass:NSDictionary.class] ? delivery[@"defaults"] : @{};
+        NSMutableDictionary<SBScyllasBandDeliveryControl, SBScyllasBandDeliveryRange *> *deliveryRanges = [NSMutableDictionary dictionary];
+        for (SBScyllasBandDeliveryControl control in delivery_controls()) {
+            NSArray *range = [ranges[control] isKindOfClass:NSArray.class] ? ranges[control] : nil;
+            NSNumber *low = range.count == 2 ? json_number(range[0]) : nil;
+            NSNumber *high = range.count == 2 ? json_number(range[1]) : nil;
+            const BOOL valid = low != nil && high != nil && low.floatValue <= high.floatValue;
+            NSString *unit = [units[control] isKindOfClass:NSString.class]
+                ? units[control] : ([control isEqualToString:SBScyllasBandDeliveryControlPitch] ? @"semitones" : @"sd");
+            deliveryRanges[control] = [[SBScyllasBandDeliveryRange alloc] initWithMinimum:valid ? low.floatValue : kDeliveryMinimum
+                                                                                  maximum:valid ? high.floatValue : kDeliveryMaximum
+                                                                                     unit:unit];
+        }
+        _deliveryRanges = deliveryRanges.copy;
         NSMutableArray<SBScyllasBandVoice *> *voices = [NSMutableArray array];
         for (NSDictionary *voice in [json[@"voices"] isKindOfClass:NSArray.class] ? json[@"voices"] : @[]) {
             if (![voice isKindOfClass:NSDictionary.class] || ![voice[@"id"] isKindOfClass:NSString.class]) continue;
             NSArray *languages = [voice[@"languages"] isKindOfClass:NSArray.class] ? voice[@"languages"] : @[];
             NSString *fallback = languages.firstObject ?: @"en_us";
+            NSDictionary *values = [defaults[voice[@"id"]] isKindOfClass:NSDictionary.class] ? defaults[voice[@"id"]] : @{};
+            SBScyllasBandDelivery *voiceDefaults =
+                [[SBScyllasBandDelivery alloc] initWithIntensity:json_number(values[SBScyllasBandDeliveryControlIntensity]) ?: @0
+                                                            pace:json_number(values[SBScyllasBandDeliveryControlPace]) ?: @0
+                                                           pitch:json_number(values[SBScyllasBandDeliveryControlPitch]) ?: @0];
             [voices addObject:[[SBScyllasBandVoice alloc] initWithIdentifier:voice[@"id"]
                                                                    languages:languages
                                                              defaultLanguage:[voice[@"default_language"] isKindOfClass:NSString.class]
-                                                                                 ? voice[@"default_language"] : fallback]];
+                                                                                 ? voice[@"default_language"] : fallback
+                                                            deliveryDefaults:voiceDefaults]];
         }
         _voices = voices.copy;
         _defaultVoice = [json[@"default_voice"] isKindOfClass:NSString.class] ? json[@"default_voice"] : (voices.firstObject.identifier ?: @"");
@@ -96,51 +219,13 @@ NSString *format_value(float value) {
 }
 @end
 
-@implementation SBScyllasBandDelivery
-
-+ (SBScyllasBandDelivery *)neutral {
-    return [[SBScyllasBandDelivery alloc] initWithEnergy:2 tension:2 valence:2 assertiveness:2 whisper:NO];
-}
-
-- (instancetype)initWithEnergy:(float)energy tension:(float)tension valence:(float)valence assertiveness:(float)assertiveness whisper:(BOOL)whisper {
-    if ((self = [super init])) {
-        auto clamp = [](float value) { return std::isfinite(value) ? std::clamp(value, 0.0f, 4.0f) : 2.0f; };
-        _energy = clamp(energy);
-        _tension = clamp(tension);
-        _valence = clamp(valence);
-        _assertiveness = clamp(assertiveness);
-        _whisper = whisper;
-    }
-    return self;
-}
-
-- (NSString *)specification {
-    return [NSString stringWithFormat:@"energy=%@,tension=%@,valence=%@,assertiveness=%@", format_value(self.energy),
-                                      format_value(self.tension), format_value(self.valence), format_value(self.assertiveness)];
-}
-
-- (id)copyWithZone:(NSZone *)zone {
-    return self;   // immutable
-}
-
-- (BOOL)isEqual:(id)other {
-    if (![other isKindOfClass:SBScyllasBandDelivery.class]) return NO;
-    return [self.specification isEqualToString:[other specification]];
-}
-
-- (NSUInteger)hash {
-    return self.specification.hash;
-}
-
-@end
-
 @implementation SBScyllasBandRequest
 
 - (instancetype)initWithText:(NSString *)text voiceIdentifier:(NSString *)voiceIdentifier {
     if ((self = [super init])) {
         _text = text.copy;
         _voiceIdentifier = voiceIdentifier.copy;
-        _delivery = SBScyllasBandDelivery.neutral;
+        _delivery = SBScyllasBandDelivery.voiceDefault;
         _speed = 1.0f;
         _normalizeText = YES;
     }
@@ -270,7 +355,9 @@ int32_t forward_event(const ScyllasBandEvent *event, void *user_data) {
     if (!(request.speed > 0) || request.steps < 0) {
         return fail(error, SBScyllasBandErrorInvalidArgument, @"Speed must be positive and steps zero or positive.");
     }
-    __attribute__((objc_precise_lifetime)) NSString *delivery = request.delivery.specification;   // its C string is used below
+    // No control set passes NULL: every control takes the voice's default. The C string is used below.
+    __attribute__((objc_precise_lifetime)) NSString *delivery = request.delivery.specification;
+    if (delivery.length == 0) delivery = nil;
     ScyllasBandRequest native;
     scyllasband_request_init(&native);
     native.text = request.text.UTF8String;

@@ -38,7 +38,7 @@ class DefaultWalkthroughTest {
         assertEquals("es", segments.single { it.settings.voiceId == "rex" }.settings.language)
         assertEquals("it", segments.single { it.settings.voiceId == "max" }.settings.language)
         assertTrue(segments.any { it.settings.voiceId == "scylla" && it.settings.language == "vi" })
-        assertEquals("fr", segments.single { it.settings.voiceId == "poppy" }.settings.language)
+        assertEquals(setOf("fr"), segments.filter { it.settings.voiceId == "poppy" }.map { it.settings.language }.toSet())
     }
 
     @Test
@@ -47,12 +47,11 @@ class DefaultWalkthroughTest {
 
         assertEquals(source.lines().count { it.isNotBlank() }, snapshot.points.size)
         assertFalse(snapshot.text.contains('['))
-        assertEquals(
-            ScyllasBandDelivery(energy = 2.3f, tension = 2.4f, valence = 1.4f, assertiveness = 2.4f),
-            snapshot.points.map { it.settings.delivery }.first { it.tension == 2.4f },
-        )
+        assertEquals(ScyllasBandDelivery(intensity = 2f), snapshot.points.map { it.settings.delivery }.first { it.intensity == 2f })
         snapshot.points.forEach { assertEquals(it.settings.delivery, it.settings.delivery.coerceToUiRange()) }
-        assertTrue(snapshot.points.map { it.settings.delivery }.distinct().size >= 8)
+        assertTrue(snapshot.points.map { it.settings.delivery }.distinct().size >= 6)
+        assertTrue(snapshot.points.any { it.settings.delivery.pace != null })
+        assertTrue(snapshot.points.any { it.settings.delivery.pitch != null })
     }
 
     private companion object {

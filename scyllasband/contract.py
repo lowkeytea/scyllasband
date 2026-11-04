@@ -7,15 +7,18 @@ from pathlib import Path
 from typing import Any, Mapping
 
 CONTRACT_VERSION = "1.0.0"
-GRAPH_CONTRACT = "scyllasband_measured_delivery_v2"
+GRAPH_CONTRACT = "scyllasband_measured_controls_v3"
 DURATION_INPUTS = ("span_phone_ids", "span_segment_ids", "span_mask", "voice_id", "language_id", "delivery_values", "delivery_present")
 CONTEXT_INPUTS = ("span_context_phone_ids", "span_context_segment_ids", "span_context_mask")
 EVENT_INPUTS = ("expanded_boundary_event_ids", "expanded_modifier_event_ids", "expanded_phone_phase", "expanded_phone_log_duration",
                 "expanded_sentence_type_ids")
 VECTOR_INPUTS = ("noise", "time", "expanded_phone_ids", "voice_id", "language_id", "delivery_values", "delivery_present", "latent_mask",
-                 "span_context_hidden", "prefix_latents", "prefix_mask", *EVENT_INPUTS)
+                 "span_context_hidden", "prefix_latents", "prefix_mask", *EVENT_INPUTS, "expanded_melody")
+PITCH_INPUTS = ("noise", "time", "expanded_phone_ids", "voice_id", "language_id", "delivery_values", "delivery_present", "latent_mask",
+                "span_context_hidden", *EVENT_INPUTS)
 VOCODER_INPUTS = ("latents", "latent_mask", "voice_id", "language_id", "emotion_id")
-COMPONENT_INPUTS = {"g2p": ("text",), "duration_predictor": DURATION_INPUTS, "vector_context_encoder": CONTEXT_INPUTS}
+COMPONENT_INPUTS = {"g2p": ("text",), "duration_predictor": DURATION_INPUTS, "vector_context_encoder": CONTEXT_INPUTS,
+                    "pitch_context_encoder": CONTEXT_INPUTS}
 REQUIRED_ASSETS = ("phone_vocab", "voice_index", "language_index", "g2p_config", "g2p_tokenizer", "g2p_language_map")
 BACKEND_FORMATS = {"onnx": "onnx", "litert": "litert", "coreml": "coreml", "coreai": "coreai"}
 
@@ -38,7 +41,7 @@ def validate_bundle_layout(bundle_dir: str | Path) -> dict[str, Any]:
     if manifest.get("contract_version") != CONTRACT_VERSION:
         raise BundleError(f"Bundle contract_version {manifest.get('contract_version')!r} != {CONTRACT_VERSION!r}")
     controls = manifest.get("controls") or {}
-    if controls.get("graph_input_contract") != GRAPH_CONTRACT:
+    if controls.get("graph_input_contract") != GRAPH_CONTRACT:   # v2 bundles: use a runtime from before v3
         raise BundleError(f"Bundle graph contract {controls.get('graph_input_contract')!r} is not supported by this runtime "
                           f"(expected {GRAPH_CONTRACT!r}). Download the current model: python -m scyllasband download --yes")
     for key in REQUIRED_ASSETS:
@@ -52,6 +55,7 @@ def validate_bundle_layout(bundle_dir: str | Path) -> dict[str, Any]:
     expected = dict(COMPONENT_INPUTS)
     for bucket in buckets:
         expected[str(bucket["vector_estimator"])] = VECTOR_INPUTS
+        expected[str(bucket["pitch_estimator"])] = PITCH_INPUTS
         expected[str(bucket["vocoder"])] = VOCODER_INPUTS
     backends = sorted({fmt for spec in components.values() for fmt in (spec.get("artifacts") or {}) if fmt in BACKEND_FORMATS})
     if not backends:

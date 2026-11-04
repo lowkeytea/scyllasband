@@ -13,7 +13,7 @@ import tempfile
 import unicodedata
 from pathlib import Path
 
-from scyllasband.delivery import delivery_spec, delivery_tensors
+from scyllasband.delivery import delivery_spec, resolve_delivery
 from scyllasband.engine import balanced_context
 from scyllasband.events import frame_events, frames_to_durations, modifier_bits
 from scyllasband.g2p import punctuated_segments
@@ -88,7 +88,9 @@ def durations_cases(rng: random.Random) -> list[dict]:
         import numpy as np
         values = np.asarray(values, np.float32).tolist()
         scale = rng.choice([1.0, 1 / 0.75, 1 / 1.25, 1 / 1.1])
-        cases.append(dict(phones=phones, values=values, scale=scale, expected=frames_to_durations(values, phones, scale=scale)))
+        pause_scale = rng.choice([1.0, 1.0, float(np.exp(0.13)), float(np.exp(-0.26)), 1.3])
+        cases.append(dict(phones=phones, values=values, scale=scale, pause_scale=pause_scale,
+                          expected=frames_to_durations(values, phones, scale=scale, pause_scale=pause_scale)))
     return cases
 
 
@@ -106,16 +108,14 @@ def context_cases(rng: random.Random) -> list[dict]:
 
 
 def delivery_cases() -> list[dict]:
-    specs = [None, "neutral", " Neutral ", "auto", "AUTO", "energy=3", "energy=2.5,tension=2,valence=3,assertiveness=1,whisper=off", "whisper=on",
-             "energy=auto,whisper=auto", "energy=0,tension=4", " energy = 3", "energy=3 , valence=1.25", "energy=5", "energy=-1", "energy=abc",
-             "energy=3,energy=2", "calm=2", "whisper=yes", "whisper=On", "energy", "", "energy=1e0", "energy=.5", "energy=2.", "energy=nan",
-             "energy=inf", "valence=Auto"]
+    specs = [None, "default", " Neutral ", "intensity=1", "intensity=1,pace=-0.5,pitch=2", "pace=-3", "pitch=2.5", " intensity = 1 ",
+             "intensity=1 , pace=0.25", "energy=3", "whisper=on", "intensity=abc", "intensity=1,intensity=2", "tempo=1", "intensity", "",
+             "intensity=1e0", "pace=.5", "pace=2.", "intensity=nan", "intensity=inf", "pace=Default", "pitch=auto", "Intensity=-1.5"]
     cases = []
     for spec in specs:
         try:
-            values, present, resolved = delivery_tensors(spec)
-            cases.append(dict(spec=spec, error=False, values=values[0].tolist(), present=present[0].astype(int).tolist(),
-                              resolved=resolved))
+            resolved = resolve_delivery(spec)
+            cases.append(dict(spec=spec, error=False, resolved=resolved, spec_text=delivery_spec(resolved)))
         except ValueError:
             cases.append(dict(spec=spec, error=True))
     return cases
@@ -177,14 +177,14 @@ def stream_cases() -> dict:
         ("slow", text("ab. ab. ab. ab. ab. ab."), 2.0),
         ("short paragraphs", text("ab.\n\nab."), 1.0),
         ("short records", [dict(text="ab.", voice="scylla"), dict(text="ab.", voice="scylla")], 1.0),
-        ("chains", [dict(text="ab.", voice="scylla"), dict(text="ab.", voice="scylla", delivery="energy=3")], 1.0),
+        ("chains", [dict(text="ab.", voice="scylla"), dict(text="ab.", voice="scylla", delivery="intensity=1")], 1.0),
         ("long paragraph", text("ab ab. ab ab.\n\nab ab."), 1.0),
         ("clauses", text("ab ab, ab ab ab; ab ab: ab ab ab, ab. ab ab ab ab, ab ab ab ab ab. ab, ab ab ab ab ab ab, ab ab."), 1.0),
         ("clauses fast", text("ab ab, ab ab ab; ab ab: ab ab ab, ab. ab ab ab ab, ab ab ab ab ab. ab, ab ab ab ab ab ab, ab ab."), 0.5),
         ("words", text(" ".join(["ab"] * 40)), 0.6),
         ("mixed", [dict(text="ab ab ab. ab, ab.\n\nab ab ab ab ab ab ab ab ab ab ab ab ab.", voice="scylla"),
                    dict(text="ab. ab ab ab ab ab ab ab, ab ab ab.", voice="scylla"),
-                   dict(text="ab ab ab ab ab.", voice="scylla", delivery="energy=3")], 1.0),
+                   dict(text="ab ab ab ab ab.", voice="scylla", delivery="intensity=1")], 1.0),
     ]
     controls = dict(chunking=dict(min_target_frames=6, max_target_frames=12), span_conditioning=dict(context_max_phones=256, context_phones_each_side=8))
     cases = []

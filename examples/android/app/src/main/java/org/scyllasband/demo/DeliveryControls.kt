@@ -9,24 +9,18 @@ import android.widget.SeekBar
 import android.widget.TextView
 import org.scyllasband.android.ScyllasBandDelivery
 
-/** The four delivery sliders (0.1 steps, each over its supported range) and the quick presets of the point dialog. */
+/** The intensity, pace and pitch sliders (0.1 steps, each over its supported range) and the point dialog's reset. */
 class DeliveryControls(root: View, inflater: LayoutInflater) {
     private class AxisSlider(val bar: SeekBar, val value: TextView, val range: ClosedFloatingPointRange<Float>)
 
     private val sliders: Map<String, AxisSlider>
 
     var delivery: ScyllasBandDelivery
-        get() = ScyllasBandDelivery(
-            energy = axis("energy"),
-            tension = axis("tension"),
-            valence = axis("valence"),
-            assertiveness = axis("assertiveness"),
-        )
+        get() = ScyllasBandDelivery(intensity = axis("intensity"), pace = axis("pace"), pitch = axis("pitch"))
         set(value) {
-            setAxis("energy", value.energy)
-            setAxis("tension", value.tension)
-            setAxis("valence", value.valence)
-            setAxis("assertiveness", value.assertiveness)
+            setAxis("intensity", value.intensity ?: 0f)
+            setAxis("pace", value.pace ?: 0f)
+            setAxis("pitch", value.pitch ?: 0f)
         }
 
     init {
@@ -68,14 +62,13 @@ class DeliveryControls(root: View, inflater: LayoutInflater) {
     private companion object {
         const val STEPS_PER_UNIT = 10f
 
-        // Rounded to the slider's 0.1 grid, so 1.4 + 0.9 reads back as 2.3.
+        // Rounded to the slider's 0.1 grid, so -2 + 2.3 reads back as 0.3.
         fun axisValue(slider: AxisSlider, progress: Int): Float =
             Math.round((slider.range.start + progress / STEPS_PER_UNIT) * STEPS_PER_UNIT) / STEPS_PER_UNIT
         val AXES = listOf(
-            "energy" to R.string.axis_energy,
-            "tension" to R.string.axis_tension,
-            "valence" to R.string.axis_valence,
-            "assertiveness" to R.string.axis_assertiveness,
+            "intensity" to R.string.axis_intensity,
+            "pace" to R.string.axis_pace,
+            "pitch" to R.string.axis_pitch,
         )
     }
 }

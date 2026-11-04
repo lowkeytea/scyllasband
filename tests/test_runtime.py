@@ -9,9 +9,9 @@ import unittest
 
 import numpy as np
 
-from scyllasband.contract import (BundleError, CONTEXT_INPUTS, DURATION_INPUTS, GRAPH_CONTRACT, VECTOR_INPUTS, VOCODER_INPUTS,
-                                  validate_bundle_layout)
-from scyllasband.delivery import DELIVERY_AXES, DELIVERY_RANGES, delivery_tensors, resolve_delivery
+from scyllasband.contract import (BundleError, CONTEXT_INPUTS, DURATION_INPUTS, GRAPH_CONTRACT, PITCH_INPUTS, VECTOR_INPUTS,
+                                  VOCODER_INPUTS, validate_bundle_layout)
+from scyllasband.delivery import CONTROLS, DEFAULT_RANGES, delivery_tensors, resolve_delivery, with_defaults
 from scyllasband.engine import Engine, OverlongError, Sentence, balanced_context
 from scyllasband.events import frame_events, frames_to_durations, modifier_bits, sentence_types
 from scyllasband.g2p import punctuated_segments
@@ -60,6 +60,11 @@ class DurationAndEventTest(unittest.TestCase):
     def test_rounding_matches_training(self):
         phones = ["<sil>", "ˈ", "a", "<pause_comma>", "<sil>", "b", "<sil>"]
         self.assertEqual(frames_to_durations([0.4, 3, 0.2, 5, 2.5, 3.5, 0.0], phones), [0, 0, 1, 0, 2, 4, 0])
+
+    def test_pause_scale_moves_only_silences(self):
+        phones = ["<sil>", "a", "<sil>", "b", "<sil>"]
+        self.assertEqual(frames_to_durations([4, 4, 0.4, 4, 2], phones, pause_scale=1.3), [5, 4, 1, 4, 3])
+        self.assertEqual(frames_to_durations([4, 4, 0.4, 4, 2], phones, pause_scale=0.7), [3, 4, 0, 4, 1])
 
     def test_events(self):
         phones = ["<sil>", "ˈ", "a", "b", "<pause_comma>", "<sil>", "h", "ː", "<end_stmt>", "<sil>"]
@@ -129,42 +134,49 @@ class PlannerTest(unittest.TestCase):
         self.assertEqual(split_for_retry("Well, one two three four five six", min_share=0.25), ["Well, one two", "three four five six"])
 
     def test_chains_follow_voice_language_and_delivery(self):
-        records = parse_group_lines("[scylla:en_us] Hi there. How are you?\n[ink:en_gb:energy=2.2] Fine. [scylla] Good.",
+        records = parse_group_lines("[scylla:en_us] Hi there. How are you?\n[ink:en_gb:intensity=1,pace=-0.5] Fine. [scylla] Good.",
                                     default_voice=None, default_language=None)
         plan = plan_records(records, resolve_language=lambda voice, language: language or "en_us", normalize=False)
         self.assertEqual([c.chain_id for c in plan.chunks], ["chain_001", "chain_001", "chain_002", "chain_003"])
-        self.assertEqual(plan.chunks[2].delivery["energy"], 2.2)
+        self.assertEqual(plan.chunks[2].delivery, dict(intensity=1.0, pace=-0.5, pitch=None))
+        self.assertIsNone(plan.chunks[0].delivery)
+
+    def test_delivery_fields_or_string_not_both(self):
+        plan = plan_records(records_from_text("Hi.", voice="scylla", language=None, pace=-1), resolve_language=lambda v, l: "en_us")
+        self.assertEqual(plan.chunks[0].delivery, dict(intensity=None, pace=-1.0, pitch=None))
+        with self.assertRaisesRegex(ValueError, "not both"):
+            plan_records(records_from_text("Hi.", voice="scylla", language=None, delivery="pace=1", pace=-1),
+                         resolve_language=lambda v, l: "en_us")
+        with self.assertRaisesRegex(ValueError, "emotion comes from the text"):
+            plan_records([dict(text="Hi.", voice="scylla", emotion="joy")], resolve_language=lambda v, l: "en_us")
 
 
 class DeliveryTest(unittest.TestCase):
-    def test_neutral_default_and_auto(self):
-        values, present, _ = delivery_tensors(None)
-        self.assertTrue(present.all())
-        self.assertEqual(values[0, :4].tolist(), [0, 0, 0, 0])
-        values, present, _ = delivery_tensors("auto")
-        self.assertFalse(present[0, :4].any())
-        self.assertEqual(resolve_delivery("energy=2.1")["energy"], 2.1)
-        self.assertEqual(resolve_delivery(""), resolve_delivery(None))
+    def test_defaults(self):
+        self.assertEqual(resolve_delivery(None), dict.fromkeys(CONTROLS))
+        self.assertEqual(resolve_delivery(""), resolve_delivery("default"))
+        self.assertEqual(with_defaults(resolve_delivery("pace=-1"), dict(pace=0.5, pitch=1)), dict(intensity=0.0, pace=-1.0, pitch=1.0))
+        values, present = delivery_tensors(with_defaults({}, None))
+        self.assertEqual(present[0].tolist(), [True, True, False, False, False])
+        self.assertEqual(values[0].tolist(), [0, 0, 0, 0, 0])
 
-    def test_requests_are_clamped_into_the_supported_ranges(self):
-        high = resolve_delivery("energy=4,tension=3.1,valence=2.8,assertiveness=2.5")
-        low = resolve_delivery("energy=0,tension=0.5,valence=1.3,assertiveness=1")
-        self.assertEqual([high[a] for a in DELIVERY_AXES], [DELIVERY_RANGES[a][1] for a in DELIVERY_AXES])
-        self.assertEqual([low[a] for a in DELIVERY_AXES], [DELIVERY_RANGES[a][0] for a in DELIVERY_AXES])
-        self.assertEqual(resolve_delivery("energy=auto")["energy"], None)
-        for low_value, high_value in DELIVERY_RANGES.values():
-            self.assertTrue(low_value <= 2.0 <= high_value)   # neutral stays reachable on every axis
-        with self.assertRaisesRegex(ValueError, "within \\[0, 4\\]"):
-            resolve_delivery("energy=5")
+    def test_values_are_z_over_five_and_clamped_into_the_ranges(self):
+        resolved = resolve_delivery("intensity=5,pace=-3,pitch=2.5")
+        self.assertEqual(resolved, dict(intensity=2.0, pace=-2.0, pitch=2.0))
+        self.assertEqual(resolve_delivery({"pace": 1}, ranges=dict(pace=[-0.5, 0.5]))["pace"], 0.5)
+        values, _ = delivery_tensors(dict(intensity=1.0, pace=-2.0, pitch=0.0))
+        np.testing.assert_allclose(values[0, :2], [0.2, -0.4], rtol=1e-6)
+        for low, high in DEFAULT_RANGES.values():
+            self.assertTrue(low <= 0.0 <= high)
 
-    def test_whisper_input_is_always_off(self):
-        for spec in (None, "auto", "energy=3,valence=1"):
-            values, present, resolved = delivery_tensors(spec)
-            self.assertEqual((float(values[0, 4]), bool(present[0, 4])), (0.0, True))
-            self.assertNotIn("whisper", resolved)
-        for spec in ("whisper=on", "energy=2,whisper=off", {"whisper": False}):
-            with self.assertRaisesRegex(ValueError, "Whisper is not supported"):
+    def test_v2_axes_and_unknown_keys_are_rejected(self):
+        for spec in ("energy=2", "tension=2,pace=1", {"whisper": False}, {"emotion": "joy"}):
+            with self.assertRaisesRegex(ValueError, "intensity, pace and pitch"):
                 resolve_delivery(spec)
+        with self.assertRaisesRegex(ValueError, "only intensity"):
+            resolve_delivery("tempo=1")
+        with self.assertRaisesRegex(ValueError, "must be a number"):
+            resolve_delivery("pace=fast")
 
 
 class ContractTest(unittest.TestCase):
@@ -184,7 +196,7 @@ class EngineTest(unittest.TestCase):
     def test_bucket_padding_prefix_and_decode(self):
         engine = _fake_engine()
         sentence = Sentence(phones=["<sil>", "a", "b", "<end_stmt>", "<sil>"], word_starts=[], before_ids=[11, 12], after_ids=[13])
-        delivery = delivery_tensors(None)[:2]
+        delivery = engine.delivery_inputs("scylla", None)[:2]
         result = engine.synthesize_sentence(sentence, voice="scylla", language="en_us", delivery=delivery, steps=2,
                                             rng=np.random.default_rng(0), prefix=np.ones((24, 3), np.float32))
         self.assertEqual(result.latents.shape, (24, sum(result.durations)))
@@ -207,7 +219,7 @@ class EngineTest(unittest.TestCase):
     def test_fused_flow_replaces_the_step_loop(self):
         engine = _fake_engine(apple=True)
         sentence = Sentence(phones=["<sil>", "a", "b", "<end_stmt>", "<sil>"], word_starts=[])
-        delivery = delivery_tensors(None)[:2]
+        delivery = engine.delivery_inputs("scylla", None)[:2]
         fused = engine.synthesize_sentence(sentence, voice="scylla", language="en_us", delivery=delivery, steps=8, sampler="heun",
                                            rng=np.random.default_rng(0))
         names = [call["name"] for call in engine._fake.calls]
@@ -234,7 +246,56 @@ class EngineTest(unittest.TestCase):
         engine = _fake_engine(frames_per_phone=9.0)
         sentence = Sentence(phones=["<sil>", "a", "b", "a", "<sil>"], word_starts=[])
         with self.assertRaises(OverlongError):
-            engine.synthesize_sentence(sentence, voice="scylla", language="en_us", delivery=delivery_tensors(None)[:2], steps=1)
+            engine.synthesize_sentence(sentence, voice="scylla", language="en_us", delivery=engine.delivery_inputs("scylla", None)[:2],
+                                       steps=1)
+
+    def test_short_targets_leave_intensity_and_pace_unset(self):
+        engine = _fake_engine()
+        delivery = engine.delivery_inputs("scylla", dict(intensity=1.0, pace=-1.0))[:2]
+        short = Sentence(phones=["<sil>", "ˈ", "a", "b", "a", "<end_stmt>", "<sil>"], word_starts=[])   # 3 spoken phones
+        long = Sentence(phones=["<sil>", "a", "b", "a", "b", "<end_stmt>", "<sil>"], word_starts=[])     # 4
+        for sentence, expected in ((short, [False] * 5), (long, [True, True, False, False, False])):
+            engine._fake.calls.clear()
+            engine.synthesize_sentence(sentence, voice="scylla", language="en_us", delivery=delivery, steps=1, rng=np.random.default_rng(0))
+            for call in engine._fake.calls:
+                if "delivery_present" in call:
+                    self.assertEqual(call["delivery_present"][0].tolist(), expected, call["name"])
+
+    def test_pace_moves_pauses_even_when_unset(self):
+        engine = _fake_engine(frames_per_phone=4.0)
+        sentence = Sentence(phones=["<sil>", "a", "b", "<end_stmt>", "<sil>"], word_starts=[])
+        normal = engine.durations(sentence, voice=0, language=0, delivery=engine.delivery_inputs("scylla", None)[:2])
+        slow = engine.durations(sentence, voice=0, language=0, delivery=engine.delivery_inputs("scylla", dict(pace=-2.0))[:2])
+        self.assertEqual(normal, [4, 4, 4, 0, 4])
+        self.assertEqual(slow, [5, 4, 4, 0, 5])      # 4 x exp(0.26), the words left as the graph gives them
+
+    def test_pitch_contour_feeds_the_flow_melody(self):
+        engine = _fake_engine()
+        sentence = Sentence(phones=["<sil>", "a", "b", "a", "b", "<end_stmt>", "<sil>"], word_starts=[])
+        result = engine.synthesize_sentence(sentence, voice="scylla", language="en_us", delivery=(*engine.delivery_inputs("scylla", None)[:2], 1.5),
+                                            steps=1, rng=np.random.default_rng(0), pitch_noise=np.full((2, 6), 0.25, np.float32))
+        calls = engine._fake.calls
+        pitch = [c for c in calls if c["name"] == "pitch_estimator_8"]
+        self.assertEqual(len(pitch), engine.pitch_steps)
+        self.assertEqual(pitch[0]["noise"].shape, (1, 2, 8))
+        self.assertEqual(pitch[0]["span_context_hidden"].shape, (1, 384))
+        flow = next(c for c in calls if c["name"] == "vector_estimator_8")
+        melody = flow["expanded_melody"]
+        self.assertEqual(melody.shape, (1, 8, 3))
+        self.assertTrue((melody[0, 6:] == 0).all())                       # bucket padding
+        contour = np.full((2, 6), 0.25 * (1 - 1 / engine.pitch_steps) ** engine.pitch_steps, np.float32)
+        np.testing.assert_allclose(melody[0, :6], engine.melody(contour, "scylla", 1.5), rtol=1e-5)
+        self.assertEqual(result.metadata["pitch_shift"], 1.5)
+
+    def test_melody_soft_limit_and_voicing(self):
+        engine = _fake_engine()
+        low, high = engine.pitch["edges"]["scylla"]
+        contour = np.array([[(high + 5 - 10) / 6, (low - 5 - 10) / 6, 0.0], [1.0, 1.0, -1.0]], np.float32)
+        melody = engine.melody(contour, "scylla")
+        st = melody[:2, 0] * 24 + 16.65
+        self.assertTrue(high - 2 < st[0] < high and low < st[1] < low + 2)
+        self.assertEqual(melody[:, 2].tolist(), [1.0, 1.0, 0.0])
+        self.assertEqual(float(melody[2, 0]), 0.0)                       # unvoiced: no pitch
 
 
 class StreamingTargetTest(unittest.TestCase):
@@ -278,7 +339,7 @@ class StreamingTargetTest(unittest.TestCase):
     def test_short_paragraphs_and_records_join_and_chains_never_do(self):
         paragraphs = records_from_text("ab.\n\nab.", voice="scylla", language=None)
         records = [dict(text="ab.", voice="scylla"), dict(text="ab.", voice="scylla")]
-        chains = [dict(text="ab.", voice="scylla"), dict(text="ab.", voice="scylla", delivery="energy=3")]
+        chains = [dict(text="ab.", voice="scylla"), dict(text="ab.", voice="scylla", delivery="intensity=1")]
         self.assertEqual([text for _, text, _ in self.targets(paragraphs)], ["ab. ab."])
         self.assertEqual([text for _, text, _ in self.targets(records)], ["ab. ab."])
         self.assertEqual([text for _, text, _ in self.targets(chains)], ["ab.", "ab."])
@@ -310,6 +371,10 @@ class _FakeGraphs:
                     return np.full((1, feeds["span_phone_ids"].shape[1]), graphs.frames_per_phone, np.float32)
                 if name == "vector_context_encoder":
                     return np.zeros((1, 512), np.float32)
+                if name == "pitch_context_encoder":
+                    return np.zeros((1, 384), np.float32)
+                if name.startswith("pitch_estimator"):
+                    return -feeds["noise"]
                 if name.startswith("vector_estimator"):
                     return -feeds["noise"]
                 frames = feeds["latents"].shape[-1]
@@ -357,8 +422,9 @@ def _fake_bundle(root: Path, *, apple: bool = False, controls: dict | None = Non
     write("assets/g2p/language_map.json", {"en_us": "en_us"})
     components = {}
     for name, inputs in (("g2p", ["text"]), ("duration_predictor", list(DURATION_INPUTS)), ("vector_context_encoder", list(CONTEXT_INPUTS)),
-                         ("vector_estimator_8", list(VECTOR_INPUTS)), ("vocoder_8", list(VOCODER_INPUTS)),
-                         ("vector_estimator", list(VECTOR_INPUTS)), ("vocoder", list(VOCODER_INPUTS))):
+                         ("pitch_context_encoder", list(CONTEXT_INPUTS)), ("vector_estimator_8", list(VECTOR_INPUTS)),
+                         ("pitch_estimator_8", list(PITCH_INPUTS)), ("vocoder_8", list(VOCODER_INPUTS)),
+                         ("vector_estimator", list(VECTOR_INPUTS)), ("pitch_estimator", list(PITCH_INPUTS)), ("vocoder", list(VOCODER_INPUTS))):
         (bundle / f"onnx/{name}.onnx").write_bytes(b"")
         components[name] = dict(artifacts=dict(onnx=dict(path=f"onnx/{name}.onnx", format="onnx")), inputs=inputs, outputs=["out"])
     manifest = dict(contract_version="1.0.0", audio=dict(sample_rate=24000, latent_dim=24, latent_hop_length=512, hop_length=256),
@@ -370,8 +436,16 @@ def _fake_bundle(root: Path, *, apple: bool = False, controls: dict | None = Non
                     controls=dict(graph_input_contract=GRAPH_CONTRACT, word_boundaries=dict(enabled=True, g2p_output_symbol=" "),
                                   fixed_shapes=dict(g2p_text_tokens=64), span_conditioning=dict(context_max_phones=16, context_phones_each_side=4),
                                   prefix_conditioning=dict(max_frames=6), decoding=dict(context_frames=4),
-                                  target_buckets=dict(buckets=[dict(latent_frames=8, vector_estimator="vector_estimator_8", vocoder="vocoder_8"),
-                                                               dict(latent_frames=16, vector_estimator="vector_estimator", vocoder="vocoder")])))
+                                  delivery=dict(z_scale=5.0, z_limit=2.5, min_spoken_phones=4, ranges=dict(DEFAULT_RANGES),
+                                                defaults=dict(scylla=dict(intensity=0.0, pace=0.0, pitch=0.0))),
+                                  pace_pauses=dict(phone="<sil>", per_sd=-0.13),
+                                  pitch=dict(channels=2, context_encoder="pitch_context_encoder", sampler=dict(default="euler"),
+                                             steps=dict(default=2), center=10.0, scale=6.0, melody_center=16.65, melody_scale=24.0,
+                                             voiced_threshold=0.5, knee=2.0, edges=dict(scylla=[5.0, 25.0])),
+                                  target_buckets=dict(buckets=[dict(latent_frames=8, vector_estimator="vector_estimator_8", vocoder="vocoder_8",
+                                                                    pitch_estimator="pitch_estimator_8"),
+                                                               dict(latent_frames=16, vector_estimator="vector_estimator", vocoder="vocoder",
+                                                                    pitch_estimator="pitch_estimator")])))
     if apple:
         flow_inputs = [n for n in VECTOR_INPUTS if n != "time"]
         for name, inputs in (("vector_flow_8", flow_inputs), ("vector_flow", flow_inputs), ("g2p_16", ["text"]), ("g2p_32", ["text"])):

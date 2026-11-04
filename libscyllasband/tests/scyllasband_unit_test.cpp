@@ -82,7 +82,7 @@ void durations_suite(const Json& fixture) {
     for (const Json& c : fixture.get("cases").elements()) {
         std::vector<float> values;
         for (const Json& v : c.get("values").elements()) values.push_back(static_cast<float>(v.num()));
-        std::vector<int> got = frames_to_durations(values, strings(c.get("phones")), c.get("scale").num());
+        std::vector<int> got = frames_to_durations(values, strings(c.get("phones")), c.get("scale").num(), c.get("pause_scale").num(1.0));
         std::vector<int64_t> want = ints(c.get("expected"));
         expect(std::vector<int64_t>(got.begin(), got.end()) == want, "durations " + label(c.get("values")));
     }
@@ -101,8 +101,6 @@ void delivery_suite(const Json& fixture) {
     for (const Json& c : fixture.get("cases").elements()) {
         const Json& spec = c.get("spec");
         const std::string text = spec.str();
-        // The C ABI reads an empty string as "unset" (neutral); Python rejects it.
-        const bool c_neutral = spec.is_string() && text.empty();
         bool error = false;
         Delivery delivery;
         try {
@@ -111,20 +109,10 @@ void delivery_suite(const Json& fixture) {
             error = true;
         }
         const std::string name = "delivery " + spec.dump();
-        if (c_neutral) {
-            expect(!error && delivery.spec() == Delivery().spec(), name);
-            continue;
-        }
         expect(error == c.get("error").boolean(), name + " error state");
         if (error || c.get("error").boolean()) continue;
-        float values[5];
-        uint8_t present[5];
-        delivery.tensors(values, present);
-        for (int i = 0; i < 5; ++i) {
-            expect(values[i] == static_cast<float>(c.get("values")[static_cast<std::size_t>(i)].num()), name + " value " + std::to_string(i));
-            expect(present[i] == c.get("present")[static_cast<std::size_t>(i)].integer(), name + " present " + std::to_string(i));
-        }
         expect(delivery.to_json().dump() == c.get("resolved").dump(), name + " resolved " + delivery.to_json().dump());
+        expect(delivery.spec() == c.get("spec_text").str(), name + " spec " + delivery.spec());
     }
 }
 
@@ -196,7 +184,8 @@ public:
         if (name_.rfind("g2p", 0) == 0) return g2p(static_cast<const int64_t*>(first.data), count);
         if (name_ == "duration_predictor") return GraphOutput{first.shape, std::vector<float>(count, frames_per_phone_)};
         if (name_ == "vector_context_encoder") return GraphOutput{{1, 512}, std::vector<float>(512, 0.0f)};
-        if (name_.rfind("vector_estimator", 0) == 0) {
+        if (name_ == "pitch_context_encoder") return GraphOutput{{1, 384}, std::vector<float>(384, 0.0f)};
+        if (name_.rfind("vector_estimator", 0) == 0 || name_.rfind("pitch_estimator", 0) == 0) {
             const float* x = static_cast<const float*>(first.data);
             GraphOutput out{first.shape, std::vector<float>(count)};
             for (std::size_t i = 0; i < count; ++i) out.values[i] = -x[i];

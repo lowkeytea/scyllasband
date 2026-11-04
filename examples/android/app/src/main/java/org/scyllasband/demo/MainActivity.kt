@@ -622,11 +622,11 @@ class MainActivity : AppCompatActivity() {
         .put("language", settings.language)
         .put(
             "delivery",
-            JSONObject()
-                .put("energy", settings.delivery.energy.toDouble())
-                .put("tension", settings.delivery.tension.toDouble())
-                .put("valence", settings.delivery.valence.toDouble())
-                .put("assertiveness", settings.delivery.assertiveness.toDouble()),
+            JSONObject().apply {
+                settings.delivery.intensity?.let { put("intensity", it.toDouble()) }
+                settings.delivery.pace?.let { put("pace", it.toDouble()) }
+                settings.delivery.pitch?.let { put("pitch", it.toDouble()) }
+            },
         )
 
     private fun settingsFromJson(value: JSONObject): ScyllasBandSegmentSettings {
@@ -634,11 +634,11 @@ class MainActivity : AppCompatActivity() {
         return ScyllasBandSegmentSettings(
             voiceId = value.getString("voice"),
             language = value.getString("language"),
+            // Saved v2 axes (energy, tension, ...) are dropped: every v3 control then takes the voice's own.
             delivery = ScyllasBandDelivery(
-                energy = delivery.optDouble("energy", 2.0).toFloat(),
-                tension = delivery.optDouble("tension", 2.0).toFloat(),
-                valence = delivery.optDouble("valence", 2.0).toFloat(),
-                assertiveness = delivery.optDouble("assertiveness", 2.0).toFloat(),
+                intensity = delivery.optDouble("intensity").toFloat().takeIf { it.isFinite() },
+                pace = delivery.optDouble("pace").toFloat().takeIf { it.isFinite() },
+                pitch = delivery.optDouble("pitch").toFloat().takeIf { it.isFinite() },
             ).coerceToUiRange(),
         )
     }

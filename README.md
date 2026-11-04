@@ -1,8 +1,8 @@
 # Scylla's Band
 
-Scylla's Band is a local text-to-speech runtime for fourteen managed voices. It predicts phone durations, generates continuous acoustic latents with rectified flow, and decodes speech at 24 kHz through an acoustic adapter and Vocos.
+Scylla's Band is a local text-to-speech runtime for fourteen managed voices. It predicts phone durations and a pitch contour, generates continuous acoustic latents with rectified flow that follows that contour, and decodes speech at 24 kHz through an acoustic adapter and Vocos.
 
-Delivery is controlled with **energy, tension, valence and assertiveness**, each from **0 to 4** with **2 as neutral**.
+Delivery is controlled with **intensity, pace and pitch**. The emotion comes from the text; intensity sets how much the voice puts into it.
 
 ## Samples and community
 
@@ -13,7 +13,7 @@ Delivery is controlled with **energy, tension, valence and assertiveness**, each
 ## Highlights
 
 - Fourteen voices in seven locales: American and British English, Spanish, Italian, French, German and Vietnamese.
-- Delivery controls for energy, tension, valence and assertiveness on 0–4 scales, combinable into calm, assertive, joyful, angry or sad delivery.
+- Delivery controls for intensity (calm to intense), pace (slower to faster, words and pauses together) and pitch, each measured in the voice's own range.
 - Runs locally on CPU. The default LiteRT bundle synthesizes more than 30× faster than real time on an 8-thread desktop CPU.
 - LiteRT, Core ML, Core AI and ONNX Runtime bundles with INT8 weights; every latent-length bucket shares one set of weights. On Apple devices, Core ML and Core AI run on the GPU or the Neural Engine.
 - Long text is spoken in passages of up to about nine seconds, each with the surrounding text as context and continuing from the sound of the one before, and can be streamed as it is generated.
@@ -44,50 +44,29 @@ source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -e .                   # ".[onnx]", ".[coreml]" or ".[coreai]" for the other backends
 ```
 
-The model is downloaded from [`spybyscript/scyllasband`](https://huggingface.co/spybyscript/scyllasband), pinned to the tag `v2-20261020-litert` (release v2-20261020 with its Core ML and Core AI bundles and the faster LiteRT bundle), into `scyllasband/models/<bundle>` (`litert`, `coreai`, `coreml` or `onnx`). Voice conditioning is embedded in the graphs; no separate voice files are needed.
+The model is downloaded from [`spybyscript/scyllasband`](https://huggingface.co/spybyscript/scyllasband), pinned to the tag `v3-20261104-apple` (release `v3-20261104` with its Core ML and Core AI bundles), into `scyllasband/models/<bundle>` (`litert`, `coreai`, `coreml` or `onnx`). Voice conditioning is embedded in the graphs; no separate voice files are needed.
 
 ## Delivery controls
 
-| Control | Supported range | Default |
-| --- | --- | --- |
-| Energy | 1.4–2.3 or `auto` | 2 |
-| Tension | 1.0–2.4 or `auto` | 2 |
-| Valence | 1.4–2.2 or `auto` | 2 |
-| Assertiveness | 1.8–2.4 or `auto` | 2 |
+| Control | Range | Default | Effect |
+| --- | --- | --- | --- |
+| Intensity | −2 to 2 | 0 | Calm (negative) to intense (positive): how much the voice puts into the line |
+| Pace | −2 to 2 | 0 | Slower (negative) to faster (positive): the words and the pauses between them |
+| Pitch | −2 to 2 | 0 | Shifts the voice's pitch, in semitones |
 
-With every control at 2, the default, voices speak in a calm, conversational delivery with a neutral tone. Raising or lowering a control changes the delivery:
-
-| Control | Lower | Higher |
-| --- | --- | --- |
-| Energy | Lower, darker voice with a few more pauses | Higher, brighter, more projected voice |
-| Tension | Slightly looser and steadier | Tighter, with wider pitch swings |
-| Valence | Flatter, more downcast pitch | Livelier pitch, a little quicker, shorter pauses |
-| Assertiveness | More pauses between phrases | Faster and clipped with fewer pauses; the strongest control over pace |
-
-Requests use the 0–4 scale, and the runtime clamps each control into its supported range, where the voices render most reliably: energy 1.4–2.3, tension 1.0–2.4, valence 1.4–2.2 and assertiveness 1.8–2.4. Small changes inside these ranges are clearly audible, and over longer text the voices vary their delivery with the content on their own.
-
-Combining the controls gives familiar deliveries:
-
-| Delivery | Settings |
-| --- | --- |
-| Calm and soft | `energy=1.8,tension=1,valence=2.2,assertiveness=2.1` |
-| Assertive and quick | `energy=2.3,tension=2.4,valence=2.1,assertiveness=2.4` |
-| Joyful | `energy=2.3,tension=2,valence=2.2,assertiveness=2.2` |
-| Angry | `energy=2.3,tension=2.4,valence=1.4,assertiveness=2.4` |
-| Sad | `energy=1.7,tension=1.5,valence=1.4,assertiveness=2` |
-
-These are moderate styles; how strongly each comes through varies with voice, language and text. The [voice gallery](https://lowkeytea.github.io/scyllasband/#delivery) plays each of them for all fourteen voices.
+0 is each voice's own delivery. Intensity and pace are measured in each voice's own range, in standard deviations around its average, so the same value is a comparable change for every voice and language. The emotion comes from the text: an angry line sounds angrier at higher intensity and more restrained at lower intensity. Requests outside the range are clamped into it.
 
 ```bash
-python -m scyllasband speak --voice ariadne \
-    --delivery energy=2.3,tension=2,valence=2.2,assertiveness=2.2 \
-    -o joyful.wav "We actually did it! The whole street came out to watch!"
+python -m scyllasband speak --voice ariadne --intensity 1.5 \
+    -o excited.wav "We actually did it! The whole street came out to watch!"
 
-python -m scyllasband speak --voice ink --language en_gb \
-    --delivery energy=1.7,tension=1.5,valence=1.4,assertiveness=2 -o sad.wav "I kept the letter for years."
+python -m scyllasband speak --voice ink --language en_gb --intensity -1 --pace -1 \
+    -o quiet.wav "I kept the letter for years."
+
+python -m scyllasband speak --voice gwen --delivery intensity=1,pace=0.5,pitch=1 -o bright.wav "Good morning, everyone!"
 ```
 
-Unspecified controls use the neutral default of 2. `--delivery auto` leaves every control unspecified, and `energy=auto` leaves only that one unspecified; an unspecified control is passed to the model as absent, which is different from requesting 2.
+Unspecified controls take the voice's default. A passage of only a word or two, such as a lone "Yes.", is spoken with the voice's own intensity and pace, as the model was trained; its pitch shift still applies.
 
 ## CLI
 
@@ -98,7 +77,7 @@ python -m scyllasband list-voices
 python -m scyllasband normalize-text --language es "Cuesta 12,50 € el 22/05/2026."
 
 python -m scyllasband speak --voice gwen --language en_us \
-    --delivery energy=1.8,tension=1,valence=2.2 -o calm.wav "Take a slow breath."
+    --intensity -1.5 --pace -0.5 -o calm.wav "Take a slow breath."
 python -m scyllasband speak --voice rex --file data/test_document.txt --metadata story.json -o story.wav
 python -m scyllasband group-speak --file data/walkthrough_demo.txt --pause-ms 250 -o dialogue.wav
 python -m scyllasband stream --voice scylla --file data/test_document.txt -o chunks/
@@ -110,8 +89,9 @@ python -m scyllasband plan --voice scylla "Print the sentence plan as JSON."
 | Option | Default | Effect |
 | --- | --- | --- |
 | `--voice`, `--language` | `scylla`, the voice's English | Voice and locale; `en` picks the voice's own English |
-| `--delivery` | all 2 | `energy=..,tension=..,valence=..,assertiveness=..`, `neutral` or `auto` |
-| `--speed` | 1.0 | Speaking rate; 1.2 is 20% faster |
+| `--intensity`, `--pace`, `--pitch` | the voice's own | Delivery controls, −2 to 2 (see [Delivery controls](#delivery-controls)) |
+| `--delivery` | the voice's own | The same as one string, e.g. `intensity=1,pace=-0.5,pitch=0` |
+| `--speed` | 1.0 | A plain time stretch on top of pace; 1.2 is 20% faster |
 | `--steps`, `--sampler` | 4, `euler` | Flow sampling. The flow is trained for few-step sampling, so Euler with 4 steps (four model evaluations) is the default. Heun evaluates the model twice per step: `--sampler heun --steps 8` costs four times as much and sounds slightly sharper. Fewer steps are faster still; listen when trading quality for speed |
 | `--seed`, `--temperature` | random, 1.0 | Repeatable output; scale of the sampling noise |
 | `--threads` | backend default | CPU threads per graph |
@@ -125,33 +105,33 @@ python -m scyllasband plan --voice scylla "Print the sentence plan as JSON."
 
 | Bundle | Used on | Download | Runtime package |
 | --- | --- | --- | --- |
-| Core ML | Apple silicon Macs (macOS 15 and later); iOS and iPadOS 18 and visionOS 2 apps | 200 MB | `coremltools`, installed the first time a Core ML bundle runs (or `pip install -e ".[coreml]"`) |
-| Core AI | iOS, iPadOS and visionOS 27 apps; also runs on macOS 27 | 213 MB | `coreai-core`, installed the first time a Core AI bundle runs (or `pip install -e ".[coreai]"`) |
-| LiteRT | Linux, Windows, Android and Intel Macs | 267 MB | `ai-edge-litert` (installed with this package) |
-| ONNX Runtime | anywhere ONNX Runtime runs | 323 MB | `onnxruntime`, installed the first time you use `--backend onnx` (or `pip install -e ".[onnx]"`) |
+| Core ML | Apple silicon Macs (macOS 15 and later); iOS and iPadOS 18 and visionOS 2 apps | 163 MB | `coremltools`, installed the first time a Core ML bundle runs (or `pip install -e ".[coreml]"`) |
+| Core AI | iOS, iPadOS and visionOS 27 apps; also runs on macOS 27 | 178 MB | `coreai-core`, installed the first time a Core AI bundle runs (or `pip install -e ".[coreai]"`) |
+| LiteRT | Linux, Windows, Android and Intel Macs | 229 MB | `ai-edge-litert` (installed with this package) |
+| ONNX Runtime | anywhere ONNX Runtime runs | 291 MB | `onnxruntime`, installed the first time you use `--backend onnx` (or `pip install -e ".[onnx]"`) |
 
 `python -m scyllasband download` fetches the Core ML bundle on an Apple silicon Mac and the LiteRT bundle elsewhere. A Mac that can build apps for iOS, iPadOS or visionOS 27 (macOS 27, or an Xcode with those SDKs) is also offered the Core AI bundle those apps use; the Mac itself keeps running Core ML. `--flavor` downloads a particular bundle. Commands use the installed bundle for the machine; `--backend` and `--bundle` select another, for example `--backend coreai` on macOS 27. Every bundle holds INT8 weights for the transformers and the G2P; LiteRT, Core ML and Core AI also quantize the vocoder. `--threads` sets the CPU threads per graph. Sampling uses Euler with 4 steps by default (`--sampler`, `--steps`).
 
-On Core ML and Core AI, `--compute-units` chooses where the graphs run: `auto` (the bundle's recommendation: the GPU), `gpu`, `cpu`, or `ane`, which runs the graphs the bundle marks as accurate on the Neural Engine there (Core AI's flow) and the rest on the CPU. iOS does not allow GPU work from background apps, so an app that keeps speaking in the background uses `ane` (Core AI) or `cpu`. The first load of a Core AI bundle specializes its graphs for the device (a few seconds on the GPU, about half a minute for the Neural Engine); the system caches that until the next OS update.
+On Core ML and Core AI, `--compute-units` chooses where the graphs run: `auto` (the bundle's recommendation: the GPU), `gpu`, `cpu`, or `ane`, which runs the graphs the bundle marks as accurate on the Neural Engine there (Core AI's flow and pitch predictor) and the rest on the CPU. iOS does not allow GPU work from background apps, so an app that keeps speaking in the background uses `ane` (Core AI) or `cpu`. The first load of a Core AI bundle specializes its graphs for the device (seconds to tens of seconds; see the table below); the system caches that until the next OS update.
 
-Measured with the native runtime on a three-sentence passage (11.9 s of speech) with the default sampler. First run is the first launch after installing the bundle (when Core AI specializes its graphs and LiteRT writes its weight cache), cold start a later launch, warm first audio a later request on a loaded runtime, and real-time speed the seconds of audio generated per second when warm. The [model card](https://huggingface.co/spybyscript/scyllasband) describes the measurements.
+Measured with the native runtime on a three-sentence passage (10.3 s of speech) with the default sampler. First run is the first launch after installing the bundle (when Core AI specializes its graphs and LiteRT writes its weight cache), cold start a later launch, warm first audio a later request on a loaded runtime, and real-time speed the seconds of audio generated per second when warm. The [model card](https://huggingface.co/spybyscript/scyllasband) describes the measurements.
 
 | Device | Bundle | Compute | First run | Cold start | Warm first audio | Real-time speed |
 | --- | --- | --- | --- | --- | --- | --- |
-| MacBook Pro, M5 Max (macOS 27) | Core ML | GPU (default) | 3.79 s | 1.26 s | 28 ms | ~200× |
-|  | Core ML | CPU | 2.37 s | 0.37 s | 272 ms | ~14× |
-|  | Core AI | GPU (default) | 5.88 s | 0.39 s | 27 ms | ~200× |
-|  | Core AI | Neural Engine | 38.9 s | 0.52 s | 320 ms | ~17× |
-|  | Core AI | CPU | 3.48 s | 1.13 s | 1036 ms | ~3.5× |
-|  | LiteRT | CPU | 0.47 s | 0.35 s | 121 ms | ~29× |
-|  | ONNX Runtime | CPU | 0.92 s | 0.94 s | 262 ms | ~17× |
-| iPhone 17 Pro Max (iOS 27.0.1) | Core ML | GPU (default) | 3.82 s | 1.49 s | 92 ms | ~53× |
-|  | Core ML | CPU | 2.71 s | 0.51 s | 359 ms | ~10× |
-|  | Core AI | GPU (default) | 7.68 s | 0.48 s | 84 ms | ~57× |
-|  | Core AI | Neural Engine | 50.1 s | 0.67 s | 401 ms | ~14× |
-|  | Core AI | CPU | 5.19 s | 1.42 s | 1368 ms | ~2.7× |
-| Galaxy Z Fold 8, Snapdragon SM8850 (Android 17) | LiteRT | CPU | 1.47 s | 0.48 s | 132 ms | ~23× |
-|  | ONNX Runtime | CPU | 2.35 s | 1.72 s | 535 ms | ~7.7× |
+| MacBook Pro, M5 Max (macOS 27) | Core ML | GPU (default) | 2.73 s | 1.34 s | 30 ms | ~170× |
+|  | Core ML | CPU | 2.17 s | 0.33 s | 221 ms | ~20× |
+|  | Core AI | GPU (default) | 5.80 s | 0.46 s | 32 ms | ~150× |
+|  | Core AI | Neural Engine | 34.2 s | 0.60 s | 316 ms | ~20× |
+|  | Core AI | CPU | 3.54 s | 0.93 s | 844 ms | ~5.0× |
+|  | LiteRT | CPU | 0.41 s | 0.30 s | 105 ms | ~34× |
+|  | ONNX Runtime | CPU | 0.88 s | 0.85 s | 216 ms | ~21× |
+| iPhone 17 Pro Max (iOS 27.2) | Core ML | GPU (default) | 15.5 s | 1.79 s | 77 ms | ~65× |
+|  | Core ML | CPU | 2.87 s | 0.49 s | 294 ms | ~15× |
+|  | Core AI | GPU (default) | 18.5 s | 0.59 s | 70 ms | ~68× |
+|  | Core AI | Neural Engine | 8.00 s | 0.74 s | 367 ms | ~17× |
+|  | Core AI | CPU | 7.58 s | 1.16 s | 1010 ms | ~4.1× |
+| Galaxy Z Fold 8, Snapdragon SM8850 (Android 17) | LiteRT | CPU | 0.81 s | 0.52 s | 120 ms | ~27× |
+|  | ONNX Runtime | CPU | 1.85 s | 1.89 s | 461 ms | ~9.2× |
 
 ## Python API
 
@@ -163,21 +143,23 @@ result = runtime.synthesize(SynthesisRequest(
     text="It is a real pleasure to meet you.",
     voice_id="ariadne",
     language="en_us",
-    delivery={"energy": 2.3, "tension": 1.7, "valence": 2.2, "assertiveness": 2.0},
+    intensity=1.0,       # -2 (calm) to 2 (intense); None is the voice's own
+    pace=-0.5,           # -2 (slower) to 2 (faster)
+    pitch=0.0,           # semitones
     seed=2027,
 ))
 # result.audio (float32 numpy array), result.sample_rate, result.metadata
 ```
 
-Reuse the runtime across requests; `runtime.warmup()` creates the sessions before interactive use. `runtime.synthesize_stream(records)` yields each passage's audio as it is ready, and `runtime.plan_records(records)` returns the sentence plan the passages are cut from.
+Reuse the runtime across requests; `runtime.warmup()` creates the sessions before interactive use. `runtime.delivery_ranges()` and `runtime.voice_delivery_defaults(voice)` give the supported ranges and a voice's defaults. `runtime.synthesize_stream(records)` yields each passage's audio as it is ready, and `runtime.plan_records(records)` returns the sentence plan the passages are cut from.
 
 ## Long form and dialogue
 
-Long text is spoken in passages. The first is short, ending at the first sentence break, so audio starts quickly; each later one runs as close to the model's trained length (about nine seconds) as the text allows, ending at a sentence break, else a clause, else between words, so text without punctuation is handled too. Lengths are measured with the requested delivery, so slow deliveries get shorter passages. Each passage sees the surrounding text as context and continues from the sound of the one before, and consecutive passages are decoded as one continuous waveform, so long text needs no chunking settings.
+Long text is spoken in passages. The first is short, ending at the first sentence break, so audio starts quickly; each later one runs as close to the model's trained length (about nine seconds) as the text allows, ending at a sentence break, else a clause, else between words, so text without punctuation is handled too. Lengths are measured with the requested delivery, so slower paces get shorter passages. Each passage sees the surrounding text as context and continues from the sound of the one before, and consecutive passages are decoded as one continuous waveform, so long text needs no chunking settings.
 
 ```bash
 python -m scyllasband speak --voice ariadne --file story.txt \
-    --delivery energy=2.2,valence=2.2 --metadata story.json -o story.wav
+    --intensity 0.5 --metadata story.json -o story.wav
 
 python -m scyllasband stream --voice scylla --file story.txt -o chunks/
 
@@ -187,12 +169,12 @@ python -m scyllasband group-speak --file dialogue.txt -o dialogue.wav
 A dialogue file sets the voice, language and controls per tagged span:
 
 ```text
-[ariadne:en_us:energy=2.3,valence=2.2] Good to see you. [es] Me alegra verte.
-[rex:en_us:tension=2.4,assertiveness=2.4] We should get going.
-[ink:en_gb:energy=1.8,tension=1,valence=2.2,assertiveness=2.1] Keep this between us.
+[ariadne:en_us:intensity=1] Good to see you. [es] Me alegra verte.
+[rex:en_us:intensity=1.5,pace=1] We should get going.
+[ink:en_gb:intensity=-1,pace=-0.5] Keep this between us.
 ```
 
-Language tags keep the active delivery request. A new delivery tag replaces it, with unspecified coordinates reset to neutral. `--pause-ms` adds silence where the voice, language or delivery changes.
+Language tags keep the active delivery request. A new delivery tag replaces it, with unspecified controls back at the voice's own. `--pause-ms` adds silence where the voice, language or delivery changes.
 
 ## Voices and languages
 
@@ -220,9 +202,12 @@ text
   -> sentence plan, read as one stream of phones per paragraph
   -> passages of 64-420 frames cut from the stream (short first one, later ones near the maximum),
      each with the phones around it as context
-  -> duration predictor (voice, language, delivery, neighbouring text) -> frames per phone
+  -> duration predictor (voice, language, intensity, pace, neighbouring text) -> frames per phone,
+     pauses stretched or shortened with the pace
   -> timing events per frame: word starts, punctuation, sentence type
-  -> rectified-flow latent generator, continuing from the previous passage's latents
+  -> pitch predictor -> a pitch and voicing contour per frame, shifted by the pitch control and kept
+     inside the voice's range
+  -> rectified-flow latent generator following that contour, continuing from the previous passage's latents
   -> 24-channel acoustic latents
   -> acoustic adapter + Vocos decoder at 24 kHz, decoded with the previous passage as left context
   -> one continuous waveform, or one chunk per passage when streaming
@@ -237,9 +222,11 @@ scyllasband/models/litert/                scyllasband/models/onnx/
     g2p.tflite                                g2p/model.onnx, tokenizer.json, phoneme_dict.json
     duration_predictor.tflite                 components/
     vector_context_encoder.tflite               duration_predictor.onnx
-    vector_estimator.tflite  (one signature     vector_context_encoder.onnx
-    vocoder.tflite            per bucket)       vector_estimator[_128..._768].onnx
-  assets/                                       vocoder[_128..._768].onnx
+    pitch_context_encoder.tflite                vector_context_encoder.onnx, pitch_context_encoder.onnx
+    pitch_estimator.tflite   (one signature     pitch_estimator[_128..._768].onnx
+    vector_estimator.tflite   per bucket)       vector_estimator[_128..._768].onnx
+    vocoder.tflite                              vocoder[_128..._768].onnx
+  assets/
     voices.json, languages.json                 shared_weights.bin, shared_weights.json
     phone_vocab.json, fixed_references.json   assets/  (same as LiteRT)
     g2p/  tokenizer, normalization, overrides
@@ -255,7 +242,7 @@ Latent-length buckets are 128, 256, 384, 512, 768 and 1024 frames (about 2.7 to 
 
 Release checks include export parity against PyTorch, end-to-end comparison of full passages with the PyTorch reference path, comparison of the quantized bundles with full precision on real sentences (for Core ML and Core AI on each compute unit they use), and listening across all fourteen voices. Passing tests does not establish naturalness; listening decides quality.
 
-Known limitations include occasional pronunciation errors, occasional roughness on fast, wide pitch movements in some voices, and limited strong anger or sadness. No arbitrary-speaker cloning is provided.
+Known limitations include occasional pronunciation errors and occasional roughness on fast, wide pitch movements in some voices. The emotion follows the text; intensity changes how much of it comes through, not which emotion it is. No arbitrary-speaker cloning is provided.
 
 See [the model card](MODEL_CARD.md) for the model contract.
 
