@@ -44,7 +44,7 @@ source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -e .                   # ".[onnx]", ".[coreml]" or ".[coreai]" for the other backends
 ```
 
-The model is downloaded from [`spybyscript/scyllasband`](https://huggingface.co/spybyscript/scyllasband), pinned to the tag `v3-20261103-apple` (release `v3-20261103` with its Core ML and Core AI bundles), into `scyllasband/models/<bundle>` (`litert`, `coreai`, `coreml` or `onnx`). Voice conditioning is embedded in the graphs; no separate voice files are needed.
+The model is downloaded from [`spybyscript/scyllasband`](https://huggingface.co/spybyscript/scyllasband), pinned to the tag `v3-20261104-apple` (release `v3-20261104` with its Core ML and Core AI bundles), into `scyllasband/models/<bundle>` (`litert`, `coreai`, `coreml` or `onnx`). Voice conditioning is embedded in the graphs; no separate voice files are needed.
 
 ## Delivery controls
 
@@ -118,20 +118,20 @@ Measured with the native runtime on a three-sentence passage (10.3 s of speech) 
 
 | Device | Bundle | Compute | First run | Cold start | Warm first audio | Real-time speed |
 | --- | --- | --- | --- | --- | --- | --- |
-| MacBook Pro, M5 Max (macOS 27) | Core ML | GPU (default) | 2.67 s | 1.39 s | 54 ms | ~97× |
-|  | Core ML | CPU | 2.31 s | 0.43 s | 330 ms | ~12× |
-|  | Core AI | GPU (default) | 6.01 s | 0.51 s | 57 ms | ~88× |
-|  | Core AI | Neural Engine | 35.8 s | 0.62 s | 363 ms | ~16× |
-|  | Core AI | CPU | 3.98 s | 1.32 s | 1239 ms | ~3.2× |
-|  | LiteRT | CPU | 0.83 s | 0.39 s | 181 ms | ~20× |
-|  | ONNX Runtime | CPU | 1.36 s | 1.00 s | 343 ms | ~13× |
-| iPhone 17 Pro Max (iOS 27.0.1) | Core ML | GPU (default) | 16.3 s | 1.76 s | 113 ms | ~42× |
-|  | Core ML | CPU | 3.15 s | 0.67 s | 449 ms | ~9× |
-|  | Core AI | GPU (default) | 19.0 s | 0.65 s | 109 ms | ~42× |
-|  | Core AI | Neural Engine | 7.65 s | 0.75 s | 418 ms | ~14× |
-|  | Core AI | CPU | 8.40 s | 1.76 s | 1555 ms | ~2.5× |
-| Galaxy Z Fold 8, Snapdragon SM8850 (Android 17) | LiteRT | CPU | 1.02 s | 0.56 s | 203 ms | ~16× |
-|  | ONNX Runtime | CPU | 1.99 s | 1.99 s | 701 ms | ~5.9× |
+| MacBook Pro, M5 Max (macOS 27) | Core ML | GPU (default) | 2.73 s | 1.34 s | 30 ms | ~170× |
+|  | Core ML | CPU | 2.17 s | 0.33 s | 221 ms | ~20× |
+|  | Core AI | GPU (default) | 5.80 s | 0.46 s | 32 ms | ~150× |
+|  | Core AI | Neural Engine | 34.2 s | 0.60 s | 316 ms | ~20× |
+|  | Core AI | CPU | 3.54 s | 0.93 s | 844 ms | ~5.0× |
+|  | LiteRT | CPU | 0.41 s | 0.30 s | 105 ms | ~34× |
+|  | ONNX Runtime | CPU | 0.88 s | 0.85 s | 216 ms | ~21× |
+| iPhone 17 Pro Max (iOS 27.2) | Core ML | GPU (default) | 15.5 s | 1.79 s | 77 ms | ~65× |
+|  | Core ML | CPU | 2.87 s | 0.49 s | 294 ms | ~15× |
+|  | Core AI | GPU (default) | 18.5 s | 0.59 s | 70 ms | ~68× |
+|  | Core AI | Neural Engine | 8.00 s | 0.74 s | 367 ms | ~17× |
+|  | Core AI | CPU | 7.58 s | 1.16 s | 1010 ms | ~4.1× |
+| Galaxy Z Fold 8, Snapdragon SM8850 (Android 17) | LiteRT | CPU | 0.81 s | 0.52 s | 120 ms | ~27× |
+|  | ONNX Runtime | CPU | 1.85 s | 1.89 s | 461 ms | ~9.2× |
 
 ## Python API
 

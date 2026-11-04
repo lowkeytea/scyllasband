@@ -1,7 +1,7 @@
 # Scylla's Band iOS sample
 
 This SwiftUI sample speaks multi-voice, multilingual documents on iPhone,
-iPad and Apple Vision Pro with Scylla's Band v3 (release `v3-20261103`). It
+iPad and Apple Vision Pro with Scylla's Band v3 (release `v3-20261104`). It
 uses Apple's Core ML runtime on iOS 18–26 and visionOS 2–26, and Core AI on
 iOS and visionOS 27 and later. It keeps one warmed
 `SBScyllasBand` runtime, reads voices, languages and delivery ranges from the
@@ -65,8 +65,8 @@ Engine. Changing the compute unit reloads the voices.
   python -m scyllasband download --flavor coreai --yes   # iOS and visionOS 27 and later devices
   ```
 
-  The Core ML and Core AI bundles of `v3-20261103` are published under the
-  tag `v3-20261103-apple`, which these commands fetch. On a Mac,
+  The Core ML and Core AI bundles of `v3-20261104` are published under the
+  tag `v3-20261104-apple`, which these commands fetch. On a Mac,
   `python -m scyllasband download` without flags asks which bundle to
   download. Bundles from the v2 model don't work with this version of the
   app.

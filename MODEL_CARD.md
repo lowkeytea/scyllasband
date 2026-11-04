@@ -8,7 +8,9 @@ tags: [text-to-speech, tts, litert, onnx, coreml, coreai, pytorch, multilingual,
 
 # Scylla's Band v3
 
-Release **`v3-20261103`**. The [Scylla's Band runtime](https://github.com/lowkeytea/scyllasband) supports this release from version 3.0.0. Tag `v3-20261103-apple` adds Core ML and Core AI bundles of the same model; the runtime downloads from `v3-20261103-apple`. The manifest declares graph contract `scyllasband_measured_controls_v3`; runtimes written for v2 releases cannot run these graphs and keep downloading their v2 tags.
+Release **`v3-20261104`**. The [Scylla's Band runtime](https://github.com/lowkeytea/scyllasband) supports this release from version 3.0.0. Tag `v3-20261104-apple` adds Core ML and Core AI bundles of the same model; the runtime downloads from `v3-20261104-apple`. The manifest declares graph contract `scyllasband_measured_controls_v3`; runtimes written for v2 releases cannot run these graphs and keep downloading their v2 tags.
+
+This release follows `v3-20261103` with a distilled pitch predictor: it makes 4 network passes per passage instead of 16, and the other models are unchanged.
 
 Delivery is controlled with **intensity, pace and pitch**, each from −2 to 2 with 0 as the voice's own delivery. The emotion comes from the text; intensity sets how much the voice puts into it.
 
@@ -56,19 +58,19 @@ Controls are **global within each request**. This release does not support contr
 | Vector model | Hidden size 512; 12 layers; adaptive layer normalization and QK normalization; reads the pitch contour |
 | Maximum graph phones per sentence | 512 |
 | Trained target length | 64–420 latent frames (about 1.4–9 s) per pass |
-| Sampler | Flow: Euler, 4 steps. Pitch predictor: Heun, 8 steps |
+| Sampler | Flow: Euler, 4 steps. Pitch predictor: Euler, 4 steps |
 | Voice conditioning | Fixed per-voice/per-locale identity and prosody references embedded in the graphs |
 | Text frontend | Trained Scylla's Band G2P with its matched tokenizer and vocabulary |
 
 For each passage the pitch predictor integrates a pitch and voicing contour from noise, the pitch control shifts it, and the flow generates the latents along it (graph input `expanded_melody`, [1, frames, 3]). Each passage draws its pitch noise ([2, frames]) and then its latent noise ([24, frames]) from the request's seed.
 
-The flow is distilled for few-step sampling: it was trained to reproduce the base flow's 32-step Heun output, so Euler with 4 steps, four model evaluations per passage, is the default.
+The flow and the pitch predictor are distilled for few-step sampling: each was trained to reproduce its base model's 32-step Heun output, so Euler with 4 steps, four evaluations of each model per passage, is the default for both.
 
 Long text is spoken as passages within the trained target lengths (64 to 420 latent frames, about 1.4 to 9 seconds): a short first passage so audio starts quickly, then passages as long as the text allows, cut at a sentence end, else a clause, else between words, and measured with the requested delivery. Each passage sees the surrounding text as context and continues from the acoustics of the one before it, and consecutive passages are decoded as one continuous waveform. Durations are predicted deterministically; different controls can alter them.
 
 ## Performance
 
-Measured with the default samplers (flow: Euler, 4 steps; pitch predictor: Heun, 8 steps) through the native runtime: `scyllasband_speak` from [libscyllasband](https://github.com/lowkeytea/scyllasband/tree/main/libscyllasband) on the Mac and Android, and the [iOS sample](https://github.com/lowkeytea/scyllasband/tree/main/examples/ios)'s benchmark mode on the iPhone. The text is three sentences, 10.3 s of audio: "The last train leaves at midnight, so pack light. Bring a warm coat, and don't forget the map. If we miss it, we walk, and nobody wants to walk that far in the rain." (voice Scylla, seed 7, the voice's own delivery).
+Measured with the default samplers (flow and pitch predictor: Euler, 4 steps each) through the native runtime: `scyllasband_speak` from [libscyllasband](https://github.com/lowkeytea/scyllasband/tree/main/libscyllasband) on the Mac and Android, and the [iOS sample](https://github.com/lowkeytea/scyllasband/tree/main/examples/ios)'s benchmark mode on the iPhone. The text is three sentences, 10.3 s of audio: "The last train leaves at midnight, so pack light. Bring a warm coat, and don't forget the map. If we miss it, we walk, and nobody wants to walk that far in the rain." (voice Scylla, seed 7, the voice's own delivery).
 
 - **First run**: from launch to first audio on the first launch after installing the bundle. Core ML compiles and Core AI specializes the graphs for the device then (Core AI caches them until the next OS update); LiteRT writes its packed weights to a cache file beside each graph.
 - **Cold start**: from launch to first audio on a later launch, including loading the bundle.
@@ -77,22 +79,22 @@ Measured with the default samplers (flow: Euler, 4 steps; pitch predictor: Heun,
 
 | Device | Bundle | Compute | First run | Cold start | Warm first audio | Real-time speed |
 | --- | --- | --- | --- | --- | --- | --- |
-| MacBook Pro, M5 Max (macOS 27) | Core ML | GPU (default) | 2.67 s | 1.39 s | 54 ms | ~97× |
-|  | Core ML | CPU | 2.31 s | 0.43 s | 330 ms | ~12× |
-|  | Core AI | GPU (default) | 6.01 s | 0.51 s | 57 ms | ~88× |
-|  | Core AI | Neural Engine | 35.8 s | 0.62 s | 363 ms | ~16× |
-|  | Core AI | CPU | 3.98 s | 1.32 s | 1239 ms | ~3.2× |
-|  | LiteRT | CPU | 0.83 s | 0.39 s | 181 ms | ~20× |
-|  | ONNX Runtime | CPU | 1.36 s | 1.00 s | 343 ms | ~13× |
-| iPhone 17 Pro Max (iOS 27.0.1) | Core ML | GPU (default) | 16.3 s | 1.76 s | 113 ms | ~42× |
-|  | Core ML | CPU | 3.15 s | 0.67 s | 449 ms | ~9× |
-|  | Core AI | GPU (default) | 19.0 s | 0.65 s | 109 ms | ~42× |
-|  | Core AI | Neural Engine | 7.65 s | 0.75 s | 418 ms | ~14× |
-|  | Core AI | CPU | 8.40 s | 1.76 s | 1555 ms | ~2.5× |
-| Galaxy Z Fold 8, Snapdragon SM8850 (Android 17) | LiteRT | CPU | 1.02 s | 0.56 s | 203 ms | ~16× |
-|  | ONNX Runtime | CPU | 1.99 s | 1.99 s | 701 ms | ~5.9× |
+| MacBook Pro, M5 Max (macOS 27) | Core ML | GPU (default) | 2.73 s | 1.34 s | 30 ms | ~170× |
+|  | Core ML | CPU | 2.17 s | 0.33 s | 221 ms | ~20× |
+|  | Core AI | GPU (default) | 5.80 s | 0.46 s | 32 ms | ~150× |
+|  | Core AI | Neural Engine | 34.2 s | 0.60 s | 316 ms | ~20× |
+|  | Core AI | CPU | 3.54 s | 0.93 s | 844 ms | ~5.0× |
+|  | LiteRT | CPU | 0.41 s | 0.30 s | 105 ms | ~34× |
+|  | ONNX Runtime | CPU | 0.88 s | 0.85 s | 216 ms | ~21× |
+| iPhone 17 Pro Max (iOS 27.2) | Core ML | GPU (default) | 15.5 s | 1.79 s | 77 ms | ~65× |
+|  | Core ML | CPU | 2.87 s | 0.49 s | 294 ms | ~15× |
+|  | Core AI | GPU (default) | 18.5 s | 0.59 s | 70 ms | ~68× |
+|  | Core AI | Neural Engine | 8.00 s | 0.74 s | 367 ms | ~17× |
+|  | Core AI | CPU | 7.58 s | 1.16 s | 1010 ms | ~4.1× |
+| Galaxy Z Fold 8, Snapdragon SM8850 (Android 17) | LiteRT | CPU | 0.81 s | 0.52 s | 120 ms | ~27× |
+|  | ONNX Runtime | CPU | 1.85 s | 1.89 s | 461 ms | ~9.2× |
 
-The GPU is the default on Apple platforms. The Neural Engine placement runs the flow and the pitch predictor on the Neural Engine and the other graphs on the CPU, for apps that speak in the background, where iOS does not allow GPU work. Core ML reloads its graphs on every launch, which accounts for most of its cold start on the GPU. Each passage runs the pitch predictor 16 times before the flow's 4 steps.
+The GPU is the default on Apple platforms. The Neural Engine placement runs the flow and the pitch predictor on the Neural Engine and the other graphs on the CPU, for apps that speak in the background, where iOS does not allow GPU work. Core ML reloads its graphs on every launch, which accounts for most of its cold start on the GPU. Each passage runs the pitch predictor 4 times, then the flow 4 times. Against `v3-20261103`, whose pitch predictor ran 16 times, warm first audio is 30–45 % shorter on every device and bundle (12–13 % with the Neural Engine placement).
 
 ## Voices and language coverage
 
@@ -116,12 +118,13 @@ Every runtime bundle includes the G2P model in a matching precision.
 
 Release validation separates graph accuracy, frontend/timing behaviour and perceived speech quality:
 
-- The full-precision ONNX bundle run through the runtime against the PyTorch model, end to end with all three controls: identical durations, and latents within 7e-5 (values of magnitude 20–28).
-- The C++ runtime against the Python runtime on the same bundle: identical G2P output, phone durations and passage plan; latents within 4e-6 relative error; decoded audio at 50 dB SNR (worst sentence) and 59 dB over a long passage.
+- The full-precision ONNX bundle run through the runtime against the PyTorch model, end to end with all three controls: identical durations, and latents within 8e-5 (values of magnitude 16–28).
+- The C++ runtime against the Python runtime on the same bundle: identical G2P output, phone durations and passage plan; latents within 2e-5 relative error; decoded audio at 46 dB SNR (worst sentence) and 55 dB over a long passage.
 - The distilled flow at 4 Euler steps compared with the undistilled flow by listening on paired lines across the voices, and by ASR word error rate and a MOS predictor on a 168-clip sweep of all fourteen voices in English, French and Spanish.
-- Quantized bundles compared with full precision through the runtime on lines covering every voice, each control at its limits and each language. The WebGPU bundle reproduces the full-precision take (identical frame counts on 15 of 17 lines, 0.8 dB median mel-cepstral distance). Dynamic INT8 moves some phone durations by a frame, which redraws a passage's noise and gives a different take, so the ONNX and LiteRT bundles are judged on the same sweep: ASR word error rate 0.066 (ONNX) and 0.062 (LiteRT) against 0.062 for full precision, and a MOS-predictor score within 0.05 of full precision for both.
+- The distilled pitch predictor at 4 Euler steps compared with the undistilled predictor at 8 Heun steps (release `v3-20261103`) by blind listening on paired lines across the voices and languages, and on the same 168-clip sweep: ASR word error rate 0.062 for both, and a MOS-predictor score 0.12 higher.
+- Quantized bundles compared with full precision through the runtime on lines covering every voice, each control at its limits and each language. The WebGPU bundle reproduces the full-precision take (identical frame counts on 15 of 17 lines, 0.7 dB median mel-cepstral distance). Dynamic INT8 moves some phone durations by a frame, which redraws a passage's noise and gives a different take, so the ONNX and LiteRT bundles are judged on the same sweep: ASR word error rate 0.063 (ONNX) and 0.062 (LiteRT) against 0.062 for full precision, and a MOS-predictor score within 0.02 of full precision for both.
 - Every LiteRT graph gives identical output with and without XNNPACK's weight cache.
-- Core ML and Core AI bundles compared with the PyTorch model on every graph and through the runtime on 14 passages (every voice, each control at both limits, six languages, narration), on each compute unit they are used with (GPU, CPU, and for Core AI the Neural Engine): identical phonemes, fewer changed phone durations than the LiteRT bundle (0.2–0.7 % against 1.9 %), and smaller pitch-contour (0.02–0.04 semitones RMS against 0.045), latent and spectral differences. The Apple exports rewrite three computations into equivalent forms that FP16 and the Neural Engine evaluate exactly (span pooling, the modifier bit decoding, the duration model's combined phone/segment index), and scale the residual stream of the flow and the pitch predictor; in FP32 the rewritten graphs match the trained ones (identical outputs; the span encoders within 1e-6).
+- Core ML and Core AI bundles compared with the PyTorch model on every graph and through the runtime on 14 passages (every voice, each control at both limits, six languages, narration), on each compute unit they are used with (GPU, CPU, and for Core AI the Neural Engine): identical phonemes, fewer changed phone durations than the LiteRT bundle (0.2–0.7 % against 1.9 %), and smaller pitch-contour (0.016–0.045 semitones RMS against 0.051), latent and spectral differences. The Apple exports rewrite three computations into equivalent forms that FP16 and the Neural Engine evaluate exactly (span pooling, the modifier bit decoding, the duration model's combined phone/segment index), and scale the residual stream of the flow and the pitch predictor; in FP32 the rewritten graphs match the trained ones (identical outputs; the span encoders within 1e-6).
 
 Listening is decisive; automatic scores support it. Training audio is not distributed.
 
