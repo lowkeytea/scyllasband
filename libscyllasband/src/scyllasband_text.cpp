@@ -678,11 +678,98 @@ Text month_name(int month, const std::string& lang) {
     return u((it == months.end() ? months.at("en") : it->second)[static_cast<std::size_t>(month - 1)]);
 }
 
+// _year_words: an English year as spoken: 1990 "nineteen ninety", 1905 "nineteen oh five", 1900 "nineteen hundred", 2005 "two
+// thousand five", 2024 "twenty twenty four". Years outside 1100-2099 are read as numbers.
+std::string year_words(const Num& year) {
+    if (year.d.size() > 4) return to_words(year, "en");
+    int64_t y = year.small();
+    if (y >= 2000 && y <= 2009) return y == 2000 ? std::string("two thousand") : "two thousand " + to_words(Num::of(y - 2000), "en");
+    if (y >= 1100 && y <= 2099) {
+        int64_t high = y / 100, low = y % 100;
+        std::string tail = low == 0 ? std::string("hundred") : low < 10 ? "oh " + to_words(Num::of(low), "en") : to_words(Num::of(low), "en");
+        return to_words(Num::of(high), "en") + " " + tail;
+    }
+    return to_words(year, "en");
+}
+
+// _ampm_words: "AM" and "PM" spelled ("ay em"); the G2P reads a bare "AM" as the word "am".
+Text ampm_words(char32_t letter, const std::string& lang) { return letter_name(letter, lang) + U" " + letter_name('M', lang); }
+
+// _plural_words: "twenty" -> "twenties", "six" -> "sixes", "nineteen ninety" -> "nineteen nineties".
+std::string plural_words(std::string words) {
+    std::replace(words.begin(), words.end(), '-', ' ');
+    if (ends_with(words, "y")) return words.substr(0, words.size() - 1) + "ies";
+    return words + (ends_with(words, "x") ? "es" : "s");
+}
+
+// _plural_number_words: "4s" fours, "100s" hundreds, "1000s" thousands.
+std::string plural_number_words(const Num& value) {
+    if (value.eq(100)) return "hundreds";
+    if (value.eq(1000)) return "thousands";
+    if (value.eq(1000000)) return "millions";
+    if (value.eq(1000000000)) return "billions";
+    return plural_words(to_words(value, "en"));
+}
+
+// _split_alphanumeric: letter and digit runs of a token such as "V3" or "MP3"; a single letter, or up to three letters that are
+// all capitals or have no vowel, spelled with letter names; digits left for the number rules. In English a final "s" after
+// digits makes the number plural ("MP3s").
+Text split_alphanumeric(const Text& token, const std::string& lang) {
+    std::vector<std::pair<Text, bool>> runs;  // run, is digits
+    for (std::size_t k = 0; k < token.size();) {
+        bool digit = is_ascii_digit(token[k]);
+        std::size_t e = run_end(token, k, [digit](char32_t c) { return digit ? is_ascii_digit(c) : is_ascii_letter(c); });
+        runs.emplace_back(token.substr(k, e - k), digit);
+        k = e;
+    }
+    bool plural = lang == "en" && runs.size() > 1 && runs.back().first == U"s" && runs[runs.size() - 2].second;
+    if (plural) runs.pop_back();
+    Text out;
+    auto add = [&](const Text& part) {
+        if (!out.empty()) out += U" ";
+        out += part;
+    };
+    for (std::size_t r = 0; r < runs.size(); ++r) {
+        const auto& [run, digit] = runs[r];
+        bool upper = true, vowel = false;
+        for (char32_t c : run) {
+            upper = upper && c >= 'A' && c <= 'Z';
+            vowel = vowel || in_set(c, U"AEIOUYaeiouy");
+        }
+        if (digit && plural && r + 1 == runs.size()) {
+            add(u(plural_number_words(Num::of(digits_of(run)))));
+        } else if (!digit && (run.size() == 1 || (run.size() <= 3 && (upper || !vowel)))) {
+            for (char32_t c : run) add(letter_name(c, lang));
+        } else {
+            add(run);
+        }
+    }
+    return out;
+}
+
+// \d+(?:\.\d+)? at p: the end of the number, or p.
+std::size_t decimal_number_end(const Text& s, std::size_t p) {
+    std::size_t e = run_end(s, p, is_decimal);
+    if (e > p && at(s, e) == '.' && is_decimal(at(s, e + 1))) e = run_end(s, e + 1, is_decimal);
+    return e;
+}
+
+// _EN_NUMBER, \d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)? at p: the end of the number, or p.
+std::size_t english_number_end(const Text& s, std::size_t p) {
+    std::size_t e = run_end(s, p, is_decimal);
+    if (e > p && e - p <= 3) {
+        std::size_t g = e;
+        while (at(s, g) == ',' && is_decimal(at(s, g + 1)) && is_decimal(at(s, g + 2)) && is_decimal(at(s, g + 3))) g += 4;
+        if (g > e) return at(s, g) == '.' && is_decimal(at(s, g + 1)) ? run_end(s, g + 1, is_decimal) : g;
+    }
+    return decimal_number_end(s, p);
+}
+
 Text expand_date(const Text& month_s, const Text& day_s, const Text& year_s, const std::string& lang) {
     Num month = Num::of(digits_of(month_s)), day = Num::of(digits_of(day_s)), year = Num::of(digits_of(year_s));
     if (month.lt(1) || !month.lt(13) || day.lt(1) || !day.lt(32)) return month_s + U"/" + day_s + U"/" + year_s;
     Text name = month_name(static_cast<int>(month.small()), lang);
-    if (lang == "en") return name + U" " + u(to_words(day, lang, true)) + U", " + u(to_words(year, lang));
+    if (lang == "en") return name + U" " + u(to_words(day, lang, true)) + U", " + u(year_words(year));
     if (lang == "es") return u(day.d) + U" de " + name + U" de " + u(year.d);
     return u(day.d) + U" " + name + U" " + u(year.d);
 }
@@ -780,8 +867,27 @@ Text normalize_text(const Text& text, const std::string& language) {
         else minute_words = u(to_words(minute, lang));
         Text ampm = m.group(s, 2);
         for (char32_t& c : ampm) c = (c >= 'a' && c <= 'z') ? c - 32 : c;
+        if (!ampm.empty() && lang == "en") ampm = ampm_words(ampm[0], lang);
         return strip(words(m.group(s, 0), lang) + U" " + minute_words + U" " + ampm);
     });
+    if (lang == "en") {
+        // Clock times without minutes: (?<![\w.,:])(\d{1,2})\s*([AaPp])[Mm](?!\w)
+        value = substitute(value, [](const Text& s, std::size_t p) -> std::optional<Match> {
+            if (!is_decimal(s[p]) || (p > 0 && (is_word(s[p - 1]) || in_set(s[p - 1], U".,:")))) return std::nullopt;
+            for (std::size_t length : {std::size_t{2}, std::size_t{1}}) {
+                if (length == 2 && !is_decimal(at(s, p + 1))) continue;
+                std::size_t q = run_end(s, p + length, is_space);
+                if (in_set(at(s, q), U"AaPp") && in_set(at(s, q + 1), U"Mm") && !is_word(at(s, q + 2))) {
+                    return Match{p, q + 2, {{p, p + length}, {q, q + 1}}};
+                }
+            }
+            return std::nullopt;
+        }, [&](const Text& s, const Match& m) {
+            Num hour = Num::of(digits_of(m.group(s, 0)));
+            if (hour.lt(1) || !hour.lt(13)) return s.substr(m.start, m.end - m.start);
+            return u(to_words(hour, lang)) + U" " + ampm_words(s[m.groups[1].first], lang);
+        });
+    }
     // Percentages: (?<![\d.,])(\d[\d.,]*)%
     value = substitute(value, [](const Text& s, std::size_t p) -> std::optional<Match> {
         if (!is_decimal(s[p]) || (p > 0 && (is_decimal(s[p - 1]) || s[p - 1] == '.' || s[p - 1] == ','))) return std::nullopt;
@@ -806,6 +912,87 @@ Text normalize_text(const Text& text, const std::string& language) {
         if ((at(s, e) != 0xBA && at(s, e) != 0xAA) || !word_boundary(s, e + 1)) return std::nullopt;
         return Match{p, e + 1, {{p, e}}};
     }, [&](const Text& s, const Match& m) { return words(m.group(s, 0), lang, true); });
+
+    if (lang == "en") {
+        // Units: (?<![\w.,])(_EN_NUMBER) ?(ms|secs?|mins?|hrs?|Hz|kHz|...|fps|mph)(?!\w)
+        static const std::vector<std::pair<Text, std::string>> units = {
+            {U"ms", "millisecond"}, {U"sec", "second"}, {U"secs", "second"}, {U"min", "minute"}, {U"mins", "minute"},
+            {U"hr", "hour"}, {U"hrs", "hour"}, {U"Hz", "hertz"}, {U"kHz", "kilohertz"}, {U"MHz", "megahertz"},
+            {U"GHz", "gigahertz"}, {U"km", "kilometer"}, {U"cm", "centimeter"}, {U"mm", "millimeter"}, {U"kg", "kilogram"},
+            {U"mg", "milligram"}, {U"KB", "kilobyte"}, {U"kB", "kilobyte"}, {U"MB", "megabyte"}, {U"GB", "gigabyte"},
+            {U"TB", "terabyte"}, {U"fps", "frame per second"}, {U"mph", "mile per hour"}};
+        value = substitute(value, [](const Text& s, std::size_t p) -> std::optional<Match> {
+            if (!is_decimal(s[p]) || (p > 0 && (is_word(s[p - 1]) || in_set(s[p - 1], U".,")))) return std::nullopt;
+            std::size_t e = english_number_end(s, p);
+            std::size_t q = at(s, e) == ' ' ? e + 1 : e;
+            for (const auto& [unit, spoken] : units) {
+                if (s.compare(q, unit.size(), unit) == 0 && !is_word(at(s, q + unit.size()))) {
+                    return Match{p, q + unit.size(), {{p, e}, {q, q + unit.size()}}};
+                }
+            }
+            return std::nullopt;
+        }, [&](const Text& s, const Match& m) {
+            Text number = m.group(s, 0), abbreviation = m.group(s, 1);
+            std::string unit;
+            for (const auto& [key, spoken] : units) {
+                if (key == abbreviation) unit = spoken;
+            }
+            if (number != U"1" && !ends_with(unit, "hertz")) {
+                std::size_t space = unit.find(' ');
+                unit = space == std::string::npos ? unit + "s" : unit.substr(0, space) + "s" + unit.substr(space);
+            }
+            return number + U" " + u(unit);
+        });
+        // Multipliers and sizes: (?<![\w.,])(_EN_NUMBER)[xX×](\d+(?:\.\d+)?)?(?!\w)
+        value = substitute(value, [](const Text& s, std::size_t p) -> std::optional<Match> {
+            if (!is_decimal(s[p]) || (p > 0 && (is_word(s[p - 1]) || in_set(s[p - 1], U".,")))) return std::nullopt;
+            std::size_t e = english_number_end(s, p);
+            if (!in_set(at(s, e), U"xX×")) return std::nullopt;
+            std::size_t q = e + 1;
+            if (is_decimal(at(s, q))) {
+                std::size_t whole = run_end(s, q, is_decimal), full = decimal_number_end(s, q);
+                for (std::size_t end : {full, whole}) {
+                    if (!is_word(at(s, end))) return Match{p, end, {{p, e}, {q, end}}};
+                }
+                return std::nullopt;
+            }
+            if (is_word(at(s, q))) return std::nullopt;
+            return Match{p, q, {{p, e}, {npos, npos}}};
+        }, [&](const Text& s, const Match& m) {
+            return m.matched(1) ? m.group(s, 0) + U" by " + m.group(s, 1) : m.group(s, 0) + U" times";
+        });
+        // Plural numbers: (?<![\w'’.,])(['’]?)(_EN_NUMBER)(['’]?)s(?!\w)
+        value = substitute(value, [](const Text& s, std::size_t p) -> std::optional<Match> {
+            auto apostrophe = [](char32_t c) { return c == '\'' || c == 0x2019; };
+            if (p > 0 && (is_word(s[p - 1]) || apostrophe(s[p - 1]) || in_set(s[p - 1], U".,"))) return std::nullopt;
+            std::size_t q = apostrophe(s[p]) ? p + 1 : p;
+            if (!is_decimal(at(s, q))) return std::nullopt;
+            std::size_t e = english_number_end(s, q);
+            std::size_t j = apostrophe(at(s, e)) ? e + 1 : e;
+            if (at(s, j) != 's' || is_word(at(s, j + 1))) return std::nullopt;
+            return Match{p, j + 1, {{p, q}, {q, e}, {e, j}}};
+        }, [&](const Text& s, const Match& m) {
+            Text original = s.substr(m.start, m.end - m.start), digits = m.group(s, 1);
+            bool lead = !m.group(s, 0).empty(), apostrophe = !m.group(s, 2).empty();
+            if (digits.find('.') != npos) return lead || apostrophe ? original : digits + U" seconds";
+            Num value = Num::of(digits_of(digits));
+            bool decade = (digits.size() == 2 || digits.size() == 4) && value.mod_pow10(1).zero();
+            if (((lead || apostrophe) && !decade) || (lead && digits.size() != 2)) return original;
+            if (digits.size() == 4 && !value.lt(1100) && value.lt(2100)) return u(plural_words(year_words(value)));
+            return u(plural_number_words(value));
+        });
+    }
+    // Letters glued to digits: (?<!\w)[A-Za-z0-9]*(?:[A-Za-z][0-9]|[0-9][A-Za-z])[A-Za-z0-9]*(?!\w)
+    value = substitute(value, [](const Text& s, std::size_t p) -> std::optional<Match> {
+        auto alnum = [](char32_t c) { return is_ascii_letter(c) || is_ascii_digit(c); };
+        if (!alnum(s[p]) || (p > 0 && is_word(s[p - 1]))) return std::nullopt;
+        std::size_t e = run_end(s, p, alnum);
+        if (is_word(at(s, e))) return std::nullopt;
+        for (std::size_t k = p + 1; k < e; ++k) {
+            if (is_ascii_digit(s[k]) != is_ascii_digit(s[k - 1])) return Match{p, e, {}};
+        }
+        return std::nullopt;
+    }, [&](const Text& s, const Match& m) { return split_alphanumeric(s.substr(m.start, m.end - m.start), lang); });
 
     // Named-month dates (English only; other languages keep the text).
     value = substitute(value, [](const Text& s, std::size_t p) -> std::optional<Match> {
@@ -855,7 +1042,7 @@ Text normalize_text(const Text& text, const std::string& language) {
         if (day.lt(1) || !day.lt(32)) return original;
         Text out = month_name(it->second, "en") + U" " + u(to_words(day, lang, true));
         if (!m.matched(2)) return out;
-        return out + U", " + words(m.group(s, 2), lang);
+        return out + U", " + u(year_words(Num::of(digits_of(m.group(s, 2)))));
     });
     // \b(\d{1,2})/(\d{1,2})/(\d{2,4})\b
     value = substitute(value, [](const Text& s, std::size_t p) -> std::optional<Match> {

@@ -535,6 +535,34 @@ class SpokenTextNormalizer:
     _TITLE_ABBREVIATION_RE = re.compile(
         r"(?<![A-Za-zÀ-ÖØ-öø-ÿÑñ])([A-Za-z]{2,4})\.?\s+(?=[A-ZÀ-ÖØ-Þ])"
     )
+    # Letters glued to digits ("V3", "MP3", "H2O", "4K", "Python3") reach the G2P as one unknown word and come out garbled.
+    # They are split into letter and digit runs, the digits left for the number rules that follow ("v3.5" becomes "vee
+    # three point five"). A single letter, and a run of up to three letters that is all capitals or has no vowel ("GPT",
+    # "fps"), is spelled with letter names; longer runs ("COVID", "iPhone", "Python") stay words. Identifiers joined by "_"
+    # are left alone.
+    _ALPHANUMERIC_RE = re.compile(r"(?<!\w)[A-Za-z0-9]*(?:[A-Za-z][0-9]|[0-9][A-Za-z])[A-Za-z0-9]*(?!\w)")
+    _ALPHANUMERIC_RUN_RE = re.compile(r"[A-Za-z]+|[0-9]+")
+    _VOWEL_RE = re.compile(r"[AEIOUYaeiouy]")
+    # English numbers glued to a unit, to "x", or to a plural "s"; the digits are left for the number rules.
+    _EN_NUMBER = r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?"
+    # Units, also after one space: "100ms" and "4 GB" become "100 milliseconds" and "4 gigabytes".
+    _EN_UNIT_RE = re.compile(
+        rf"(?<![\w.,])({_EN_NUMBER}) ?(ms|secs?|mins?|hrs?|Hz|kHz|MHz|GHz|km|cm|mm|kg|mg|KB|kB|MB|GB|TB|fps|mph)(?!\w)"
+    )
+    _EN_UNITS = {
+        "ms": "millisecond", "sec": "second", "secs": "second", "min": "minute", "mins": "minute", "hr": "hour", "hrs": "hour",
+        "Hz": "hertz", "kHz": "kilohertz", "MHz": "megahertz", "GHz": "gigahertz", "km": "kilometer", "cm": "centimeter",
+        "mm": "millimeter", "kg": "kilogram", "mg": "milligram", "KB": "kilobyte", "kB": "kilobyte", "MB": "megabyte",
+        "GB": "gigabyte", "TB": "terabyte", "fps": "frame per second", "mph": "mile per hour",
+    }
+    # Multipliers and sizes: "68x" becomes "68 times", "4x4" becomes "4 by 4".
+    _EN_TIMES_RE = re.compile(rf"(?<![\w.,])({_EN_NUMBER})[xX×](\d+(?:\.\d+)?)?(?!\w)")
+    # Plural numbers: "4s" fours, "100s" hundreds, "1990s" and "1990's" nineteen nineties, "'80s" eighties; a decimal is
+    # seconds ("1.5s"). With an apostrophe only a decade is plural; "66's" keeps its possessive.
+    _EN_PLURAL_NUMBER_RE = re.compile(rf"(?<![\w'’.,])(['’]?)({_EN_NUMBER})(['’]?)s(?!\w)")
+    _EN_ROUND_PLURALS = {100: "hundreds", 1000: "thousands", 1000000: "millions", 1000000000: "billions"}
+    # English clock times without minutes ("10am", "5 PM"); "a.m." is already spelled by the dotted-initialism rule.
+    _EN_BARE_AMPM_RE = re.compile(r"(?<![\w.,:])(\d{1,2})\s*([AaPp])[Mm](?!\w)")
     # Callbacks check Unicode word boundaries, including combining marks.
     _DASH_LEFT_SINGLE_LETTER_RE = re.compile(r"([A-Za-zÑñ])\s*-\s*")
     _DASH_RIGHT_SINGLE_LETTER_RE = re.compile(r"\s*-\s*([A-Za-zÑñ])")
@@ -615,12 +643,19 @@ class SpokenTextNormalizer:
             )
         if self.config.expand_times:
             value = re.sub(r"\b(\d{1,2}):(\d{2})(?:\s*([AaPp][Mm]))?\b", lambda m: self._expand_time(m, lang), value)
+            if lang == "en":
+                value = self._EN_BARE_AMPM_RE.sub(lambda m: self._expand_bare_ampm(m, lang), value)
         if self.config.expand_percentages:
             value = re.sub(r"(?<![\d.,])(\d[\d.,]*)%", lambda m: f"{self._decimal_to_words(m.group(1), lang)} {self._percent_word(lang)}", value)
         if self.config.expand_ordinals:
             value = re.sub(r"\b(\d+)(st|nd|rd|th|o|a)\b", lambda m: self._to_words(int(m.group(1)), lang, ordinal=True), value, flags=re.IGNORECASE)
             value = re.sub(r"\b(\d+)(?:º|ª)\b", lambda m: self._to_words(int(m.group(1)), lang, ordinal=True), value)
         if self.config.expand_numbers:
+            if lang == "en":
+                value = self._EN_UNIT_RE.sub(self._expand_unit, value)
+                value = self._EN_TIMES_RE.sub(lambda m: f"{m.group(1)} by {m.group(2)}" if m.group(2) else f"{m.group(1)} times", value)
+                value = self._EN_PLURAL_NUMBER_RE.sub(self._expand_plural_number, value)
+            value = self._ALPHANUMERIC_RE.sub(lambda m: self._split_alphanumeric(m, lang), value)
             if self.config.expand_dates:
                 value = self._EN_MONTH_DATE_RE.sub(lambda m: self._expand_named_month_date(m, lang), value)
                 value = re.sub(r"\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b", lambda m: self._expand_slash_date(m, lang), value)
@@ -695,6 +730,73 @@ class SpokenTextNormalizer:
         key = str(letter or "").upper()
         names = self._LETTER_NAMES.get(lang, self._LETTER_NAMES["en"])
         return names.get(key, letter)
+
+    def _split_alphanumeric(self, match: re.Match[str], lang: str) -> str:
+        runs = self._ALPHANUMERIC_RUN_RE.findall(match.group(0))
+        # English "MP3s": the final "s" makes the number plural ("em pee threes").
+        plural = lang == "en" and len(runs) > 1 and runs[-1] == "s" and runs[-2][0].isdigit()
+        if plural:
+            runs = runs[:-1]
+        parts: list[str] = []
+        for run in runs:
+            if run[0].isdigit():
+                parts.append(run)
+            elif len(run) == 1 or (len(run) <= 3 and (run.isupper() or not self._VOWEL_RE.search(run))):
+                parts.extend(self._letter_name(letter, lang) for letter in run)
+            else:
+                parts.append(run)
+        if plural:
+            parts[-1] = self._plural_number_words(int(parts[-1]))
+        return " ".join(parts)
+
+    def _expand_unit(self, match: re.Match[str]) -> str:
+        number, unit = match.group(1), self._EN_UNITS[match.group(2)]
+        if number != "1" and not unit.endswith("hertz"):
+            head, _, tail = unit.partition(" ")
+            unit = f"{head}s {tail}".strip()
+        return f"{number} {unit}"
+
+    @staticmethod
+    def _plural_words(words: str) -> str:
+        words = words.replace("-", " ")
+        if words.endswith("y"):
+            return words[:-1] + "ies"
+        return words + ("es" if words.endswith("x") else "s")
+
+    def _plural_number_words(self, value: int) -> str:
+        return self._EN_ROUND_PLURALS.get(value) or self._plural_words(self._to_words(value, "en"))
+
+    def _expand_plural_number(self, match: re.Match[str]) -> str:
+        lead, digits, apostrophe = match.group(1), match.group(2), match.group(3)
+        if "." in digits:
+            return match.group(0) if lead or apostrophe else f"{digits} seconds"
+        value = int(digits.replace(",", ""))
+        decade = len(digits) in (2, 4) and value % 10 == 0
+        if ((lead or apostrophe) and not decade) or (lead and len(digits) != 2):
+            return match.group(0)
+        if len(digits) == 4 and 1100 <= value <= 2099:
+            return self._plural_words(self._year_words(value))
+        return self._plural_number_words(value)
+
+    def _year_words(self, year: int) -> str:
+        """An English year as spoken: 1990 "nineteen ninety", 1905 "nineteen oh five", 1900 "nineteen hundred", 2005 "two
+        thousand five", 2024 "twenty twenty four". Years outside 1100-2099 are read as numbers."""
+        if 2000 <= year <= 2009:
+            return "two thousand" + (f" {self._to_words(year - 2000, 'en')}" if year > 2000 else "")
+        if 1100 <= year <= 2099:
+            high, low = divmod(year, 100)
+            tail = "hundred" if low == 0 else f"oh {self._to_words(low, 'en')}" if low < 10 else self._to_words(low, "en")
+            return f"{self._to_words(high, 'en')} {tail}"
+        return self._to_words(year, "en")
+
+    def _ampm_words(self, letter: str, lang: str) -> str:
+        return f"{self._letter_name(letter, lang)} {self._letter_name('M', lang)}"
+
+    def _expand_bare_ampm(self, match: re.Match[str], lang: str) -> str:
+        hour = int(match.group(1))
+        if not 1 <= hour <= 12:
+            return match.group(0)
+        return f"{self._to_words(hour, lang)} {self._ampm_words(match.group(2), lang)}"
 
     @classmethod
     def _normalizer_language(cls, language: str) -> str:
@@ -835,6 +937,8 @@ class SpokenTextNormalizer:
             minute_words = f"oh {self._to_words(minute, lang)}"
         else:
             minute_words = self._to_words(minute, lang)
+        if ampm and lang == "en":
+            ampm = self._ampm_words(ampm[0], lang)   # the G2P reads a bare "AM" as the word "am"
         return f"{self._to_words(hour, lang)} {minute_words} {ampm}".strip()
 
     def _expand_slash_date(self, match: re.Match[str], lang: str) -> str:
@@ -873,7 +977,7 @@ class SpokenTextNormalizer:
         year_s = match.group(3)
         if not year_s:
             return f"{month_name} {day_words}"
-        return f"{month_name} {day_words}, {self._to_words(int(year_s), lang)}"
+        return f"{month_name} {day_words}, {self._year_words(int(year_s))}"
 
     def _expand_date(self, month_s: str, day_s: str, year_s: str, lang: str) -> str:
         try:
@@ -886,7 +990,7 @@ class SpokenTextNormalizer:
             return f"{month_s}/{day_s}/{year_s}"
         month_name = self._MONTHS.get(lang, self._MONTHS["en"])[month - 1]
         if lang == "en":
-            return f"{month_name} {self._to_words(day, lang, ordinal=True)}, {self._to_words(year, lang)}"
+            return f"{month_name} {self._to_words(day, lang, ordinal=True)}, {self._year_words(year)}"
         if lang == "es":
             return f"{day} de {month_name} de {year}"
         return f"{day} {month_name} {year}"

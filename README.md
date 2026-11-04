@@ -187,8 +187,9 @@ All fourteen also support `es`, `it`, `fr`, `de`, and `vi`: 84 trained voice/loc
 
 ## Text handling
 
-- Spoken-text normalization expands numbers, decimals, dates, times, currency, percentages, ordinals, fractions, initialisms and common abbreviations for each language.
+- Spoken-text normalization expands numbers, decimals, dates, times, currency, percentages, ordinals, fractions, initialisms and common abbreviations for each language, and splits letters joined to digits ("V3", "MP3", "4K") into letter names and numbers. English also reads common units, multipliers and plural numbers ("100ms", "68x", "4x4", "1990s", "100s").
 - The Scylla's Band G2P model in the bundle converts each phrase to phones; punctuation is kept as pause and intonation cues, and word boundaries become optional silences.
+- A small built-in lexicon reads common initialisms written in capitals letter by letter ("GPU", "USB", "API", also with a plural "s") and corrects a few words the G2P misreads. A bundle's `assets/g2p/phoneme_dict.json` (`{language: {word: phones}}`) adds or replaces word entries.
 - Text is split into sentences after normalization, and the sentences of a paragraph are read as one stream of phones. Each pass speaks 64 to 420 latent frames (about 1.4 to 9 seconds), the lengths the model was trained on, cut from that stream at a sentence end, else a clause, else a word break; a pass is measured with its own delivery and speed before it is synthesized.
 
 `--no-normalize-text` skips normalization when the text is already in spoken form.

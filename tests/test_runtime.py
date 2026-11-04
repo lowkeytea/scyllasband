@@ -111,6 +111,54 @@ class NormalizerTest(unittest.TestCase):
         self.assertEqual(normalize_spoken_text("* * * * * The Pool of Tears. It was *very* odd.*", language="en_gb"),
                          "The Pool of Tears. It was very odd.")
 
+    def test_letters_glued_to_digits_are_split(self):
+        from scyllasband.text_normalizer import normalize_spoken_text
+        self.assertEqual(normalize_spoken_text("Whisper Large V3 beat v3.5.", language="en_us"),
+                         "Whisper Large vee three beat vee three point five.")
+        self.assertEqual(normalize_spoken_text("MP3 in 4K, H2O, Python3 and COVID19.", language="en_us"),
+                         "em pee three in four kay, aitch two oh, Python three and COVID nineteen.")
+        self.assertEqual(normalize_spoken_text("La V3 y el MP3.", language="es"), "La uve tres y el eme pe tres.")
+        self.assertEqual(normalize_spoken_text("test_voice2.py", language="en_us"), "test_voice2.py")
+
+    def test_english_decades_clock_times_and_years(self):
+        from scyllasband.text_normalizer import normalize_spoken_text
+        self.assertEqual(normalize_spoken_text("The 1990s, the '80s and her 20s.", language="en_us"),
+                         "The nineteen nineties, the eighties and her twenties.")
+        self.assertEqual(normalize_spoken_text("100s of 4s, two MP3s, Route 66's and 1.5s.", language="en_us"),
+                         "hundreds of fours, two em pee threes, Route sixty six's and one point five seconds.")
+        self.assertEqual(normalize_spoken_text("68x faster on a 4x4 grid, 1.5x, 20ms, 24kHz, 1 GB and 60fps.", language="en_us"),
+                         "sixty eight times faster on a four by four grid, one point five times, twenty milliseconds, "
+                         "twenty four kilohertz, one gigabyte and sixty frames per second.")
+        self.assertEqual(normalize_spoken_text("At 10am, 5 PM or 7:05 AM.", language="en_us"),
+                         "At ten ay em, five pee em or seven oh five ay em.")
+        self.assertEqual(normalize_spoken_text("On March 4, 1990 and 3/4/2005.", language="en_us"),
+                         "On March fourth, nineteen ninety and March fourth, two thousand five.")
+
+
+class LexiconTest(unittest.TestCase):
+    def test_entries_and_matching(self):
+        from scyllasband.lexicon import LETTERS, WORDS, Lexicon, initialism_phones, split_phones
+        self.assertEqual(initialism_phones("GPU", LETTERS["en_us"]), "dʒˌiːpˌiːjˈuː")
+        spelled = "".join(t for table in LETTERS.values() for t in table.values()) + "".join(p for w in WORDS.values() for p in w.values())
+        vocabulary = {ch: 1 for ch in spelled.replace("{s}", "") + "ˈˌzsˈɪlə"}
+        self.assertEqual(split_phones("ɡˈɪt", vocabulary), ("ɡ", "ˈ", "ɪ", "t"))
+        self.assertIsNone(split_phones("ɡˈɪt§", vocabulary))
+        lexicon = Lexicon(vocabulary, {"en_us": {"Scylla": "sˈɪlə"}})
+        self.assertEqual("".join(lexicon.lookup("GPUs", "en_us", initialisms=True)), "dʒˌiːpˌiːjˈuːz")
+        self.assertEqual("".join(lexicon.lookup("Git", "en_us", initialisms=True)), "ɡˈɪt")
+        self.assertEqual("".join(lexicon.lookup("scylla", "en_us", initialisms=True)), "sˈɪlə")
+        self.assertIsNone(lexicon.lookup("GPU", "en_us", initialisms=False))   # text written all in capitals
+        self.assertIsNone(lexicon.lookup("US", "en_us", initialisms=True))
+        self.assertIsNone(lexicon.lookup("GPU", "es", initialisms=True))
+
+    def test_native_lexicon_table_is_current(self):
+        import importlib.util
+        path = Path(__file__).resolve().parents[1] / "libscyllasband" / "tools" / "generate_lexicon.py"
+        spec = importlib.util.spec_from_file_location("generate_lexicon", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.assertEqual(module.OUT.read_text(encoding="utf-8"), module.render())
+
 
 class InitialismTest(unittest.TestCase):
     def test_names_stay_in_their_sentence_and_times_can_end_one(self):

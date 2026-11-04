@@ -181,6 +181,13 @@ change:
 PYTHONPATH=.. python tests/generate_fixtures.py
 ```
 
+The pronunciation lexicon is embedded from `scyllasband/lexicon.py` as `src/scyllasband_lexicon.inc`; regenerate it
+after a lexicon change (the Python tests fail while it is out of date):
+
+```bash
+python tools/generate_lexicon.py
+```
+
 `tests/parity_harness.py` compares the built library with the Python runtime on a bundle of the build's
 flavor: text normalization, sentence splitting, punctuation segments and Unicode handling; G2P phones and word
 starts; per-target durations, latents (given the same noise) and decoded audio with passage context and
