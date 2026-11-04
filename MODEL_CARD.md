@@ -3,114 +3,68 @@ license: apache-2.0
 language: [en, es, it, fr, de, vi]
 library_name: litert
 pipeline_tag: text-to-speech
-tags: [text-to-speech, tts, litert, onnx, coreml, coreai, pytorch, multilingual, expressive-tts, duration-flow]
+tags: [text-to-speech, tts, litert, onnx, pytorch, multilingual, expressive-tts, duration-flow]
 ---
 
-# Scylla's Band v2
+# Scylla's Band v3
 
-Release **`v2-20261020`**. The [Scylla's Band runtime](https://github.com/lowkeytea/scyllasband) supports this release. Tag `v2-20261020-apple` adds Core ML and Core AI bundles of the same model, and tag `v2-20261020-litert` adds those and a faster LiteRT bundle, exported again from the same weights; the runtime downloads from `v2-20261020-litert`.
+Release **`v3-20261103`**. The [Scylla's Band runtime](https://github.com/lowkeytea/scyllasband) supports this release from version 3.0.0. The manifest declares graph contract `scyllasband_measured_controls_v3`; runtimes written for v2 releases cannot run these graphs and keep downloading their v2 tags.
 
-The model exposes **energy, tension, valence and assertiveness** on **0–4 scales with neutral at 2**. Combining the controls changes the generated delivery; a request is not a guarantee of a particular perceived emotion or exact external scorer value.
+Delivery is controlled with **intensity, pace and pitch**, each from −2 to 2 with 0 as the voice's own delivery. The emotion comes from the text; intensity sets how much the voice puts into it.
 
 ## Quick start
 
 Install the [runtime](https://github.com/lowkeytea/scyllasband) (`pip install -e .` from a checkout), then:
 
 ```bash
-python -m scyllasband download --yes
-python -m scyllasband speak --voice ariadne --language en_us \
-    --delivery energy=2.3,tension=1.7,valence=2.2,assertiveness=2 \
+python -m scyllasband download --flavor litert
+python -m scyllasband speak --voice ariadne --language en_us --intensity 1 --pace -0.5 \
     -o hello.wav "It is a pleasure to meet you."
 ```
 
-The default download is the Core ML bundle on an Apple silicon Mac and the LiteRT bundle elsewhere, installed under `scyllasband/models/<bundle>`. A Mac that can build apps for iOS, iPadOS or visionOS 27 is also offered the Core AI bundle those apps use. `--flavor coreml`, `--flavor coreai`, `--flavor litert` or `--flavor onnx` choose explicitly. Downloads pin a release tag. The manifest declares graph contract `scyllasband_measured_delivery_v2`; runtimes written for earlier releases cannot run these graphs.
+`--flavor litert` or `--flavor onnx` chooses the bundle, installed under `scyllasband/models/<bundle>`. Downloads pin a release tag.
 
 ## Controls
 
-| Input | Values | Default |
-| --- | --- | --- |
-| Energy | 1.4–2.3 or unspecified | 2 |
-| Tension | 1.0–2.4 or unspecified | 2 |
-| Valence | 1.4–2.2 or unspecified | 2 |
-| Assertiveness | 1.8–2.4 or unspecified | 2 |
+| Control | Range | Default | Effect |
+| --- | --- | --- | --- |
+| Intensity | −2 to 2 | 0 | Calm (negative) to intense (positive): how much the voice puts into the line |
+| Pace | −2 to 2 | 0 | Slower (negative) to faster (positive): the words and the pauses between them |
+| Pitch | −2 to 2 | 0 | Shifts the voice's pitch, in semitones |
 
-With every control at 2, the default, voices speak in a calm, conversational delivery with a neutral tone. Raising or lowering a control changes the delivery:
+0 is each voice's own delivery. Intensity and pace are measured in each voice's own range, in standard deviations around its average, so the same value is a comparable change for every voice and language. An angry line sounds angrier at higher intensity and more restrained at lower intensity; intensity changes how much of the emotion comes through, not which emotion it is. Requests outside the range are clamped into it, and unspecified controls take the voice's default (`controls.delivery.defaults`; 0 for every voice in this release).
 
-| Control | Lower | Higher |
-| --- | --- | --- |
-| Energy | Lower, darker voice with a few more pauses | Higher, brighter, more projected voice |
-| Tension | Slightly looser and steadier | Tighter, with wider pitch swings |
-| Valence | Flatter, more downcast pitch | Livelier pitch, a little quicker, shorter pauses |
-| Assertiveness | More pauses between phrases | Faster and clipped with fewer pauses; the strongest control over pace |
+How the runtime applies them:
 
-Requests use the 0–4 scale, and the runtime clamps each control into its supported range, where the voices render most reliably: energy 1.4–2.3, tension 1.0–2.4, valence 1.4–2.2 and assertiveness 1.8–2.4. Small changes inside these ranges are clearly audible, and over longer text the voices vary their delivery with the content on their own.
+- The duration and flow graphs take intensity and pace as value / 5 in delivery slots 0 and 1, with presence bits; the other slots are always absent.
+- Pace also scales the pauses between words by exp(−0.13 × pace) (`controls.pace_pauses`).
+- A passage with fewer than four spoken phones, such as a lone "Yes.", keeps the voice's own intensity and pace, as the model was trained (`controls.delivery.min_spoken_phones`). Its pitch shift still applies.
+- Pitch shifts the predicted contour in semitones; a soft limit keeps it inside the voice's measured range (`controls.pitch.edges`).
 
-Combining the controls gives familiar deliveries:
-
-| Delivery | Settings |
-| --- | --- |
-| Calm and soft | `energy=1.8,tension=1,valence=2.2,assertiveness=2.1` |
-| Assertive and quick | `energy=2.3,tension=2.4,valence=2.1,assertiveness=2.4` |
-| Joyful | `energy=2.3,tension=2,valence=2.2,assertiveness=2.2` |
-| Angry | `energy=2.3,tension=2.4,valence=1.4,assertiveness=2.4` |
-| Sad | `energy=1.7,tension=1.5,valence=1.4,assertiveness=2` |
-
-These are moderate styles; how strongly each comes through varies with voice, language and text. The [voice gallery](https://lowkeytea.github.io/scyllasband/#delivery) plays each of them for all fourteen voices.
-
-`--delivery auto` omits all coordinates. A per-axis `auto` omits just that coordinate; other unspecified fields in a partial request use neutral defaults. Omission is represented by a separate mask, not by the value 2. It is not an automatic text-to-performance planner.
-
-The graph receives `(rating - 2) / 4` for the four continuous axes plus presence bits. Its fifth delivery input, whisper, was a training axis; it is not supported, and the runtimes always send it off. The public interface accepts the original 0–4 values. Expressiveness is an auxiliary training target, not an inference axis.
-
-Controls are **global within each request**. This release does not support control curves, singing, or trained automatic variation over a multi-sentence passage.
+Controls are **global within each request**. This release does not support control curves, singing, or emotion labels.
 
 ## Model and inference
 
 | Property | Value |
 | --- | --- |
-| Public model version | 2 |
-| Architecture | Phone-duration predictor → continuous rectified-flow latent generator → acoustic adapter/Vocos |
+| Public model version | 3 |
+| Architecture | Phone-duration predictor → pitch predictor (rectified flow) → continuous rectified-flow latent generator that follows the pitch contour → acoustic adapter/Vocos |
 | Audio | Mono 24 kHz; 100 mel features; 24 latent channels |
 | Mel / latent hop | 256 / 512 samples |
 | Duration model | Hidden size 320; 8 layers; reads the neighbouring text as context |
-| Vector model | Hidden size 640; 16 layers; adaptive layer normalization and QK normalization |
+| Pitch predictor | Hidden size 384; 8 layers; a pitch and voicing contour per latent frame |
+| Vector model | Hidden size 512; 12 layers; adaptive layer normalization and QK normalization; reads the pitch contour |
 | Maximum graph phones per sentence | 512 |
 | Trained target length | 64–420 latent frames (about 1.4–9 s) per pass |
-| Latent buckets | 128, 256, 384, 512, 768, 1024 frames |
-| Sampler | Euler, 4 steps (default) |
+| Sampler | Flow: Euler, 4 steps. Pitch predictor: Heun, 8 steps |
 | Voice conditioning | Fixed per-voice/per-locale identity and prosody references embedded in the graphs |
 | Text frontend | Trained Scylla's Band G2P with its matched tokenizer and vocabulary |
 
-The flow is distilled for few-step sampling: it was trained to reproduce the base flow's 32-step Heun output, so Euler with 4 steps, four model evaluations per passage, is the default. Heun with 8 steps costs four times as much and sounds slightly sharper.
+For each passage the pitch predictor integrates a pitch and voicing contour from noise, the pitch control shifts it, and the flow generates the latents along it (graph input `expanded_melody`, [1, frames, 3]). Each passage draws its pitch noise ([2, frames]) and then its latent noise ([24, frames]) from the request's seed.
+
+The flow is distilled for few-step sampling: it was trained to reproduce the base flow's 32-step Heun output, so Euler with 4 steps, four model evaluations per passage, is the default.
 
 Long text is spoken as passages within the trained target lengths (64 to 420 latent frames, about 1.4 to 9 seconds): a short first passage so audio starts quickly, then passages as long as the text allows, cut at a sentence end, else a clause, else between words, and measured with the requested delivery. Each passage sees the surrounding text as context and continues from the acoustics of the one before it, and consecutive passages are decoded as one continuous waveform. Durations are predicted deterministically; different controls can alter them.
-
-## Performance
-
-Measured with the default sampler (Euler, 4 steps) through the native runtime: `scyllasband_speak` from [libscyllasband](https://github.com/lowkeytea/scyllasband/tree/main/libscyllasband) on the Mac and Android, and the [iOS sample](https://github.com/lowkeytea/scyllasband/tree/main/examples/ios)'s benchmark mode on the iPhone. The text is three sentences, 11.9 s of audio: "The last train leaves at midnight, so pack light. Bring a warm coat, and don't forget the map. If we miss it, we walk, and nobody wants to walk that far in the rain." (voice Scylla, seed 7).
-
-- **First run**: from launch to first audio on the first launch after installing the bundle. Core AI specializes its graphs for the device then and caches them until the next OS update; LiteRT writes its packed weights to a cache file beside each graph.
-- **Cold start**: from launch to first audio on a later launch, including loading the bundle.
-- **Warm first audio**: from a request to its first audio in a process that has already spoken (median of three requests).
-- **Real-time speed**: seconds of audio generated per second when warm, rounded.
-
-| Device | Bundle | Compute | First run | Cold start | Warm first audio | Real-time speed |
-| --- | --- | --- | --- | --- | --- | --- |
-| MacBook Pro, M5 Max (macOS 27) | Core ML | GPU (default) | 3.79 s | 1.26 s | 28 ms | ~200× |
-|  | Core ML | CPU | 2.37 s | 0.37 s | 272 ms | ~14× |
-|  | Core AI | GPU (default) | 5.88 s | 0.39 s | 27 ms | ~200× |
-|  | Core AI | Neural Engine | 38.9 s | 0.52 s | 320 ms | ~17× |
-|  | Core AI | CPU | 3.48 s | 1.13 s | 1036 ms | ~3.5× |
-|  | LiteRT | CPU | 0.47 s | 0.35 s | 121 ms | ~29× |
-|  | ONNX Runtime | CPU | 0.92 s | 0.94 s | 262 ms | ~17× |
-| iPhone 17 Pro Max (iOS 27.0.1) | Core ML | GPU (default) | 3.82 s | 1.49 s | 92 ms | ~53× |
-|  | Core ML | CPU | 2.71 s | 0.51 s | 359 ms | ~10× |
-|  | Core AI | GPU (default) | 7.68 s | 0.48 s | 84 ms | ~57× |
-|  | Core AI | Neural Engine | 50.1 s | 0.67 s | 401 ms | ~14× |
-|  | Core AI | CPU | 5.19 s | 1.42 s | 1368 ms | ~2.7× |
-| Galaxy Z Fold 8, Snapdragon SM8850 (Android 17) | LiteRT | CPU | 1.47 s | 0.48 s | 132 ms | ~23× |
-|  | ONNX Runtime | CPU | 2.35 s | 1.72 s | 535 ms | ~7.7× |
-
-The GPU is the default on Apple platforms. The Neural Engine placement runs the flow on the Neural Engine and the other graphs on the CPU, for apps that speak in the background, where iOS does not allow GPU work. Core ML reloads its graphs on every launch, which accounts for most of its cold start on the GPU.
 
 ## Voices and language coverage
 
@@ -120,30 +74,27 @@ All fourteen have Spanish (`es`), Italian (`it`), French (`fr`), German (`de`) a
 
 ## Artifacts
 
-- `litert/` (267 MB): LiteRT bundle; default download. Dynamic-range INT8 weights on the fully connected, convolution and embedding layers; the vocoder's depthwise convolutions stay in full precision, which keeps them on XNNPACK. Each size is a signature of one model file, sharing weights: latent buckets every 64 frames up to 512 (then 768 and 1024), flow graphs without the 96 prefix frames for a request's first segment (up to 448 frames), and narrower duration and span-context (128 and 256 phones) and G2P (32–256 tokens) widths beside the full ones. (Tag `v2-20261020`'s LiteRT bundle, 228 MB, has six latent buckets and full-width graphs only.)
-- `coreai/` (213 MB): Core AI bundle for apps on iOS, iPadOS and visionOS 27 (`.aimodel` assets); it also runs on macOS 27, where the runtime uses the Core ML bundle by default. INT8 weights per output channel with FP16 compute; size buckets are functions of one asset sharing weights. The flow also runs accurately on the Neural Engine (`controls.coreai.neural_engine_assets`), which is the placement for apps that speak in the background; the GPU is the default.
-- `coreml/` (200 MB): Core ML bundle for Apple silicon with iOS 18 / visionOS 2 / macOS 15 and later (compiled `.mlmodelc` assets), with INT8 weights and FP16 compute; GPU by default, CPU in background apps.
-- `onnx/` (323 MB): ONNX Runtime bundle with dynamic INT8 transformer weights; the vocoder stays in full precision.
-- `webgpu/` (325 MB): ONNX Runtime bundle for ONNX Runtime Web's WebGPU backend, used by the browser demo. Transformer weights are INT8 with float compute (`MatMulNBits`), which runs entirely on the GPU; the vocoder stays in full precision.
-- `pytorch/`: duration, vector, adapter/vocoder and G2P weights (no training state), with the release configuration assets.
+- `litert/` (229 MB): LiteRT bundle for Linux, Windows, Android and Intel Macs. Dynamic-range INT8 weights on the fully connected, convolution and embedding layers; the vocoder's depthwise convolutions stay in full precision, which keeps them on XNNPACK. Each size is a signature of one model file, sharing weights: latent buckets every 64 frames up to 512 (then 768 and 1024), flow graphs without the 96 prefix frames for a request's first passage (up to 448 frames), and narrower duration, span-context and pitch-context (128 and 256 phones) and G2P (32–256 tokens) widths beside the full ones.
+- `onnx/` (291 MB): ONNX Runtime bundle with dynamic INT8 weights in the duration, context, pitch and flow transformers; the vocoder stays in full precision. Latent buckets of 128, 256, 384, 512, 768 and 1024 frames share one weight file.
+- `webgpu/` (291 MB): ONNX Runtime bundle for ONNX Runtime Web's WebGPU backend. Transformer weights are INT8 with float compute (`MatMulNBits`), which runs entirely on the GPU; the vocoder stays in full precision.
+- `pytorch/` (616 MB): duration, pitch predictor, vector, adapter/vocoder and G2P weights (no training state), with the release configuration assets.
 - `SHA256SUMS.json`: published-file hashes.
 
-Every runtime bundle includes the G2P model in a matching precision. The Apple and LiteRT bundles also give the G2P narrower input widths (64–512 and 32–512 tokens), so short phrases are converted faster.
+Every runtime bundle includes the G2P model in a matching precision.
 
 ## Validation and limitations
 
 Release validation separates graph accuracy, frontend/timing behaviour and perceived speech quality:
 
-- Component comparisons against PyTorch during export, and end-to-end comparison of full passages against the PyTorch reference path.
-- The distilled flow at 4 Euler steps compared with the base flow on the same passages, seeds and noise: closer to the base flow's 32-step output than the base flow's own 8 Heun steps, and compared blind with the 32-step base flow by listening across all fourteen voices.
-- Quantized bundles compared with full precision on real sentences (48 passages, six voices): identical phonemes; identical phone durations for 97.7% (ONNX), 97.9% (LiteRT, the bundle of tag `v2-20261020`) and 99.6% (WebGPU) of phones, the rest one frame apart; generated latents within 2% median relative error; followed by listening across all fourteen voices.
-- The LiteRT bundle of tag `v2-20261020-litert` compared with the full-precision PyTorch graphs on every graph call the runtime makes speaking the runtime repository's sample text (`samples/gallery_script.json`'s line for each of the 84 voice/locale pairs and its delivery lines in three voices, and the first paragraph of `data/test_document.txt`: 103 requests, 1,091 graph calls): identical phonemes in all 136 G2P calls (the `v2-20261020` LiteRT G2P differs in 2); phone durations rounding to the same frame count for 97.9% of phones, at most 0.62 frames apart; flow velocity within 1.3% median relative error, latents after the 4 Euler steps within 2.1% (median); vocoder output 12.3 dB median SNR against the full-precision vocoder (6.9 dB for the `v2-20261020` bundle); and every graph identical with and without XNNPACK's weight cache.
-- G2P conversions compared with the full-precision G2P on multilingual text.
-- Core ML and Core AI bundles compared with the PyTorch model on every graph and on real passages, on each compute unit they are used with (GPU, CPU, and for Core AI the Neural Engine): identical phonemes apart from two near-tie stress marks also seen in FP16, fewer changed phone durations than the LiteRT bundle, and smaller latent and spectral differences. The Apple exports rewrite three computations into equivalent forms that FP16 and the Neural Engine evaluate exactly (span pooling, the modifier bit decoding, the duration model's combined phone/segment index), and scale the flow's residual stream; in FP32 the rewritten graphs are bit-identical to the trained ones.
+- The full-precision ONNX bundle run through the runtime against the PyTorch model, end to end with all three controls: identical durations, and latents within 7e-5 (values of magnitude 20–28).
+- The C++ runtime against the Python runtime on the same bundle: identical G2P output, phone durations and passage plan; latents within 4e-6 relative error; decoded audio at 50 dB SNR (worst sentence) and 59 dB over a long passage.
+- The distilled flow at 4 Euler steps compared with the undistilled flow by listening on paired lines across the voices, and by ASR word error rate and a MOS predictor on a 168-clip sweep of all fourteen voices in English, French and Spanish.
+- Quantized bundles compared with full precision through the runtime on lines covering every voice, each control at its limits and each language. The WebGPU bundle reproduces the full-precision take (identical frame counts on 15 of 17 lines, 0.8 dB median mel-cepstral distance). Dynamic INT8 moves some phone durations by a frame, which redraws a passage's noise and gives a different take, so the ONNX and LiteRT bundles are judged on the same sweep: ASR word error rate 0.066 (ONNX) and 0.062 (LiteRT) against 0.062 for full precision, and a MOS-predictor score within 0.05 of full precision for both.
+- Every LiteRT graph gives identical output with and without XNNPACK's weight cache.
 
-Listening is decisive; external emotion-score agreement is approximate. Scorer measurements are imperfect supervision and do not establish emotional ground truth. Training audio is not distributed.
+Listening is decisive; automatic scores support it. Training audio is not distributed.
 
-Known problems include occasional pronunciation errors, occasional roughness on fast, wide pitch movements in some voices, and limited strong anger or sadness.
+Known problems include occasional pronunciation errors and occasional roughness on fast, wide pitch movements in some voices.
 
 The system supports managed voices, not arbitrary speaker cloning. Intended uses include local speech, narration, character dialogue and delivery-control research. Do not use it for impersonation or deceptive attribution of speech.
 
