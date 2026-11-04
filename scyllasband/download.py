@@ -17,7 +17,7 @@ import uuid
 from .contract import validate_bundle_layout
 
 REPO_ID = "spybyscript/scyllasband"
-RELEASE = "v3-20261103"
+RELEASE = "v3-20261103-apple"   # v3-20261103 with its Core ML and Core AI bundles
 DEFAULT_MODELS_DIR = Path("scyllasband/models")
 DEFAULT_FLAVOR = "litert"
 FLAVORS = {

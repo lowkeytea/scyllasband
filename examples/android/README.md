@@ -23,7 +23,7 @@ Imported text uses the same format as `python -m scyllasband group-speak`:
 
 ## Build
 
-1. Download the LiteRT bundle (about 267 MB, INT8) from the repository root:
+1. Download the LiteRT bundle (about 229 MB, INT8) from the repository root:
 
    ```bash
    python -m scyllasband download --yes
@@ -54,7 +54,7 @@ python -m scyllasband download --flavor onnx --yes
 ./gradlew -Pscyllasband.backend=onnx :app:assembleDebug
 ```
 
-This links `libscyllasband` against ONNX Runtime 1.30.0 (`onnxruntime-android`) and embeds `scyllasband/models/onnx` (about 323 MB). ONNX Runtime builds run on the CPU. LiteRT is the default.
+This links `libscyllasband` against ONNX Runtime 1.30.0 (`onnxruntime-android`) and embeds `scyllasband/models/onnx` (about 291 MB). ONNX Runtime builds run on the CPU. LiteRT is the default.
 
 ## Accelerator
 
