@@ -9,7 +9,7 @@ from typing import Any, Iterator, Mapping, Sequence, TextIO
 import numpy as np
 
 from .contract import validate_bundle_layout
-from .engine import Engine
+from .engine import Engine, onnx_providers
 from .planner import SynthesisPlan, plan_records, records_from_text
 from .streaming import StreamingEvent, StreamOptions, render_plan, synthesize_plan_stream
 from .text_normalizer import normalize_spoken_text
@@ -80,16 +80,19 @@ class ScyllasBandRuntime:
     def from_bundle(cls, bundle_dir: str | Path, *, backend: str | None = None, backends: Sequence[str] | None = None,
                     threads: int | None = None, compute_units: str | Mapping[str, str] | None = None, validate: bool = True,
                     **_: Any) -> "ScyllasBandRuntime":
-        """``compute_units`` (Core ML and Core AI): auto (the bundle's recommendation), cpu, gpu, ane (the graphs the bundle
-        lists as accurate on the Neural Engine, the rest on the CPU), or per asset ("gpu,g2p=cpu")."""
+        """``compute_units``: for Core ML and Core AI, auto (the bundle's recommendation), cpu, gpu, ane (the graphs the bundle
+        lists as accurate on the Neural Engine, the rest on the CPU), or per asset ("gpu,g2p=cpu"); for ONNX Runtime, cpu (the
+        default) or gpu (NVIDIA GPUs through CUDA; use the webgpu bundle, whose 8-bit weights run there), also per asset."""
         bundle_dir = Path(bundle_dir)
         if validate:
             validate_bundle_layout(bundle_dir)
         chosen = backend or next((b for b in (backends or ()) if b in SUPPORTED_BACKENDS), None) or _bundle_backend(bundle_dir)
         if chosen not in SUPPORTED_BACKENDS:
             raise ValueError(f"Unsupported backend {chosen!r}; choose one of {', '.join(SUPPORTED_BACKENDS)}")
-        factory = None
-        if chosen == "litert":
+        factory, providers = None, None
+        if chosen == "onnx":
+            providers = onnx_providers(compute_units)
+        elif chosen == "litert":
             from .litert import litert_session_factory
             factory = litert_session_factory(bundle_dir, threads=threads)
         elif chosen in ("coreml", "coreai"):
@@ -100,7 +103,8 @@ class ScyllasBandRuntime:
             else:
                 from .coreai import coreai_session_factory
                 factory = coreai_session_factory(bundle_dir, compute_units=units)
-        return cls(Engine(bundle_dir, backend=chosen, threads=threads, session_factory=factory), bundle_dir=bundle_dir, backend=chosen)
+        return cls(Engine(bundle_dir, backend=chosen, threads=threads, session_factory=factory, providers=providers),
+                   bundle_dir=bundle_dir, backend=chosen)
 
     # --- voices and text ----------------------------------------------------------------------------------------------
     def available_voices(self) -> list[str]:

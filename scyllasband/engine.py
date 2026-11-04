@@ -21,6 +21,7 @@ semitones. A target with fewer than ``min_spoken_phones`` spoken phones gets nei
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import functools
 import json
 from pathlib import Path
 import threading
@@ -84,13 +85,42 @@ class SentenceResult:
     metadata: dict[str, Any]
 
 
+CUDA_HINT = ("ONNX Runtime with CUDA is needed for --compute-units gpu: install the runtime with the cuda extra "
+             "(pip install -e \".[cuda]\") in an environment without the CPU-only onnxruntime package")
+
+
+def onnx_providers(compute_units: str | Mapping[str, str] | None) -> Callable[[str], list[str]]:
+    """ONNX Runtime execution providers for each graph: ``cpu`` (the default), ``gpu`` (NVIDIA GPUs through CUDA, also
+    written ``cuda``), or a default plus per-graph choices, e.g. ``gpu,g2p=cpu``."""
+    from .coreml import parse_compute_units
+    value = None if compute_units in (None, "", "auto") else compute_units
+    choose = parse_compute_units(value, default="cpu", units=("cpu", "gpu", "cuda"))
+    return lambda graph: ["CUDAExecutionProvider", "CPUExecutionProvider"] if choose(graph) in ("gpu", "cuda") else ["CPUExecutionProvider"]
+
+
+@functools.cache
+def _preload_cuda() -> None:
+    """Load CUDA and cuDNN from the nvidia pip packages that onnxruntime-gpu[cuda,cudnn] installs (ONNX Runtime 1.21+)."""
+    import onnxruntime as ort
+    try:
+        ort.preload_dlls()
+    except Exception:
+        pass
+
+
 class OnnxSession:
     def __init__(self, path: Path, *, threads: int | None = None, providers: Sequence[str] | None = None):
         import onnxruntime as ort
         options = ort.SessionOptions()
         if threads:
             options.intra_op_num_threads = int(threads)
-        self.session = ort.InferenceSession(str(path), options, providers=list(providers or ["CPUExecutionProvider"]))
+        providers = list(providers or ["CPUExecutionProvider"])
+        if "CUDAExecutionProvider" in providers:
+            _preload_cuda()
+        self.session = ort.InferenceSession(str(path), options, providers=providers)
+        if providers[0] not in self.session.get_providers():
+            # ONNX Runtime falls back to the CPU when the CUDA provider cannot load (for example without cuDNN).
+            raise RuntimeError(f"{path.name}: ONNX Runtime could not use {providers[0]}. {CUDA_HINT}.")
         self.inputs = [i.name for i in self.session.get_inputs()]
 
     def run(self, feeds: Mapping[str, np.ndarray]) -> np.ndarray:
@@ -99,14 +129,15 @@ class OnnxSession:
 
 class Engine:
     def __init__(self, bundle_dir: str | Path, *, backend: str = "onnx", threads: int | None = None,
-                 session_factory: Callable[[str, Mapping[str, Any]], Any] | None = None) -> None:
+                 session_factory: Callable[[str, Mapping[str, Any]], Any] | None = None,
+                 providers: Callable[[str], Sequence[str]] | None = None) -> None:
         self.bundle_dir = Path(bundle_dir)
         self.manifest = json.loads((self.bundle_dir / "manifest.json").read_text(encoding="utf-8"))
         controls = self.manifest["controls"]
         if controls.get("graph_input_contract") != GRAPH_CONTRACT:
             raise ValueError(f"Bundle graph contract {controls.get('graph_input_contract')!r} is not supported by this runtime "
                              f"(expected {GRAPH_CONTRACT!r}); download the current model.")
-        self.backend, self.threads = backend, threads
+        self.backend, self.threads, self.providers = backend, threads, providers
         self.controls = controls
         assets = self.manifest["assets"]
         vocab = json.loads((self.bundle_dir / assets["phone_vocab"]).read_text(encoding="utf-8"))
@@ -157,7 +188,8 @@ class Engine:
 
     # --- sessions -----------------------------------------------------------------------------------------------------
     def _onnx_session(self, name: str, spec: Mapping[str, Any]) -> OnnxSession:
-        return OnnxSession(self.bundle_dir / spec["artifacts"]["onnx"]["path"], threads=self.threads)
+        return OnnxSession(self.bundle_dir / spec["artifacts"]["onnx"]["path"], threads=self.threads,
+                           providers=self.providers(name) if self.providers else None)
 
     def session(self, name: str) -> Any:
         with self._lock:

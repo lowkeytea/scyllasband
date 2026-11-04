@@ -25,6 +25,7 @@ FLAVORS = {
     "coreml": "Core ML bundle: the default on Apple silicon Macs, and for iOS 18 apps",
     "coreai": "Core AI bundle for apps on iOS, iPadOS and visionOS 27 (also runs on macOS 27)",
     "onnx": "ONNX Runtime bundle, for hosts that already use ONNX Runtime",
+    "webgpu": "ONNX bundle with 8-bit weights: for WebGPU in browsers, and for NVIDIA GPUs (--backend onnx --compute-units gpu)",
 }
 MIN_MACOS = {"coreai": 27, "coreml": 15}
 OS27_SDKS = ("iphoneos", "xros")   # iOS/iPadOS and visionOS SDKs whose apps can use the Core AI bundle
@@ -62,7 +63,7 @@ def supported_flavors() -> list[str]:
     for iOS/iPadOS/visionOS 27 apps, so it is never the Mac's default."""
     major = macos_major()
     apple = [flavor for flavor in ("coreml", "coreai") if major is not None and major >= MIN_MACOS[flavor]]
-    return [*apple, "litert", "onnx"]
+    return [*apple, "litert", "onnx", "webgpu"]
 
 
 def recommended_flavor() -> str:
