@@ -3,11 +3,11 @@
 [scylla:en_us:intensity=-0.5] Whatever dudes... I don't know if you're even listening. You aren't, are you?
 [scylla:en_us:intensity=2] Oh, come on! I stayed calm, I sulked, and somebody still cranked my intensity all the way up!
 [scylla:en_us:intensity=0.5] That's just a little demo on how the delivery can be tweaked on this tiny model.
-[ink:en_gb] So this is Scyllas band. It's basically 85 times real time on an iPhone, 27 times on Android, and time to first audio? About 50 milliseconds.
+[ink:en_gb] So this is Scyllas band. It's basically 68 times real time on an iPhone, 27 times on Android, and time to first audio? About 70 milliseconds.
 [ink:en_gb] The git hub has all you need for inference with a see plus plus engine to handle text formatting, chunking and more. There is an Android and I-O-S sample app to help you along, and a desktop inference package. The model has optimized ports for most platforms for G-P-U or C-P-U usage. 
 [orpheus:en_gb:intensity=0.5] So let's cover what's new! We plan the melody of every line before we say it, and you can direct us with intensity, pace and pitch.
 [orpheus:en_gb:intensity=1] Ok everyone, let's show some languages. Hop to it!
-[felix:de:intensity=-1] Felix hier. Ich spreche ganz ruhig, damit niemand meinen Akzent hört. Klinge ich wie ein Amerikaner, der Deutsch spricht? Sagt es mir nicht. Bei 150 Megabyte war für Umlaute kaum noch Platz.
+[felix:de:intensity=-1] Felix hier. Ich spreche ganz ruhig, damit niemand meinen Akzent hört. Klinge ich wie ein Amerikaner, der Deutsch spricht? Sagt es mir nicht. Bei 230 Megabyte war für Umlaute kaum noch Platz.
 [tuesday:en_gb] Felix says hello. I promise that's it.
 [stone:fr:intensity=-0.5] Je m'appelle Stone. Vous pouvez régler mon intensité, mon rythme, et même ma hauteur. Bonne chance.
 [scylla:vi:intensity=1] Thấy chưa? Vẫn là tôi, giờ tôi có thể làm phiền bạn bằng sáu thứ tiếng.

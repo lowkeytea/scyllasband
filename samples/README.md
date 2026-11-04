@@ -2,7 +2,7 @@
 
 [Open the voice gallery](https://lowkeytea.github.io/scyllasband/) to play every clip in the browser.
 
-The clips use the default LiteRT bundle (release `v2-20261020`), euler sampling with 4 steps and
+The clips use the default LiteRT bundle (release `v3-20261104`), euler sampling with 4 steps and
 seed `2027`. To regenerate them after downloading the model:
 
 ```bash
@@ -13,8 +13,8 @@ The script reads `samples/gallery_script.json` and writes `docs/index.html`, `do
 
 ## Long form
 
-- [Single-voice narration](https://lowkeytea.github.io/scyllasband/#narration) (5:00), from `data/test_document.txt`
-- [Multi-voice multilingual dialogue](https://lowkeytea.github.io/scyllasband/#dialogue) (2:06), from `data/walkthrough_2nd.txt`
+- [Single-voice narration](https://lowkeytea.github.io/scyllasband/#narration) (4:12), from `data/test_document.txt`
+- [Multi-voice multilingual dialogue](https://lowkeytea.github.io/scyllasband/#dialogue) (1:56), from `data/walkthrough_2nd.txt`
 
 ## Languages
 
@@ -43,9 +43,9 @@ Every voice speaks each line below in its own English, with the settings shown.
 
 | Delivery | Settings | Line |
 | --- | --- | --- |
-| Neutral (default) | `energy=2,tension=2,valence=2,assertiveness=2` | Please put the small blue box beside the kitchen window, then close the door behind you. |
-| Calm and soft | `energy=1.8,tension=1,valence=2.2,assertiveness=2.1` | Take a slow breath. There's no rush tonight; the rain will keep the city quiet for a while. |
-| Assertive and quick | `energy=2.3,tension=2.4,valence=2.1,assertiveness=2.4` | Listen carefully. We leave at six, we stay together, and nobody goes back for the bags. |
-| Joyful | `energy=2.3,tension=2,valence=2.2,assertiveness=2.2` | We actually did it! The whole street came out to watch, and nobody wanted the night to end! |
-| Angry | `energy=2.3,tension=2.4,valence=1.4,assertiveness=2.4` | No. You don't get to walk in here and change the rules again. Not after everything. |
-| Sad | `energy=1.7,tension=1.5,valence=1.4,assertiveness=2` | I kept the letter for years... I never opened it. Maybe I was afraid of what it would say. |
+| Voice default | `voice default` | Please put the small blue box beside the kitchen window, then close the door behind you. |
+| Calm and soft | `intensity=-1.5,pace=-0.5` | Take a slow breath. There's no rush tonight; the rain will keep the city quiet for a while. |
+| Assertive and quick | `intensity=1,pace=1` | Listen carefully. We leave at six, we stay together, and nobody goes back for the bags. |
+| Joyful | `intensity=1.5` | We actually did it! The whole street came out to watch, and nobody wanted the night to end! |
+| Angry | `intensity=2` | No. You don't get to walk in here and change the rules again. Not after everything. |
+| Sad | `intensity=-1,pace=-1` | I kept the letter for years... I never opened it. Maybe I was afraid of what it would say. |
