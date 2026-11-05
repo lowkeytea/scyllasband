@@ -28,6 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import functools
 import json
+import os
 from pathlib import Path
 import re
 import threading
@@ -185,6 +186,7 @@ class Engine:
         # name ("vocoder", "vocoder_bigvgan"); an optional decoder may be missing from some or all buckets.
         self.decoder_graphs = {name: {int(b["latent_frames"]): str(b[key]) for b in buckets if b.get(key)}
                                for name, spec in self.decoders.items() for key in [str(spec.get("component") or "vocoder")]}
+        self.decoder_windows = self._decoder_windows()
         # Optional graphs that run every flow step in one call, for one sampler and step count: {latent_frames: component}.
         fused = controls.get("fused_flow") or {}
         self.fused_flow = (str(fused.get("sampler", "")).lower(), int(fused.get("steps", 0)))
@@ -262,6 +264,33 @@ class Engine:
         limit = max(graphs)
         raise OverlongError(f"{frames} latent frames to decode, but the {decoder} decoder supports at most {limit}.",
                             frames=frames, limit=limit)
+
+    def _decoder_windows(self) -> dict[str, tuple[int, int]]:
+        """Decoders that decode in fixed windows through one bucket graph, as libscyllasband does: {name: (the window's
+        bucket in frames, frames of context either side of each cut)}, from ``controls.decoders.<name>.window`` {frames,
+        context} or SCYLLASBAND_DECODER_WINDOW ("bigvgan=256:16"; "bigvgan=0" turns it off). A windowed decoder decodes any
+        length, so a bundle may carry it at the window's bucket only."""
+        requested = {name: (int((spec.get("window") or {}).get("frames", 0)), int((spec.get("window") or {}).get("context", 0)))
+                     for name, spec in self.decoders.items()}
+        for entry in filter(None, os.environ.get("SCYLLASBAND_DECODER_WINDOW", "").split(",")):
+            name, _, value = entry.partition("=")
+            frames, _, context = value.partition(":")
+            if name not in self.decoders or not frames.isdigit() or (context and not context.isdigit()):
+                raise ValueError(f"SCYLLASBAND_DECODER_WINDOW entry {entry!r} is not decoder=frames[:context] for a decoder of this bundle")
+            requested[name] = (int(frames), int(context or 0))
+        windows = {}
+        for name, (frames, context) in requested.items():
+            if frames <= 0:
+                continue
+            if self.decoder_rule(name)[1] != 0:
+                raise ValueError(f"The {name} decoder cannot decode in windows (its output is not whole frames)")
+            graphs = self.decoder_graphs.get(name) or {}
+            if graphs:
+                frames = self.decoder_bucket(name, min(frames, max(graphs)))[0]
+            if context < 0 or 2 * context >= frames:
+                raise ValueError(f"The {name} decoder's window context must leave frames to keep: {frames} frames, {context} context")
+            windows[name] = (frames, context)
+        return windows
 
     def delivery_mode_id(self, mode: str | int | None) -> int:
         """A delivery mode's id (``controls.delivery_modes.ids``); 0 (spoken) when the bundle has none and none is asked."""
@@ -496,8 +525,13 @@ class Engine:
         latents = np.asarray(latents, np.float32).reshape(self.latent_dim, -1)
         context = np.zeros((self.latent_dim, 0), np.float32) if left is None else np.asarray(left, np.float32).reshape(self.latent_dim, -1)
         per_frame, short = self.decoder_rule(decoder)
+        if decoder in self.decoder_windows:
+            return self._decode_windowed(latents, context, decoder=decoder, voice=voice, language=language)
         graphs = self.decoder_graphs.get(decoder) or {}
         limit = max(graphs) if graphs else self.max_frames
+        if latents.shape[-1] > limit:   # (BigVGAN may stop below the flow's largest bucket)
+            raise OverlongError(f"{latents.shape[-1]} latent frames to decode, but the {decoder} decoder supports at most {limit}.",
+                                frames=latents.shape[-1], limit=limit)
         # Left context gives way to the sentence itself when both do not fit the largest bucket.
         keep = min(self.decode_context, max(0, limit - 1 - latents.shape[-1]))
         context = context[:, context.shape[-1] - min(keep, context.shape[-1]):]
@@ -516,6 +550,33 @@ class Engine:
         start, length = context.shape[-1] * per_frame, latents.shape[-1] * per_frame
         audio = audio[start:start + length]
         return np.clip(np.pad(audio, (0, length - audio.size)), -1.0, 1.0)
+
+    def _decode_windowed(self, latents: np.ndarray, context: np.ndarray, *, decoder: str, voice: str, language: str) -> np.ndarray:
+        """decode() through the window's one bucket graph (libscyllasband's Engine::decode_windowed): the sequence (up to
+        ``decoding.context_frames`` of left context, then the target) is decoded ``window`` frames at a time, each call
+        keeping the frames at least ``context`` from a cut inside the sequence; the last window ends at the sequence end and
+        moves left to decode a full window where it can."""
+        window_frames, overlap = self.decoder_windows[decoder]
+        window, graph = self.decoder_bucket(decoder, window_frames)
+        per_frame, _ = self.decoder_rule(decoder)
+        left = min(context.shape[-1], self.decode_context)
+        sequence = np.concatenate([context[:, context.shape[-1] - left:], latents], -1)
+        total = sequence.shape[-1]
+        out = np.zeros(latents.shape[-1] * per_frame, np.float32)
+        ids = dict(voice_id=_scalar(self.voice_index(voice)), language_id=_scalar(self.language_index(language)), emotion_id=_scalar(0))
+        start = left
+        while start < total:
+            first = max(0, min(start - overlap, total - window))
+            last = min(total, first + window)
+            keep = total if last == total else last - overlap
+            padded = np.zeros((1, self.latent_dim, window), np.float32)
+            padded[0, :, :last - first] = sequence[:, first:last]
+            audio = np.asarray(self._run(graph, latents=padded, latent_mask=_pad([True] * (last - first), window, False), **ids),
+                               np.float32).reshape(-1)
+            piece = audio[(start - first) * per_frame:(keep - first) * per_frame]
+            out[(start - left) * per_frame:(start - left) * per_frame + piece.size] = piece
+            start = keep
+        return np.clip(out, -1.0, 1.0)
 
     def _id_to_token(self, index: int) -> str:
         if not hasattr(self, "_tokens"):

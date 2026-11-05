@@ -202,6 +202,10 @@ class NativeRuntimeTest(unittest.TestCase):
         good = dict(bpm=120, notes=[["la", "C5", 1], ["-", "rest", 1], ["la", "D5", 1]])
         parsed = self.runtime.score_parse(good, transpose=2)
         self.assertEqual([n["midi"] for n in parsed["notes"]], [74, None, 76])
+        if not self.runtime.supports_singing:   # a spoken-only (v3) bundle parses scores but refuses to fit or sing them
+            with self.assertRaisesRegex(native.NativeInvalidArgument, "v4"):
+                self.runtime.sing_fit(good, "scylla")
+            return
         fit = self.runtime.sing_fit(good, "gwen")
         self.assertEqual(fit["register_shift"], -12)
         preview = self.runtime.sing_preview(good, "gwen")

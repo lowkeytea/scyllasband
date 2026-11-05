@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -536,6 +538,73 @@ class EngineTest(unittest.TestCase):
             _fake_engine().decode(np.zeros((24, 4), np.float32), voice="scylla", language="en_us", decoder="bigvgan")
 
 
+class DecoderWindowTest(unittest.TestCase):
+    """Windowed decoding (controls.decoders.<name>.window), as libscyllasband does it: with a BigVGAN stand-in whose
+    samples are their frame's first latent channel, windows stitched from the frames each keeps equal one whole decode."""
+
+    @staticmethod
+    def _engine(window=None, *, single_bucket=False):
+        tmp = tempfile.TemporaryDirectory()
+        bundle = _fake_bundle(Path(tmp.name), v4=True)
+        manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
+        if window is not None:
+            manifest["controls"]["decoders"]["bigvgan"]["window"] = window
+        if single_bucket:   # BigVGAN only at the 8-frame bucket
+            for entry in manifest["controls"]["target_buckets"]["buckets"]:
+                if entry["latent_frames"] != 8:
+                    entry.pop("vocoder_bigvgan")
+            del manifest["components"]["vocoder_bigvgan"]
+        (bundle / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        graphs = _FakeGraphs(1.0)
+        graphs.bigvgan_by_frame = True
+        engine = Engine(bundle, session_factory=graphs.factory)
+        engine._fake, engine._tmp = graphs, tmp
+        return engine
+
+    @staticmethod
+    def _latents(frames, base):
+        latents = np.full((24, frames), 0.5, np.float32)
+        latents[0] = base + np.arange(frames, dtype=np.float32) / 100
+        return latents
+
+    def test_windows_stitch_to_the_whole_decode(self):
+        whole, windowed = self._engine(), self._engine(dict(frames=8, context=2))
+        self.assertEqual(windowed.decoder_windows, {"bigvgan": (8, 2)})
+        latents = self._latents(13, 0.1)
+        want = whole.decode(latents, voice="scylla", language="en_us", decoder="bigvgan")
+        got = windowed.decode(latents, voice="scylla", language="en_us", decoder="bigvgan")
+        np.testing.assert_array_equal(got, want)
+        self.assertEqual([c["name"] for c in windowed._fake.calls], ["vocoder_bigvgan_8"] * 3)   # keeps [0, 6), [6, 10), [10, 13)
+        left = self._latents(5, 0.7)
+        np.testing.assert_array_equal(windowed.decode(latents, voice="scylla", language="en_us", left=left, decoder="bigvgan"),
+                                      whole.decode(latents, voice="scylla", language="en_us", left=left, decoder="bigvgan"))
+        short = self._latents(5, 0.3)
+        windowed._fake.calls.clear()
+        np.testing.assert_array_equal(windowed.decode(short, voice="scylla", language="en_us", decoder="bigvgan"),
+                                      whole.decode(short, voice="scylla", language="en_us", decoder="bigvgan"))
+        self.assertEqual([c["name"] for c in windowed._fake.calls], ["vocoder_bigvgan_8"])
+        # Vocos is unchanged by a BigVGAN window.
+        np.testing.assert_array_equal(windowed.decode(latents, voice="scylla", language="en_us"), whole.decode(latents, voice="scylla", language="en_us"))
+
+    def test_a_single_bucket_decodes_any_length(self):
+        engine = self._engine(dict(frames=8, context=2), single_bucket=True)
+        latents = self._latents(13, 0.1)
+        np.testing.assert_array_equal(engine.decode(latents, voice="scylla", language="en_us", decoder="bigvgan"),
+                                      self._engine().decode(latents, voice="scylla", language="en_us", decoder="bigvgan"))
+        with self.assertRaises(OverlongError):   # without its window the one bucket refuses longer decodes
+            self._engine(single_bucket=True).decode(latents, voice="scylla", language="en_us", decoder="bigvgan")
+
+    def test_bad_windows_and_the_environment(self):
+        with self.assertRaisesRegex(ValueError, "leave frames to keep"):
+            self._engine(dict(frames=8, context=4))
+        with mock.patch.dict(os.environ, {"SCYLLASBAND_DECODER_WINDOW": "bigvgan=8:3"}):
+            self.assertEqual(self._engine().decoder_windows, {"bigvgan": (8, 3)})
+        with mock.patch.dict(os.environ, {"SCYLLASBAND_DECODER_WINDOW": "bigvgan=0"}):
+            self.assertEqual(self._engine(dict(frames=8, context=2)).decoder_windows, {})
+        with mock.patch.dict(os.environ, {"SCYLLASBAND_DECODER_WINDOW": "vocos=8"}), self.assertRaisesRegex(ValueError, "whole frames"):
+            self._engine()
+
+
 class StreamingTargetTest(unittest.TestCase):
     """Fake durations: one frame per phone and silence, none for punctuation ("ab." 4 frames, "ab ab." 7); trained
     target range 6 to 12 frames."""
@@ -595,6 +664,7 @@ class _FakeGraphs:
 
     def __init__(self, frames_per_phone: float):
         self.frames_per_phone, self.calls = frames_per_phone, []
+        self.bigvgan_by_frame = False   # BigVGAN samples = their frame's first latent channel (0 where masked)
 
     def factory(self, name, spec):
         graphs = self
@@ -618,6 +688,9 @@ class _FakeGraphs:
                     return -feeds["noise"]
                 frames = feeds["latents"].shape[-1]
                 if name.startswith("vocoder_bigvgan"):
+                    if graphs.bigvgan_by_frame:
+                        values = np.where(feeds["latent_mask"][0], feeds["latents"][0, 0], 0.0).astype(np.float32)
+                        return np.repeat(values, 512)[None]
                     return np.ones((1, frames * 512), np.float32) * 0.2
                 return np.ones((1, frames * 512 - 256), np.float32) * 0.1
         return Session()
