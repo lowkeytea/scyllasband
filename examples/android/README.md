@@ -60,11 +60,11 @@ This links `libscyllasband` against ONNX Runtime 1.30.0 (`onnxruntime-android`) 
 
 `ScyllasBand.initialize(threadCount, accelerator)` takes `CPU`, `GPU` or `AUTO`. The sample uses `CPU` (XNNPACK, up to 4 threads), the default.
 
-CPU is fast enough: on a Galaxy Z Fold 8 (Snapdragon SM8850) the native runtime speaks a three-sentence passage (10.3 s of audio) with first audio about 0.52 s after launch (0.8 s on the first launch, which writes the weight cache) and 120 ms once warm, about 27 times faster than real time. The LiteRT GPU accelerator (OpenCL/OpenGL, `libLiteRtClGlAccelerator.so`) did not help there with this model: it cannot run the INT64 `CAST`/`ADD` and `GATHER_ND` ops, so graphs are split across the GPU and CPU, and
-- `AUTO` fails at the first invoke (`LITERT_OPENGL failed to invoke`, status 3, in the warmup). `initialize` then recreates the runtime on the CPU, so `AUTO` always ends up usable but only ever gives CPU speed here;
-- `GPU` failed to build a delegate kernel on the Adreno (`Unable to parse bc coord for BATCH axis`) and initialization never finished.
+CPU is fast enough for speech: on a Galaxy Z Fold 8 (Snapdragon SM8850) the native runtime speaks a three-sentence passage (10.3 s of audio) with first audio about 0.52 s after launch (0.8 s on the first launch, which writes the weight cache) and 120 ms once warm, about 27 times faster than real time.
 
-The Android emulator behaves like `AUTO` on the device: the GPU graphs compile but fail when invoked.
+For singing with BigVGAN use `AUTO` with a bundle that names BigVGAN as its GPU graph (`controls.litert.gpu.graphs`, written by datasetGen's LiteRT export with its channels-last BigVGAN graph): BigVGAN then runs on the GPU and every other graph on the CPU. On the Fold the 71 s example song renders in 33 s (2.2 times faster than real time, 764 MB) instead of 90 s on the CPU; the first launch after an install compiles the GPU program (first audio about 5 s), later launches load it from the cache next to the bundle. Turbo (Vocos) runs on the CPU either way.
+
+Don't put every graph on the GPU (`GPU`, or `AUTO` with a bundle that lists no GPU graphs): with LiteRT 2.2.0 the duration predictor returns wrong durations there (speech plays too fast), the flow is slower than on the CPU, and the v4-20261105 BigVGAN graph aborts the process in the GPU delegate.
 
 ## Delivery range
 

@@ -179,8 +179,12 @@ joins). A phrase shorter than the window is padded to it: a 3.6 s phrase (176 fr
 window than in its own 192-frame bucket. Only a decoder whose output is whole frames (BigVGAN) can window. A windowed
 decoder decodes any length, so a bundle may carry it at the window's bucket only (its phrase limit is then the flow's):
 the LiteRT bundle's BigVGAN as the one 256-frame signature peaks at 1.4 GB on the Fold for the same song, at the same
-speed. FP16 BigVGAN, as the Apple bundles carry it, does not help on LiteRT's CPU path: XNNPACK expands FP16 weights to
-FP32 when it loads them (more memory, same speed), and its FP16 compute mode cannot use the weight cache in LiteRT 2.2.0.
+speed. FP16 BigVGAN weights halve the download but cost memory on LiteRT's CPU path: XNNPACK expands them to FP32 when
+it loads them, and its FP16 compute mode cannot use the weight cache in LiteRT 2.2.0. They suit the GPU: a singing LiteRT
+bundle can name BigVGAN as its one GPU graph (`controls.litert.gpu: {"graphs": ["vocoder_bigvgan"], "precision":
+"fp16_fp32_accumulation"}`), so `SCYLLASBAND_ACCELERATOR_AUTO` sings through the GPU and speaks on the CPU. With
+datasetGen's channels-last BigVGAN graph (`full_retrain/bigvgan_nwc.py`; the v4-20261105 graph does not run on the GPU
+delegate) the Fold renders the 71 s song in 33 s at 764 MB, against 90 s on its CPU.
 
 `ScyllasBandRecordsRequest` and `ScyllasBandSingRequest` start with `struct_size`; initialize requests with their
 init function so a caller built against another layout gets an error instead of misread fields. Every 3.0.0 type and
