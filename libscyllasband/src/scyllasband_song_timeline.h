@@ -12,6 +12,15 @@
 
 namespace scyllasband {
 
+// singing.py gate_phrase: the model sometimes voices a breath or a syllable in a phrase's lead-in and closing rest, which is
+// not in the score, so a phrase's audio is silenced until kLeadGate seconds before its first note and faded out
+// kRelease seconds after its last sung note, with raised-cosine ramps of kGateRamp seconds.
+constexpr double kLeadGate = 0.04, kRelease = 0.25, kGateRamp = 0.03;
+
+// The gated copy of a phrase's audio; `first` and `last` are the first note's start and the last sung note's end, in seconds
+// from the start of the phrase's audio.
+std::vector<float> gate_phrase(const std::vector<float>& audio, int sample_rate, double first, double last);
+
 class SongTimeline {
 public:
     // `length`: the song's length in samples; `starts`: each phrase's first sample on the timeline, in phrase order

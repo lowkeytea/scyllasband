@@ -190,7 +190,7 @@ if(SCYLLASBAND_BUILD_TESTS)
         # Frontend modules alone (no SDK): configure with -DSCYLLASBAND_SANITIZE=ON to run them under ASan and UBSan.
         add_executable(scyllasband_frontend_test tests/scyllasband_frontend_test.cpp)
         target_link_libraries(scyllasband_frontend_test PRIVATE scyllasband_frontend)
-        foreach(_scyllasband_suite noise score timeline preview)
+        foreach(_scyllasband_suite noise score timeline preview gate)
             add_test(NAME scyllasband_frontend_${_scyllasband_suite}
                      COMMAND scyllasband_frontend_test ${_scyllasband_suite} "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
         endforeach()

@@ -105,7 +105,13 @@ Json sing_stream(Engine& engine, const Score& score, const SingRequest& request,
         decode.voice = voice;
         decode.language = language;
         decode.decoder = settings.decoder;
-        const std::vector<float> audio = engine.decode(result.latents, result.frames, decode);
+        // The lead-in and the closing rest are gated (singing.py gate_phrase): stray breaths and syllables there are not in the score.
+        double last_note = 0.0;
+        for (const ScoreNote& note : item.phrase.notes) {
+            if (note.midi) last_note = std::max(last_note, note.end);
+        }
+        const std::vector<float> audio = gate_phrase(engine.decode(result.latents, result.frames, decode), sample_rate,
+                                                     item.phrase.notes.front().start, last_note);
         const int64_t offset = starts[static_cast<std::size_t>(item.index)];
         // The part of the phrase on the song's timeline (a lead-in before the song's start is cut).
         const int64_t placed = static_cast<int64_t>(audio.size()) - std::min<int64_t>(std::max<int64_t>(-offset, 0), static_cast<int64_t>(audio.size()));

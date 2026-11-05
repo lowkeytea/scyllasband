@@ -185,6 +185,24 @@ void preview_suite(const std::string&) {
     expect(silent && peak > 0.1f && peak <= 0.3f && std::fabs(tones[0]) < 1e-3f, "preview is silent on rests, soft, and starts without a click");
 }
 
+
+// singing.py's GateTest: the lead-in before (first - kLeadGate) is silent, the ramp rises to full, the middle is untouched,
+// the release falls and then stays silent, and a phrase with nothing to gate is unchanged.
+void gate_suite(const std::string&) {
+    const int sr = 1000;
+    const std::vector<float> audio(2000, 1.0f);
+    const std::vector<float> out = scyllasband::gate_phrase(audio, sr, 0.12, 1.0);
+    const int lead = static_cast<int>((0.12 - scyllasband::kLeadGate) * sr), release = static_cast<int>((1.0 + scyllasband::kRelease) * sr);
+    expect(audio[0] == 1.0f, "the input is untouched");
+    expect(std::all_of(out.begin(), out.begin() + lead, [](float v) { return v == 0.0f; }), "the lead-in is silent");
+    expect(std::fabs(out[static_cast<std::size_t>(lead + 30)] - 1.0f) < 1e-5f && out[500] == 1.0f, "full level after the ramp and in the middle");
+    expect(std::all_of(out.begin() + release + 30, out.end(), [](float v) { return v == 0.0f; }), "silent after the release");
+    bool falling = true;
+    for (int i = release + 1; i < release + 30; ++i) falling = falling && out[static_cast<std::size_t>(i)] <= out[static_cast<std::size_t>(i - 1)];
+    expect(falling, "the release ramp falls");
+    expect(scyllasband::gate_phrase(std::vector<float>(10, 1.0f), sr, 0.0, 5.0) == std::vector<float>(10, 1.0f), "nothing to gate");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -197,6 +215,7 @@ int main(int argc, char** argv) {
         {"score", score_suite},
         {"timeline", timeline_suite},
         {"preview", preview_suite},
+        {"gate", gate_suite},
     };
     const auto suite = suites.find(argv[1]);
     if (suite == suites.end()) {

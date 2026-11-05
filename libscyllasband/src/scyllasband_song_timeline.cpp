@@ -1,9 +1,36 @@
 #include "scyllasband_song_timeline.h"
 
 #include <algorithm>
+#include <cmath>
 #include <stdexcept>
 
 namespace scyllasband {
+
+std::vector<float> gate_phrase(const std::vector<float>& input, int sample_rate, double first, double last) {
+    std::vector<float> audio = input;
+    const int64_t size = static_cast<int64_t>(audio.size());
+    // np.linspace(0, pi, ramp, dtype=float32), then 0.5 - 0.5 * cos in float32, as singing.py computes the ramp.
+    const int64_t ramp = std::max<int64_t>(1, static_cast<int64_t>(kGateRamp * sample_rate));
+    std::vector<float> rise(static_cast<std::size_t>(ramp));
+    const double pi = 3.141592653589793;
+    for (int64_t i = 0; i < ramp; ++i) {
+        const float x = ramp > 1 ? static_cast<float>(pi * static_cast<double>(i) / static_cast<double>(ramp - 1)) : 0.0f;
+        rise[static_cast<std::size_t>(i)] = 0.5f - 0.5f * std::cos(x);
+    }
+    const int64_t start = std::max<int64_t>(0, static_cast<int64_t>((first - kLeadGate) * sample_rate));
+    if (start > 0) {
+        for (int64_t i = 0; i < std::min(start, size); ++i) audio[static_cast<std::size_t>(i)] = 0.0f;
+        const int64_t count = std::max<int64_t>(0, std::min(ramp, size - start));
+        for (int64_t i = 0; i < count; ++i) audio[static_cast<std::size_t>(start + i)] *= rise[static_cast<std::size_t>(i)];
+    }
+    const int64_t end = static_cast<int64_t>((last + kRelease) * sample_rate);
+    if (end < size) {
+        const int64_t count = std::max<int64_t>(0, std::min(ramp, size - end));
+        for (int64_t i = 0; i < count; ++i) audio[static_cast<std::size_t>(end + i)] *= rise[static_cast<std::size_t>(ramp - 1 - i)];
+        for (int64_t i = end + count; i < size; ++i) audio[static_cast<std::size_t>(i)] = 0.0f;
+    }
+    return audio;
+}
 
 SongTimeline::SongTimeline(int64_t length, std::vector<int64_t> starts) : length_(std::max<int64_t>(0, length)), starts_(std::move(starts)) {
     for (std::size_t i = 1; i < starts_.size(); ++i) {
