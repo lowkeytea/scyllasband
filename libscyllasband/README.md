@@ -239,9 +239,11 @@ The library target is `scyllasband_native` (alias `scyllasband::native`). Only `
 exported. On Android, pass the `libLiteRt.so` from the `com.google.ai.edge.litert:litert` AAR or the
 `libonnxruntime.so` from the `com.microsoft.onnxruntime:onnxruntime-android` AAR for `${ANDROID_ABI}`.
 
-LiteRT runs on CPU through XNNPACK. `SCYLLASBAND_ACCELERATOR_GPU` and `_AUTO` load the GPU accelerator
-library from the directory of `libLiteRt` and run the ops it supports on the GPU, the rest on the CPU; with
-`_AUTO`, a graph that the GPU accelerator cannot compile runs entirely on the CPU instead of failing.
+LiteRT runs on CPU through XNNPACK. `SCYLLASBAND_ACCELERATOR_GPU` loads the GPU accelerator library from the directory of
+`libLiteRt` and runs every graph's supported ops on the GPU, the rest on the CPU. `_AUTO` puts only the graphs the bundle
+lists in `controls.litert.gpu.graphs` on the GPU (a singing bundle lists BigVGAN) and runs everything else on the CPU, and
+every graph of a bundle that lists none: with LiteRT 2.2.0 the duration predictor returns wrong durations on the GPU. A
+graph the GPU accelerator cannot compile runs entirely on the CPU instead of failing.
 
 ## Command-line tool
 

@@ -7,7 +7,7 @@
 // signatures, the original weights are released after upload, and compiled programs are cached in the same
 // directory. The bundle can set the GPU precision (controls.litert.gpu.precision: fp16, fp32 or
 // fp16_fp32_accumulation), allow int8 weights (controls.litert.gpu.quantized_weights) and name the graph files that use
-// the GPU (controls.litert.gpu.graphs, file names without .tflite; the others run on the CPU; default all);
+// the GPU (controls.litert.gpu.graphs, file names without .tflite; the others run on the CPU; GPU: default all, AUTO: none);
 // SCYLLASBAND_GPU_PRECISION, SCYLLASBAND_GPU_PRIORITY (low, normal, high) and SCYLLASBAND_GPU_GRAPHS (comma-separated)
 // override for a device; SCYLLASBAND_GPU_TOML and SCYLLASBAND_CPU_TOML pass raw options for experiments. Options travel as LiteRT opaque TOML
 // payloads ("xnnpack", "gpu_options"): libLiteRt 2.2.0 does not export the typed option setters.
@@ -410,6 +410,9 @@ public:
         std::shared_ptr<Model>& model = models_[path];
         if (!model) {
             int accelerator = options_.accelerator;
+            // AUTO puts only the graphs the bundle lists (controls.litert.gpu.graphs) on the GPU: with LiteRT 2.2.0 some graphs
+            // give wrong results there (the duration predictor's durations), so a bundle that lists none runs on the CPU.
+            if (accelerator == SCYLLASBAND_ACCELERATOR_AUTO && settings_.gpu_graphs.empty()) accelerator = SCYLLASBAND_ACCELERATOR_CPU;
             if (accelerator != SCYLLASBAND_ACCELERATOR_CPU && !settings_.gpu_graphs.empty()) {
                 const std::string stem = std::filesystem::path(path).stem().string();
                 if (std::find(settings_.gpu_graphs.begin(), settings_.gpu_graphs.end(), stem) == settings_.gpu_graphs.end()) {

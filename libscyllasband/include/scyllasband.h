@@ -42,8 +42,9 @@ typedef enum {
 typedef enum {
     SCYLLASBAND_ACCELERATOR_CPU = 0,
     SCYLLASBAND_ACCELERATOR_GPU = 1,  /* LiteRT GPU, with CPU for unsupported ops */
-    SCYLLASBAND_ACCELERATOR_AUTO = 2,  /* LiteRT: GPU when the graphs compile for it, else CPU. Core ML / Core AI: the bundle's
-                                          recommended compute unit per graph */
+    SCYLLASBAND_ACCELERATOR_AUTO = 2,  /* LiteRT: the GPU for the graphs the bundle lists (controls.litert.gpu.graphs) when they
+                                          compile for it, the CPU for the rest (every graph when it lists none). Core ML / Core AI:
+                                          the bundle's recommended compute unit per graph */
     SCYLLASBAND_ACCELERATOR_NEURAL_ENGINE = 3  /* Core ML / Core AI: the graphs the bundle lists as accurate on the Neural
                                                   Engine run there, the rest on the CPU (usable from background apps) */
 } ScyllasBandAccelerator;
