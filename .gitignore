@@ -230,3 +230,6 @@ scyllasband/models_release
 
 # The iOS sample's per-machine settings (signing team)
 examples/ios/Config/Local.xcconfig
+
+# Native libraries built by python -m scyllasband build-native
+scyllasband/_native/

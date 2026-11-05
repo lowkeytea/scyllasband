@@ -53,6 +53,13 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     normalize.add_argument("--language", default="en_us")
     normalize.set_defaults(func=_normalize)
 
+    build = sub.add_parser("build-native", help="build libscyllasband from this checkout into scyllasband/_native/ for --engine native",
+                           allow_abbrev=False)
+    build.add_argument("--backend", choices=("litert", "apple", "onnx"), default="litert",
+                       help="graph runtime to link: litert (default), apple (Core ML and Core AI, macOS) or onnx")
+    build.add_argument("--jobs", type=int, help="parallel build jobs")
+    build.set_defaults(func=_build_native)
+
     for name, func, help_text in (("speak", _speak, "speak text into a WAV file"),
                                   ("group-speak", _group_speak, "speak [voice:language:delivery] tagged dialogue"),
                                   ("stream", _stream, "speak passage by passage, printing JSON events"),
@@ -125,6 +132,11 @@ def _add_bundle_args(parser: argparse.ArgumentParser) -> None:
                                                 "per graph, e.g. gpu,g2p=cpu. ONNX Runtime: cpu (default) or gpu (NVIDIA, "
                                                 "CUDA; uses the webgpu bundle)")
     parser.add_argument("--no-validate-bundle", action="store_true")
+    parser.add_argument("--engine", choices=("native", "python"),
+                        help="native: libscyllasband, the runtime the apps use (python -m scyllasband build-native builds it); python: "
+                             "this package's engine. Default: SCYLLASBAND_ENGINE, else native where a library for the bundle's "
+                             "backend is found (LiteRT; Core ML and Core AI on macOS), else python. A seed gives a different take "
+                             "on each engine (each draws its own noise)")
 
 
 # --- commands --------------------------------------------------------------------------------------------------------
@@ -252,9 +264,17 @@ def _default_bundle(args: argparse.Namespace) -> Path:
     return path
 
 
-def _runtime(args: argparse.Namespace) -> ScyllasBandRuntime:
-    return ScyllasBandRuntime.from_bundle(args.bundle or _default_bundle(args), backend=args.backend, threads=args.threads,
-                                          compute_units=args.compute_units, validate=not args.no_validate_bundle)
+def _runtime(args: argparse.Namespace):
+    """The one place the CLI picks its engine (scyllasband.native.open_runtime)."""
+    from .native import open_runtime
+    return open_runtime(args.bundle or _default_bundle(args), engine=getattr(args, "engine", None), backend=args.backend, threads=args.threads,
+                        compute_units=args.compute_units, validate=not args.no_validate_bundle)
+
+
+def _build_native(args: argparse.Namespace) -> int:
+    from .build_native import build_native
+    print(build_native(args.backend, jobs=args.jobs))
+    return 0
 
 
 def _options(args: argparse.Namespace) -> dict:

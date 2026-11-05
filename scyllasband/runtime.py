@@ -16,6 +16,7 @@ from .text_normalizer import normalize_spoken_text
 
 SUPPORTED_BACKENDS = ("onnx", "litert", "coreml", "coreai")
 SUPPORTED_SAMPLERS = ("heun", "euler")
+PYTHON_NOISE = "numpy-pcg64"   # this engine's noise (numpy.random.default_rng); the native runtime's is xoshiro256**
 
 
 @dataclass(frozen=True)
@@ -160,7 +161,7 @@ class ScyllasBandRuntime:
         metadata.update(backend=self.backend, bundle_dir=str(self.bundle_dir), voice_id=request.voice_id,
                         language=plan.chunks[0].language,
                         delivery=self.engine.delivery_inputs(request.voice_id, plan.chunks[0].delivery)[3], steps=options.steps,
-                        sampler=options.sampler, speed=options.speed, seed=request.seed)
+                        sampler=options.sampler, speed=options.speed, seed=request.seed, engine="python", noise=PYTHON_NOISE)
         return SynthesisResult(audio=audio, sample_rate=sample_rate, metadata=metadata)
 
     def synthesize_stream(self, records: Sequence[Mapping[str, Any]], *, normalize: bool = True, progress: TextIO | None = None,
@@ -172,7 +173,7 @@ class ScyllasBandRuntime:
                        **options: Any) -> SynthesisResult:
         plan = self.plan_records(records, normalize=normalize)
         audio, sample_rate, metadata = render_plan(self.engine, plan, self.stream_options(**options), progress=progress)
-        return SynthesisResult(audio=audio, sample_rate=sample_rate, metadata=dict(metadata, backend=self.backend))
+        return SynthesisResult(audio=audio, sample_rate=sample_rate, metadata=dict(metadata, backend=self.backend, engine="python", noise=PYTHON_NOISE))
 
     # --- singing ------------------------------------------------------------------------------------------------------
     @property
@@ -196,7 +197,7 @@ class ScyllasBandRuntime:
         language = self.resolve_language_for_voice(voice_id, language)
         result = sing_score(self.engine, score, voice_id, language, seed=seed, steps=steps, sampler=sampler, decoder=decoder,
                             guidance=guidance, register=register, transpose=transpose, progress=progress)
-        result.metadata.update(backend=self.backend, bundle_dir=str(self.bundle_dir), voice_id=voice_id)
+        result.metadata.update(backend=self.backend, bundle_dir=str(self.bundle_dir), voice_id=voice_id, engine="python", noise=PYTHON_NOISE)
         return result
 
     def warmup(self, *, voice_id: str | None = None) -> dict[str, Any]:

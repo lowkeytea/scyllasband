@@ -31,7 +31,9 @@ from pathlib import Path
 
 import numpy as np
 
-DELIVERY = "intensity=1.5,pace=-1,pitch=1.5"   # every control away from the default, on one sentence per voice
+from scyllasband.native import Audio, EventCallback, RecordsRequest, Request, RuntimeOptions, SingRequest
+
+DELIVERY ="intensity=1.5,pace=-1,pitch=1.5"   # every control away from the default, on one sentence per voice
 TEXTS = (
     ("exclamatory", "You thought the clock had run out, but the referee was still watching the ball! There's one more play! We're still in this!"),
     ("trailing", "I kept the letter for years... I never opened it. Maybe I was afraid of what it would say..."),
@@ -95,16 +97,15 @@ FRONTEND_EXTRA = {
 
 
 class Native:
+    """The library through scyllasband.native (its C API declarations and structures), plus the test entry points
+    (src/scyllasband_test_api.h) the comparisons need."""
+
     def __init__(self, path: str):
-        lib = ctypes.CDLL(path)
+        from scyllasband.native import NativeLibrary, TestNoise
+        self.library = NativeLibrary(path)   # declares the public API, checks the ABI version and the request structure sizes
+        lib = self.library.lib
         self.lib = lib
         c = ctypes
-        lib.scyllasband_backend.restype = c.c_char_p
-        lib.scyllasband_last_error.restype = c.c_char_p
-        lib.scyllasband_voices_json.restype = c.c_char_p
-        lib.scyllasband_voices_json.argtypes = [c.c_void_p]
-        lib.scyllasband_runtime_create.argtypes = [c.c_void_p, c.POINTER(c.c_void_p)]
-        lib.scyllasband_runtime_destroy.argtypes = [c.c_void_p]
         lib.scyllasband_test_free.argtypes = [c.c_void_p]
         for name in ("scyllasband_test_normalize",):
             getattr(lib, name).argtypes = [c.c_char_p, c.c_char_p, c.POINTER(c.c_void_p)]
@@ -115,14 +116,8 @@ class Native:
         lib.scyllasband_test_synthesize_sentence.argtypes = [
             c.c_void_p, c.c_char_p, c.POINTER(c.c_float), c.c_int64, c.POINTER(c.c_float), c.c_int64, c.POINTER(c.c_void_p),
             c.POINTER(c.c_void_p), c.POINTER(c.c_int64), c.POINTER(c.c_void_p), c.POINTER(c.c_int64)]
-        lib.scyllasband_plan_json.argtypes = [c.c_void_p, c.c_void_p, c.POINTER(c.c_void_p)]
-        lib.scyllasband_synthesize.argtypes = [c.c_void_p, c.c_void_p, c.c_void_p]
-        lib.scyllasband_audio_free.argtypes = [c.c_void_p]
-        lib.scyllasband_request_init.argtypes = [c.c_void_p]
-        lib.scyllasband_sing_request_init.argtypes = [c.c_void_p]
-        lib.scyllasband_sing.argtypes = [c.c_void_p, c.c_void_p, c.c_void_p]
         lib.scyllasband_test_sing_plan.argtypes = [c.c_void_p, c.c_void_p, c.POINTER(c.c_void_p)]
-        self.noise_type = c.CFUNCTYPE(None, c.c_int32, c.c_uint64, c.c_int32, c.c_int32, c.c_int64, c.POINTER(c.c_float), c.c_void_p)
+        self.noise_type = TestNoise
         lib.scyllasband_test_set_noise.argtypes = [c.c_void_p, self.noise_type, c.c_void_p]
         self.runtime = None
 
@@ -143,15 +138,12 @@ class Native:
             raise RuntimeError(f"{what} failed ({status}): {self.error()}")
 
     def open(self, bundle: str, accelerator: int = 0) -> None:
-        class Options(ctypes.Structure):
-            _fields_ = [("bundle_dir", ctypes.c_char_p), ("threads", ctypes.c_int32), ("accelerator", ctypes.c_int)]
-        options = Options(bundle.encode(), 0, accelerator)
+        options = RuntimeOptions(bundle.encode(), 0, accelerator)
         runtime = ctypes.c_void_p()
         self._check(self.lib.scyllasband_runtime_create(ctypes.byref(options), ctypes.byref(runtime)), "runtime_create")
         self.runtime = runtime
 
     def warmup(self, voice: str) -> None:
-        self.lib.scyllasband_warmup.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
         self._check(self.lib.scyllasband_warmup(self.runtime, voice.encode()), "warmup")
 
     def close(self) -> None:
@@ -206,10 +198,6 @@ class Native:
         return meta, lat.reshape(-1, noise.shape[-1]), wav
 
     def _request(self, text: str, voice: str, seed: int | None, steps: int = 0, sampler: str | None = None, delivery: str | None = None):
-        class Request(ctypes.Structure):
-            _fields_ = [("text", ctypes.c_char_p), ("voice_id", ctypes.c_char_p), ("language", ctypes.c_char_p), ("delivery", ctypes.c_char_p),
-                        ("speed", ctypes.c_float), ("steps", ctypes.c_int32), ("sampler", ctypes.c_int), ("seed", ctypes.c_uint64),
-                        ("has_seed", ctypes.c_int32), ("temperature", ctypes.c_float), ("normalize_text", ctypes.c_int32)]
         request = Request()
         self.lib.scyllasband_request_init(ctypes.byref(request))
         request.text, request.voice_id = text.encode(), voice.encode()
@@ -229,9 +217,6 @@ class Native:
         return json.loads(value)
 
     def synthesize(self, text: str, voice: str, seed: int, noise=None, steps: int = 0, sampler: str | None = None):
-        class Audio(ctypes.Structure):
-            _fields_ = [("samples", ctypes.POINTER(ctypes.c_float)), ("sample_count", ctypes.c_int64), ("sample_rate", ctypes.c_int32),
-                        ("metadata_json", ctypes.c_char_p)]
         callback = self.noise_type(noise) if noise is not None else self.noise_type()
         self.lib.scyllasband_test_set_noise(self.runtime, callback, None)
         request, audio = self._request(text, voice, seed, steps, sampler), Audio()
@@ -244,19 +229,10 @@ class Native:
             self.lib.scyllasband_test_set_noise(self.runtime, self.noise_type(), None)
         return samples, meta
 
-
-    class SingRequest(ctypes.Structure):
-        _fields_ = [("struct_size", ctypes.c_uint32), ("score_json", ctypes.c_char_p), ("voice_id", ctypes.c_char_p), ("language", ctypes.c_char_p),
-                    ("transpose", ctypes.c_int32), ("use_register", ctypes.c_int32), ("steps", ctypes.c_int32), ("sampler", ctypes.c_int),
-                    ("seed", ctypes.c_uint64), ("has_seed", ctypes.c_int32), ("guidance", ctypes.c_float), ("has_guidance", ctypes.c_int32),
-                    ("decoder", ctypes.c_char_p)]
-
     def _sing_request(self, score: dict, voice: str, *, seed: int | None = None, decoder: str | None = None, transpose: int = 0,
                       register: bool = True):
-        request = self.SingRequest()
+        request = SingRequest()   # its size against the library's was checked when the library loaded
         self.lib.scyllasband_sing_request_init(ctypes.byref(request))
-        if request.struct_size != ctypes.sizeof(self.SingRequest):   # the library's layout differs from this declaration
-            raise RuntimeError(f"ScyllasBandSingRequest is {request.struct_size} bytes in the library, {ctypes.sizeof(self.SingRequest)} here")
         request._score = json.dumps(score).encode()   # keep the bytes alive with the request
         request.score_json, request.voice_id = request._score, voice.encode()
         if seed is not None:
@@ -273,9 +249,6 @@ class Native:
         return json.loads(self._take_text(out))
 
     def sing(self, score: dict, voice: str, seed: int, noise=None, **kwargs):
-        class Audio(ctypes.Structure):
-            _fields_ = [("samples", ctypes.POINTER(ctypes.c_float)), ("sample_count", ctypes.c_int64), ("sample_rate", ctypes.c_int32),
-                        ("metadata_json", ctypes.c_char_p)]
         callback = self.noise_type(noise) if noise is not None else self.noise_type()
         self.lib.scyllasband_test_set_noise(self.runtime, callback, None)
         request, audio = self._sing_request(score, voice, seed=seed, **kwargs), Audio()
@@ -288,22 +261,10 @@ class Native:
             self.lib.scyllasband_test_set_noise(self.runtime, self.noise_type(), None)
         return samples, meta
 
-    class RecordsRequest(ctypes.Structure):
-        _fields_ = [("struct_size", ctypes.c_uint32), ("records_json", ctypes.c_char_p), ("speed", ctypes.c_float), ("steps", ctypes.c_int32),
-                    ("sampler", ctypes.c_int), ("seed", ctypes.c_uint64), ("has_seed", ctypes.c_int32), ("temperature", ctypes.c_float),
-                    ("normalize_text", ctypes.c_int32), ("pause_ms", ctypes.c_float)]
-
-    class Event(ctypes.Structure):
-        _fields_ = [("type", ctypes.c_int), ("chunk_index", ctypes.c_int32), ("chunk_count", ctypes.c_int32), ("chunk_id", ctypes.c_char_p),
-                    ("metadata_json", ctypes.c_char_p), ("samples", ctypes.POINTER(ctypes.c_float)), ("sample_count", ctypes.c_int64),
-                    ("sample_rate", ctypes.c_int32)]
-
     def _records_request(self, records: list, *, seed: int | None = None, steps: int = 0, sampler: str | None = None, pause_ms: float = 0.0,
                          normalize: bool = True):
-        request = self.RecordsRequest()
+        request = RecordsRequest()   # its size against the library's was checked when the library loaded
         self.lib.scyllasband_records_request_init(ctypes.byref(request))
-        if request.struct_size != ctypes.sizeof(self.RecordsRequest):
-            raise RuntimeError(f"ScyllasBandRecordsRequest is {request.struct_size} bytes in the library, {ctypes.sizeof(self.RecordsRequest)} here")
         request._records = json.dumps(records).encode()
         request.records_json = request._records
         request.steps, request.sampler, request.pause_ms, request.normalize_text = steps, {None: 0, "heun": 1, "euler": 2}[sampler], pause_ms, int(normalize)
@@ -314,13 +275,11 @@ class Native:
     def records_plan(self, records: list, normalize: bool = True) -> dict:
         out = ctypes.c_void_p()
         request = self._records_request(records, normalize=normalize)
-        self.lib.scyllasband_plan_records_json.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
         self._check(self.lib.scyllasband_plan_records_json(self.runtime, ctypes.byref(request), ctypes.byref(out)), "plan_records_json")
         return json.loads(self._take_text(out))
 
     def records_stream(self, records: list, seed: int, noise=None, **kwargs):
         """The whole stream's audio and the AUDIO events' metadata."""
-        callback_type = ctypes.CFUNCTYPE(ctypes.c_int32, ctypes.POINTER(self.Event), ctypes.c_void_p)
         pieces, metas = [], []
 
         def on_event(event, _user):
@@ -330,11 +289,10 @@ class Native:
                 metas.append(json.loads(e.metadata_json.decode()))
             return 0
 
-        callback = callback_type(on_event)
+        callback = EventCallback(on_event)
         noise_callback = self.noise_type(noise) if noise is not None else self.noise_type()
         self.lib.scyllasband_test_set_noise(self.runtime, noise_callback, None)
         request = self._records_request(records, seed=seed, **kwargs)
-        self.lib.scyllasband_synthesize_records_stream.argtypes = [ctypes.c_void_p, ctypes.c_void_p, callback_type, ctypes.c_void_p]
         try:
             self._check(self.lib.scyllasband_synthesize_records_stream(self.runtime, ctypes.byref(request), callback, None), "records_stream")
         finally:
