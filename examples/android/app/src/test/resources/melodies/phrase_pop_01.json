@@ -1,0 +1,48 @@
+{
+ "text": "the river runs down to the sea",
+ "bpm": 110,
+ "style": "pop",
+ "notes": [
+  [
+   "the",
+   "D4",
+   0.5
+  ],
+  [
+   "ri~1",
+   "E4",
+   0.5
+  ],
+  [
+   "ver~2",
+   "F#4",
+   0.5
+  ],
+  [
+   "runs",
+   "A4",
+   1
+  ],
+  [
+   "down",
+   "G4",
+   0.5
+  ],
+  [
+   "to",
+   "F#4",
+   0.5
+  ],
+  [
+   "the",
+   "E4",
+   0.5
+  ],
+  [
+   "sea",
+   "D4",
+   1.5
+  ]
+ ],
+ "source": "example"
+}

@@ -6,6 +6,7 @@ plugins {
 val scyllasbandBackend = (findProperty("scyllasband.backend") as String?)?.lowercase() ?: "litert"
 val repositoryRoot = projectDir.resolve("../../..").canonicalFile
 val scyllasbandBundleDir = repositoryRoot.resolve("scyllasband/models/$scyllasbandBackend")
+val scyllasbandMelodiesDir = repositoryRoot.resolve("scyllasband/models/melodies")
 val exampleDataDir = repositoryRoot.resolve("data")
 val generatedAssetsDir = layout.buildDirectory.dir("generated/scyllasbandAssets/main")
 
@@ -18,7 +19,14 @@ val prepareScyllasBandAssets by tasks.registering(Sync::class) {
         }
     }
     from(scyllasbandBundleDir) {
+        // The runtime's caches (packed weights, GPU programs) and the download record stay out of the APK.
+        exclude("**/*.xnnpack-cache", "**/*_mldrift_program_cache.bin", "download_provenance.json")
         into("scyllasband/bundle")
+    }
+    // The singing release's example scores (the Sing screen's Examples), installed beside the bundles by `download`.
+    from(scyllasbandMelodiesDir) {
+        include("*.json")
+        into("scyllasband/melodies")
     }
     from(exampleDataDir) {
         include("walkthrough_demo.txt", "test_document.txt", "emotional_text.txt")
@@ -92,6 +100,7 @@ dependencies {
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
     testImplementation(libs.junit)
+    testImplementation("org.json:json:20240303")
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
 }

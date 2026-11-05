@@ -1,0 +1,53 @@
+{
+ "text": "hold on tight we are nearly home",
+ "bpm": 104,
+ "style": "pop",
+ "notes": [
+  [
+   "hold",
+   "E4",
+   0.5
+  ],
+  [
+   "on",
+   "G4",
+   0.5
+  ],
+  [
+   "tight",
+   "A4",
+   1
+  ],
+  [
+   "-",
+   "rest",
+   0.5
+  ],
+  [
+   "we",
+   "G4",
+   0.5
+  ],
+  [
+   "are",
+   "F#4",
+   0.5
+  ],
+  [
+   "near~1",
+   "E4",
+   0.5
+  ],
+  [
+   "ly~2",
+   "D4",
+   0.5
+  ],
+  [
+   "home",
+   "C4",
+   1.5
+  ]
+ ],
+ "source": "example"
+}

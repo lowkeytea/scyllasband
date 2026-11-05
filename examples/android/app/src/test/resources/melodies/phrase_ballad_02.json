@@ -1,0 +1,53 @@
+{
+ "text": "hold on tight we are nearly home",
+ "bpm": 84,
+ "style": "ballad",
+ "notes": [
+  [
+   "hold",
+   "E4",
+   1.5
+  ],
+  [
+   "on",
+   "G4",
+   0.5
+  ],
+  [
+   "tight",
+   "A4",
+   2
+  ],
+  [
+   "-",
+   "rest",
+   1
+  ],
+  [
+   "we",
+   "G4",
+   0.5
+  ],
+  [
+   "are",
+   "F#4",
+   0.5
+  ],
+  [
+   "near~1",
+   "E4",
+   1
+  ],
+  [
+   "ly~2",
+   "D4",
+   1
+  ],
+  [
+   "home",
+   "C4",
+   3
+  ]
+ ],
+ "source": "example"
+}

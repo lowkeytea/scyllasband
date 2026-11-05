@@ -1,0 +1,53 @@
+{
+ "text": "every morning i wake up singing",
+ "bpm": 110,
+ "style": "ballad",
+ "notes": [
+  [
+   "ev~1",
+   "G4",
+   0.5
+  ],
+  [
+   "ery~2",
+   "G4",
+   0.5
+  ],
+  [
+   "mor~1",
+   "A4",
+   1
+  ],
+  [
+   "ning~2",
+   "G4",
+   1
+  ],
+  [
+   "i",
+   "E4",
+   1
+  ],
+  [
+   "wake",
+   "F4",
+   1
+  ],
+  [
+   "up",
+   "G4",
+   1
+  ],
+  [
+   "sing~1",
+   "E4",
+   1.5
+  ],
+  [
+   "ing~2",
+   "D4",
+   1.5
+  ]
+ ],
+ "source": "example"
+}

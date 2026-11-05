@@ -1,0 +1,63 @@
+{
+ "text": "give me a ring baby make me feel so",
+ "bpm": 92,
+ "style": "ballad",
+ "notes": [
+  [
+   "give",
+   "C4",
+   1
+  ],
+  [
+   "me",
+   "D4",
+   0.5
+  ],
+  [
+   "a",
+   "E4",
+   0.5
+  ],
+  [
+   "ring",
+   "G4",
+   2
+  ],
+  [
+   "-",
+   "rest",
+   0.5
+  ],
+  [
+   "ba~1",
+   "E4",
+   1
+  ],
+  [
+   "by~2",
+   "D4",
+   1
+  ],
+  [
+   "make",
+   "C4",
+   1
+  ],
+  [
+   "me",
+   "D4",
+   1
+  ],
+  [
+   "feel",
+   "E4",
+   2
+  ],
+  [
+   "so",
+   "C4",
+   2
+  ]
+ ],
+ "source": "example"
+}

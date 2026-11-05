@@ -1,0 +1,2959 @@
+{
+ "bpm": 108.0,
+ "lines": [
+  {
+   "first": 0,
+   "last": 10
+  },
+  {
+   "first": 11,
+   "last": 25
+  },
+  {
+   "first": 26,
+   "last": 37
+  },
+  {
+   "first": 38,
+   "last": 55
+  },
+  {
+   "first": 56,
+   "last": 64
+  },
+  {
+   "first": 65,
+   "last": 74
+  },
+  {
+   "first": 75,
+   "last": 83
+  },
+  {
+   "first": 84,
+   "last": 93
+  },
+  {
+   "first": 94,
+   "last": 102
+  },
+  {
+   "first": 103,
+   "last": 117
+  },
+  {
+   "first": 118,
+   "last": 130
+  },
+  {
+   "first": 131,
+   "last": 147
+  },
+  {
+   "first": 148,
+   "last": 156
+  },
+  {
+   "first": 157,
+   "last": 166
+  },
+  {
+   "first": 167,
+   "last": 175
+  },
+  {
+   "first": 176,
+   "last": 185
+  }
+ ],
+ "mode": "sung",
+ "notes": [
+  {
+   "beats": 0.5,
+   "end": 0.2778,
+   "index": 0,
+   "label": "Streetlights~1",
+   "midi": 52,
+   "note": "E3",
+   "part": 1,
+   "start": 0.0,
+   "word_index": 0
+  },
+  {
+   "beats": 0.5,
+   "end": 0.5556,
+   "index": 1,
+   "label": "Streetlights~2",
+   "midi": 56,
+   "note": "G#3",
+   "part": 2,
+   "start": 0.2778,
+   "word_index": 0
+  },
+  {
+   "beats": 0.5,
+   "end": 0.8333,
+   "index": 2,
+   "label": "flicker~1",
+   "midi": 54,
+   "note": "F#3",
+   "part": 1,
+   "start": 0.5556,
+   "word_index": 1
+  },
+  {
+   "beats": 0.25,
+   "end": 0.9722,
+   "index": 3,
+   "label": "flicker~2",
+   "midi": 56,
+   "note": "G#3",
+   "part": 2,
+   "start": 0.8333,
+   "word_index": 1
+  },
+  {
+   "beats": 0.5,
+   "end": 1.25,
+   "index": 4,
+   "label": "on",
+   "midi": 56,
+   "note": "G#3",
+   "part": 1,
+   "start": 0.9722,
+   "word_index": 2
+  },
+  {
+   "beats": 0.5,
+   "end": 1.5278,
+   "index": 5,
+   "label": "the",
+   "midi": 56,
+   "note": "G#3",
+   "part": 1,
+   "start": 1.25,
+   "word_index": 3
+  },
+  {
+   "beats": 0.5,
+   "end": 1.8056,
+   "index": 6,
+   "label": "water~1",
+   "midi": 52,
+   "note": "E3",
+   "part": 1,
+   "start": 1.5278,
+   "word_index": 4
+  },
+  {
+   "beats": 0.5,
+   "end": 2.0833,
+   "index": 7,
+   "label": "water~2",
+   "midi": 52,
+   "note": "E3",
+   "part": 2,
+   "start": 1.8056,
+   "word_index": 4
+  },
+  {
+   "beats": 0.5,
+   "end": 2.3611,
+   "index": 8,
+   "label": "tonight~1",
+   "midi": 52,
+   "note": "E3",
+   "part": 1,
+   "start": 2.0833,
+   "word_index": 5
+  },
+  {
+   "beats": 1.5,
+   "end": 3.1944,
+   "index": 9,
+   "label": "tonight~2",
+   "midi": 52,
+   "note": "E3",
+   "part": 2,
+   "start": 2.3611,
+   "word_index": 5
+  },
+  {
+   "beats": 2.25,
+   "end": 4.4444,
+   "index": 10,
+   "label": "-",
+   "midi": null,
+   "note": "rest",
+   "part": 0,
+   "start": 3.1944,
+   "word_index": null
+  },
+  {
+   "beats": 0.25,
+   "end": 4.5833,
+   "index": 11,
+   "label": "I",
+   "midi": 56,
+   "note": "G#3",
+   "part": 1,
+   "start": 4.4444,
+   "word_index": 6
+  },
+  {
+   "beats": 0.5,
+   "end": 4.8611,
+   "index": 12,
+   "label": "keep",
+   "midi": 59,
+   "note": "B3",
+   "part": 1,
+   "start": 4.5833,
+   "word_index": 7
+  },
+  {
+   "beats": 1.0,
+   "end": 5.4167,
+   "index": 13,
+   "label": "my",
+   "midi": 59,
+   "note": "B3",
+   "part": 1,
+   "start": 4.8611,
+   "word_index": 8
+  },
+  {
+   "beats": 1.0,
+   "end": 5.9722,
+   "index": 14,
+   "label": "hands",
+   "midi": 61,
+   "note": "C#4",
+   "part": 1,
+   "start": 5.4167,
+   "word_index": 9
+  },
+  {
+   "beats": 0.25,
+   "end": 6.1111,
+   "index": 15,
+   "label": "in",
+   "midi": 61,
+   "note": "C#4",
+   "part": 1,
+   "start": 5.9722,
+   "word_index": 10
+  },
+  {
+   "beats": 0.5,
+   "end": 6.3889,
+   "index": 16,
+   "label": "my",
+   "midi": 59,
+   "note": "B3",
+   "part": 1,
+   "start": 6.1111,
+   "word_index": 11
+  },
+  {
+   "beats": 0.5,
+   "end": 6.6667,
+   "index": 17,
+   "label": "pockets~1",
+   "midi": 56,
+   "note": "G#3",
+   "part": 1,
+   "start": 6.3889,
+   "word_index": 12
+  },
+  {
+   "beats": 1.0,
+   "end": 7.2222,
+   "index": 18,
+   "label": "pockets~2",
+   "midi": 59,
+   "note": "B3",
+   "part": 2,
+   "start": 6.6667,
+   "word_index": 12
+  },
+  {
+   "beats": 0.25,
+   "end": 7.3611,
+   "index": 19,
+   "label": "and",
+   "midi": 56,
+   "note": "G#3",
+   "part": 1,
+   "start": 7.2222,
+   "word_index": 13
+  },
+  {
+   "beats": 0.5,
+   "end": 7.6389,
+   "index": 20,
+   "label": "my",
+   "midi": 54,
+   "note": "F#3",
+   "part": 1,
+   "start": 7.3611,
+   "word_index": 14
+  },
+  {
+   "beats": 0.5,
+   "end": 7.9167,
+   "index": 21,
+   "label": "eyes",
+   "midi": 52,
+   "note": "E3",
+   "part": 1,
+   "start": 7.6389,
+   "word_index": 15
+  },
+  {
+   "beats": 1.0,
+   "end": 8.4722,
+   "index": 22,
+   "label": "on",
+   "midi": 54,
+   "note": "F#3",
+   "part": 1,
+   "start": 7.9167,
+   "word_index": 16
+  },
+  {
+   "beats": 0.5,
+   "end": 8.75,
+   "index": 23,
+   "label": "the",
+   "midi": 56,
+   "note": "G#3",
+   "part": 1,
+   "start": 8.4722,
+   "word_index": 17
+  },
+  {
+   "beats": 1.5,
+   "end": 9.5833,
+   "index": 24,
+   "label": "light",
+   "midi": 52,
+   "note": "E3",
+   "part": 1,
+   "start": 8.75,
+   "word_index": 18
+  },
+  {
+   "beats": 0.75,
+   "end": 10.0,
+   "index": 25,
+   "label": "-",
+   "midi": null,
+   "note": "rest",
+   "part": 0,
+   "start": 9.5833,
+   "word_index": null
+  },
+  {
+   "beats": 0.25,
+   "end": 10.1389,
+   "index": 26,
+   "label": "You",
+   "midi": 56,
+   "note": "G#3",
+   "part": 1,
+   "start": 10.0,
+   "word_index": 19
+  },
+  {
+   "beats": 0.25,
+   "end": 10.2778,
+   "index": 27,
+   "label": "said",
+   "midi": 61,
+   "note": "C#4",
+   "part": 1,
+   "start": 10.1389,
+   "word_index": 20
+  },
+  {
+   "beats": 1.0,
+   "end": 10.8333,
+   "index": 28,
+   "label": "the",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 10.2778,
+   "word_index": 21
+  },
+  {
+   "beats": 0.5,
+   "end": 11.1111,
+   "index": 29,
+   "label": "city~1",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 10.8333,
+   "word_index": 22
+  },
+  {
+   "beats": 1.0,
+   "end": 11.6667,
+   "index": 30,
+   "label": "city~2",
+   "midi": 64,
+   "note": "E4",
+   "part": 2,
+   "start": 11.1111,
+   "word_index": 22
+  },
+  {
+   "beats": 1.0,
+   "end": 12.2222,
+   "index": 31,
+   "label": "never~1",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 11.6667,
+   "word_index": 23
+  },
+  {
+   "beats": 0.5,
+   "end": 12.5,
+   "index": 32,
+   "label": "never~2",
+   "midi": 61,
+   "note": "C#4",
+   "part": 2,
+   "start": 12.2222,
+   "word_index": 23
+  },
+  {
+   "beats": 1.0,
+   "end": 13.0556,
+   "index": 33,
+   "label": "sleeps",
+   "midi": 56,
+   "note": "G#3",
+   "part": 1,
+   "start": 12.5,
+   "word_index": 24
+  },
+  {
+   "beats": 0.5,
+   "end": 13.3333,
+   "index": 34,
+   "label": "but",
+   "midi": 59,
+   "note": "B3",
+   "part": 1,
+   "start": 13.0556,
+   "word_index": 25
+  },
+  {
+   "beats": 0.25,
+   "end": 13.4722,
+   "index": 35,
+   "label": "it",
+   "midi": 59,
+   "note": "B3",
+   "part": 1,
+   "start": 13.3333,
+   "word_index": 26
+  },
+  {
+   "beats": 1.5,
+   "end": 14.3056,
+   "index": 36,
+   "label": "dreams",
+   "midi": 54,
+   "note": "F#3",
+   "part": 1,
+   "start": 13.4722,
+   "word_index": 27
+  },
+  {
+   "beats": 2.25,
+   "end": 15.5556,
+   "index": 37,
+   "label": "-",
+   "midi": null,
+   "note": "rest",
+   "part": 0,
+   "start": 14.3056,
+   "word_index": null
+  },
+  {
+   "beats": 0.5,
+   "end": 15.8333,
+   "index": 38,
+   "label": "And",
+   "midi": 52,
+   "note": "E3",
+   "part": 1,
+   "start": 15.5556,
+   "word_index": 28
+  },
+  {
+   "beats": 0.5,
+   "end": 16.1111,
+   "index": 39,
+   "label": "every~1",
+   "midi": 54,
+   "note": "F#3",
+   "part": 1,
+   "start": 15.8333,
+   "word_index": 29
+  },
+  {
+   "beats": 0.5,
+   "end": 16.3889,
+   "index": 40,
+   "label": "every~2",
+   "midi": 59,
+   "note": "B3",
+   "part": 2,
+   "start": 16.1111,
+   "word_index": 29
+  },
+  {
+   "beats": 0.25,
+   "end": 16.5278,
+   "index": 41,
+   "label": "every~3",
+   "midi": 59,
+   "note": "B3",
+   "part": 3,
+   "start": 16.3889,
+   "word_index": 29
+  },
+  {
+   "beats": 0.5,
+   "end": 16.8056,
+   "index": 42,
+   "label": "window~1",
+   "midi": 59,
+   "note": "B3",
+   "part": 1,
+   "start": 16.5278,
+   "word_index": 30
+  },
+  {
+   "beats": 0.5,
+   "end": 17.0833,
+   "index": 43,
+   "label": "window~2",
+   "midi": 56,
+   "note": "G#3",
+   "part": 2,
+   "start": 16.8056,
+   "word_index": 30
+  },
+  {
+   "beats": 0.5,
+   "end": 17.3611,
+   "index": 44,
+   "label": "is",
+   "midi": 54,
+   "note": "F#3",
+   "part": 1,
+   "start": 17.0833,
+   "word_index": 31
+  },
+  {
+   "beats": 0.25,
+   "end": 17.5,
+   "index": 45,
+   "label": "a",
+   "midi": 54,
+   "note": "F#3",
+   "part": 1,
+   "start": 17.3611,
+   "word_index": 32
+  },
+  {
+   "beats": 0.5,
+   "end": 17.7778,
+   "index": 46,
+   "label": "story~1",
+   "midi": 54,
+   "note": "F#3",
+   "part": 1,
+   "start": 17.5,
+   "word_index": 33
+  },
+  {
+   "beats": 0.5,
+   "end": 18.0556,
+   "index": 47,
+   "label": "story~2",
+   "midi": 56,
+   "note": "G#3",
+   "part": 2,
+   "start": 17.7778,
+   "word_index": 33
+  },
+  {
+   "beats": 0.5,
+   "end": 18.3333,
+   "index": 48,
+   "label": "with",
+   "midi": 56,
+   "note": "G#3",
+   "part": 1,
+   "start": 18.0556,
+   "word_index": 34
+  },
+  {
+   "beats": 1.0,
+   "end": 18.8889,
+   "index": 49,
+   "label": "a",
+   "midi": 54,
+   "note": "F#3",
+   "part": 1,
+   "start": 18.3333,
+   "word_index": 35
+  },
+  {
+   "beats": 0.5,
+   "end": 19.1667,
+   "index": 50,
+   "label": "secret~1",
+   "midi": 52,
+   "note": "E3",
+   "part": 1,
+   "start": 18.8889,
+   "word_index": 36
+  },
+  {
+   "beats": 1.0,
+   "end": 19.7222,
+   "index": 51,
+   "label": "secret~2",
+   "midi": 52,
+   "note": "E3",
+   "part": 2,
+   "start": 19.1667,
+   "word_index": 36
+  },
+  {
+   "beats": 0.5,
+   "end": 20.0,
+   "index": 52,
+   "label": "in",
+   "midi": 54,
+   "note": "F#3",
+   "part": 1,
+   "start": 19.7222,
+   "word_index": 37
+  },
+  {
+   "beats": 1.0,
+   "end": 20.5556,
+   "index": 53,
+   "label": "the",
+   "midi": 56,
+   "note": "G#3",
+   "part": 1,
+   "start": 20.0,
+   "word_index": 38
+  },
+  {
+   "beats": 1.5,
+   "end": 21.3889,
+   "index": 54,
+   "label": "seams",
+   "midi": 54,
+   "note": "F#3",
+   "part": 1,
+   "start": 20.5556,
+   "word_index": 39
+  },
+  {
+   "beats": 1.5,
+   "end": 22.2222,
+   "index": 55,
+   "label": "-",
+   "midi": null,
+   "note": "rest",
+   "part": 0,
+   "start": 21.3889,
+   "word_index": null
+  },
+  {
+   "beats": 0.5,
+   "end": 22.5,
+   "index": 56,
+   "label": "Hold",
+   "midi": 61,
+   "note": "C#4",
+   "part": 1,
+   "start": 22.2222,
+   "word_index": 40
+  },
+  {
+   "beats": 1.0,
+   "end": 23.0556,
+   "index": 57,
+   "label": "on",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 22.5,
+   "word_index": 41
+  },
+  {
+   "beats": 0.25,
+   "end": 23.1944,
+   "index": 58,
+   "label": "hold",
+   "midi": 66,
+   "note": "F#4",
+   "part": 1,
+   "start": 23.0556,
+   "word_index": 42
+  },
+  {
+   "beats": 0.5,
+   "end": 23.4722,
+   "index": 59,
+   "label": "on",
+   "midi": 68,
+   "note": "G#4",
+   "part": 1,
+   "start": 23.1944,
+   "word_index": 43
+  },
+  {
+   "beats": 0.5,
+   "end": 23.75,
+   "index": 60,
+   "label": "we're",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 23.4722,
+   "word_index": 44
+  },
+  {
+   "beats": 0.5,
+   "end": 24.0278,
+   "index": 61,
+   "label": "almost~1",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 23.75,
+   "word_index": 45
+  },
+  {
+   "beats": 0.5,
+   "end": 24.3056,
+   "index": 62,
+   "label": "almost~2",
+   "midi": 66,
+   "note": "F#4",
+   "part": 2,
+   "start": 24.0278,
+   "word_index": 45
+  },
+  {
+   "beats": 1.5,
+   "end": 25.1389,
+   "index": 63,
+   "label": "home",
+   "midi": 59,
+   "note": "B3",
+   "part": 1,
+   "start": 24.3056,
+   "word_index": 46
+  },
+  {
+   "beats": 0.75,
+   "end": 25.5556,
+   "index": 64,
+   "label": "-",
+   "midi": null,
+   "note": "rest",
+   "part": 0,
+   "start": 25.1389,
+   "word_index": null
+  },
+  {
+   "beats": 0.5,
+   "end": 25.8333,
+   "index": 65,
+   "label": "The",
+   "midi": 61,
+   "note": "C#4",
+   "part": 1,
+   "start": 25.5556,
+   "word_index": 47
+  },
+  {
+   "beats": 0.5,
+   "end": 26.1111,
+   "index": 66,
+   "label": "night",
+   "midi": 61,
+   "note": "C#4",
+   "part": 1,
+   "start": 25.8333,
+   "word_index": 48
+  },
+  {
+   "beats": 0.25,
+   "end": 26.25,
+   "index": 67,
+   "label": "is",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 26.1111,
+   "word_index": 49
+  },
+  {
+   "beats": 0.5,
+   "end": 26.5278,
+   "index": 68,
+   "label": "loud",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 26.25,
+   "word_index": 50
+  },
+  {
+   "beats": 0.5,
+   "end": 26.8056,
+   "index": 69,
+   "label": "but",
+   "midi": 66,
+   "note": "F#4",
+   "part": 1,
+   "start": 26.5278,
+   "word_index": 51
+  },
+  {
+   "beats": 0.25,
+   "end": 26.9444,
+   "index": 70,
+   "label": "we're",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 26.8056,
+   "word_index": 52
+  },
+  {
+   "beats": 0.5,
+   "end": 27.2222,
+   "index": 71,
+   "label": "not",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 26.9444,
+   "word_index": 53
+  },
+  {
+   "beats": 0.5,
+   "end": 27.5,
+   "index": 72,
+   "label": "alone~1",
+   "midi": 61,
+   "note": "C#4",
+   "part": 1,
+   "start": 27.2222,
+   "word_index": 54
+  },
+  {
+   "beats": 1.5,
+   "end": 28.3333,
+   "index": 73,
+   "label": "alone~2",
+   "midi": 59,
+   "note": "B3",
+   "part": 2,
+   "start": 27.5,
+   "word_index": 54
+  },
+  {
+   "beats": 1.0,
+   "end": 28.8889,
+   "index": 74,
+   "label": "-",
+   "midi": null,
+   "note": "rest",
+   "part": 0,
+   "start": 28.3333,
+   "word_index": null
+  },
+  {
+   "beats": 1.0,
+   "end": 29.4444,
+   "index": 75,
+   "label": "Hold",
+   "midi": 61,
+   "note": "C#4",
+   "part": 1,
+   "start": 28.8889,
+   "word_index": 55
+  },
+  {
+   "beats": 0.5,
+   "end": 29.7222,
+   "index": 76,
+   "label": "on",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 29.4444,
+   "word_index": 56
+  },
+  {
+   "beats": 1.0,
+   "end": 30.2778,
+   "index": 77,
+   "label": "hold",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 29.7222,
+   "word_index": 57
+  },
+  {
+   "beats": 0.5,
+   "end": 30.5556,
+   "index": 78,
+   "label": "on",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 30.2778,
+   "word_index": 58
+  },
+  {
+   "beats": 0.25,
+   "end": 30.6944,
+   "index": 79,
+   "label": "the",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 30.5556,
+   "word_index": 59
+  },
+  {
+   "beats": 0.25,
+   "end": 30.8333,
+   "index": 80,
+   "label": "road",
+   "midi": 61,
+   "note": "C#4",
+   "part": 1,
+   "start": 30.6944,
+   "word_index": 60
+  },
+  {
+   "beats": 0.25,
+   "end": 30.9722,
+   "index": 81,
+   "label": "is",
+   "midi": 59,
+   "note": "B3",
+   "part": 1,
+   "start": 30.8333,
+   "word_index": 61
+  },
+  {
+   "beats": 1.5,
+   "end": 31.8056,
+   "index": 82,
+   "label": "long",
+   "midi": 59,
+   "note": "B3",
+   "part": 1,
+   "start": 30.9722,
+   "word_index": 62
+  },
+  {
+   "beats": 0.75,
+   "end": 32.2222,
+   "index": 83,
+   "label": "-",
+   "midi": null,
+   "note": "rest",
+   "part": 0,
+   "start": 31.8056,
+   "word_index": null
+  },
+  {
+   "beats": 0.25,
+   "end": 32.3611,
+   "index": 84,
+   "label": "Sing",
+   "midi": 61,
+   "note": "C#4",
+   "part": 1,
+   "start": 32.2222,
+   "word_index": 63
+  },
+  {
+   "beats": 0.5,
+   "end": 32.6389,
+   "index": 85,
+   "label": "it",
+   "midi": 66,
+   "note": "F#4",
+   "part": 1,
+   "start": 32.3611,
+   "word_index": 64
+  },
+  {
+   "beats": 1.0,
+   "end": 33.1944,
+   "index": 86,
+   "label": "back",
+   "midi": 68,
+   "note": "G#4",
+   "part": 1,
+   "start": 32.6389,
+   "word_index": 65
+  },
+  {
+   "beats": 0.5,
+   "end": 33.4722,
+   "index": 87,
+   "label": "to",
+   "midi": 68,
+   "note": "G#4",
+   "part": 1,
+   "start": 33.1944,
+   "word_index": 66
+  },
+  {
+   "beats": 0.25,
+   "end": 33.6111,
+   "index": 88,
+   "label": "me",
+   "midi": 68,
+   "note": "G#4",
+   "part": 1,
+   "start": 33.4722,
+   "word_index": 67
+  },
+  {
+   "beats": 0.25,
+   "end": 33.75,
+   "index": 89,
+   "label": "I",
+   "midi": 68,
+   "note": "G#4",
+   "part": 1,
+   "start": 33.6111,
+   "word_index": 68
+  },
+  {
+   "beats": 1.0,
+   "end": 34.3056,
+   "index": 90,
+   "label": "know",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 33.75,
+   "word_index": 69
+  },
+  {
+   "beats": 0.5,
+   "end": 34.5833,
+   "index": 91,
+   "label": "this",
+   "midi": 61,
+   "note": "C#4",
+   "part": 1,
+   "start": 34.3056,
+   "word_index": 70
+  },
+  {
+   "beats": 1.5,
+   "end": 35.4167,
+   "index": 92,
+   "label": "song",
+   "midi": 56,
+   "note": "G#3",
+   "part": 1,
+   "start": 34.5833,
+   "word_index": 71
+  },
+  {
+   "beats": 2.25,
+   "end": 36.6667,
+   "index": 93,
+   "label": "-",
+   "midi": null,
+   "note": "rest",
+   "part": 0,
+   "start": 35.4167,
+   "word_index": null
+  },
+  {
+   "beats": 0.25,
+   "end": 36.8056,
+   "index": 94,
+   "label": "Coffee's~1",
+   "midi": 52,
+   "note": "E3",
+   "part": 1,
+   "start": 36.6667,
+   "word_index": 72
+  },
+  {
+   "beats": 0.5,
+   "end": 37.0833,
+   "index": 95,
+   "label": "Coffee's~2",
+   "midi": 52,
+   "note": "E3",
+   "part": 2,
+   "start": 36.8056,
+   "word_index": 72
+  },
+  {
+   "beats": 1.0,
+   "end": 37.6389,
+   "index": 96,
+   "label": "cold",
+   "midi": 54,
+   "note": "F#3",
+   "part": 1,
+   "start": 37.0833,
+   "word_index": 73
+  },
+  {
+   "beats": 1.0,
+   "end": 38.1944,
+   "index": 97,
+   "label": "and",
+   "midi": 56,
+   "note": "G#3",
+   "part": 1,
+   "start": 37.6389,
+   "word_index": 74
+  },
+  {
+   "beats": 1.0,
+   "end": 38.75,
+   "index": 98,
+   "label": "the",
+   "midi": 56,
+   "note": "G#3",
+   "part": 1,
+   "start": 38.1944,
+   "word_index": 75
+  },
+  {
+   "beats": 1.0,
+   "end": 39.3056,
+   "index": 99,
+   "label": "paper's~1",
+   "midi": 52,
+   "note": "E3",
+   "part": 1,
+   "start": 38.75,
+   "word_index": 76
+  },
+  {
+   "beats": 0.5,
+   "end": 39.5833,
+   "index": 100,
+   "label": "paper's~2",
+   "midi": 54,
+   "note": "F#3",
+   "part": 2,
+   "start": 39.3056,
+   "word_index": 76
+  },
+  {
+   "beats": 1.5,
+   "end": 40.4167,
+   "index": 101,
+   "label": "old",
+   "midi": 52,
+   "note": "E3",
+   "part": 1,
+   "start": 39.5833,
+   "word_index": 77
+  },
+  {
+   "beats": 1.25,
+   "end": 41.1111,
+   "index": 102,
+   "label": "-",
+   "midi": null,
+   "note": "rest",
+   "part": 0,
+   "start": 40.4167,
+   "word_index": null
+  },
+  {
+   "beats": 0.5,
+   "end": 41.3889,
+   "index": 103,
+   "label": "Every~1",
+   "midi": 54,
+   "note": "F#3",
+   "part": 1,
+   "start": 41.1111,
+   "word_index": 78
+  },
+  {
+   "beats": 0.5,
+   "end": 41.6667,
+   "index": 104,
+   "label": "Every~2",
+   "midi": 56,
+   "note": "G#3",
+   "part": 2,
+   "start": 41.3889,
+   "word_index": 78
+  },
+  {
+   "beats": 1.0,
+   "end": 42.2222,
+   "index": 105,
+   "label": "Every~3",
+   "midi": 56,
+   "note": "G#3",
+   "part": 3,
+   "start": 41.6667,
+   "word_index": 78
+  },
+  {
+   "beats": 0.25,
+   "end": 42.3611,
+   "index": 106,
+   "label": "headline~1",
+   "midi": 59,
+   "note": "B3",
+   "part": 1,
+   "start": 42.2222,
+   "word_index": 79
+  },
+  {
+   "beats": 0.5,
+   "end": 42.6389,
+   "index": 107,
+   "label": "headline~2",
+   "midi": 59,
+   "note": "B3",
+   "part": 2,
+   "start": 42.3611,
+   "word_index": 79
+  },
+  {
+   "beats": 0.5,
+   "end": 42.9167,
+   "index": 108,
+   "label": "is",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 42.6389,
+   "word_index": 80
+  },
+  {
+   "beats": 0.5,
+   "end": 43.1944,
+   "index": 109,
+   "label": "a",
+   "midi": 61,
+   "note": "C#4",
+   "part": 1,
+   "start": 42.9167,
+   "word_index": 81
+  },
+  {
+   "beats": 0.5,
+   "end": 43.4722,
+   "index": 110,
+   "label": "promise~1",
+   "midi": 59,
+   "note": "B3",
+   "part": 1,
+   "start": 43.1944,
+   "word_index": 82
+  },
+  {
+   "beats": 0.25,
+   "end": 43.6111,
+   "index": 111,
+   "label": "promise~2",
+   "midi": 56,
+   "note": "G#3",
+   "part": 2,
+   "start": 43.4722,
+   "word_index": 82
+  },
+  {
+   "beats": 0.5,
+   "end": 43.8889,
+   "index": 112,
+   "label": "that",
+   "midi": 59,
+   "note": "B3",
+   "part": 1,
+   "start": 43.6111,
+   "word_index": 83
+  },
+  {
+   "beats": 0.25,
+   "end": 44.0278,
+   "index": 113,
+   "label": "was",
+   "midi": 54,
+   "note": "F#3",
+   "part": 1,
+   "start": 43.8889,
+   "word_index": 84
+  },
+  {
+   "beats": 0.5,
+   "end": 44.3056,
+   "index": 114,
+   "label": "never~1",
+   "midi": 54,
+   "note": "F#3",
+   "part": 1,
+   "start": 44.0278,
+   "word_index": 85
+  },
+  {
+   "beats": 0.5,
+   "end": 44.5833,
+   "index": 115,
+   "label": "never~2",
+   "midi": 52,
+   "note": "E3",
+   "part": 2,
+   "start": 44.3056,
+   "word_index": 85
+  },
+  {
+   "beats": 1.5,
+   "end": 45.4167,
+   "index": 116,
+   "label": "sold",
+   "midi": 52,
+   "note": "E3",
+   "part": 1,
+   "start": 44.5833,
+   "word_index": 86
+  },
+  {
+   "beats": 2.25,
+   "end": 46.6667,
+   "index": 117,
+   "label": "-",
+   "midi": null,
+   "note": "rest",
+   "part": 0,
+   "start": 45.4167,
+   "word_index": null
+  },
+  {
+   "beats": 0.5,
+   "end": 46.9444,
+   "index": 118,
+   "label": "You",
+   "midi": 52,
+   "note": "E3",
+   "part": 1,
+   "start": 46.6667,
+   "word_index": 87
+  },
+  {
+   "beats": 1.0,
+   "end": 47.5,
+   "index": 119,
+   "label": "said",
+   "midi": 52,
+   "note": "E3",
+   "part": 1,
+   "start": 46.9444,
+   "word_index": 88
+  },
+  {
+   "beats": 0.25,
+   "end": 47.6389,
+   "index": 120,
+   "label": "the",
+   "midi": 52,
+   "note": "E3",
+   "part": 1,
+   "start": 47.5,
+   "word_index": 89
+  },
+  {
+   "beats": 0.25,
+   "end": 47.7778,
+   "index": 121,
+   "label": "summer~1",
+   "midi": 52,
+   "note": "E3",
+   "part": 1,
+   "start": 47.6389,
+   "word_index": 90
+  },
+  {
+   "beats": 0.25,
+   "end": 47.9167,
+   "index": 122,
+   "label": "summer~2",
+   "midi": 52,
+   "note": "E3",
+   "part": 2,
+   "start": 47.7778,
+   "word_index": 90
+  },
+  {
+   "beats": 0.5,
+   "end": 48.1944,
+   "index": 123,
+   "label": "never~1",
+   "midi": 52,
+   "note": "E3",
+   "part": 1,
+   "start": 47.9167,
+   "word_index": 91
+  },
+  {
+   "beats": 0.5,
+   "end": 48.4722,
+   "index": 124,
+   "label": "never~2",
+   "midi": 52,
+   "note": "E3",
+   "part": 2,
+   "start": 48.1944,
+   "word_index": 91
+  },
+  {
+   "beats": 0.5,
+   "end": 48.75,
+   "index": 125,
+   "label": "ends",
+   "midi": 52,
+   "note": "E3",
+   "part": 1,
+   "start": 48.4722,
+   "word_index": 92
+  },
+  {
+   "beats": 0.5,
+   "end": 49.0278,
+   "index": 126,
+   "label": "but",
+   "midi": 52,
+   "note": "E3",
+   "part": 1,
+   "start": 48.75,
+   "word_index": 93
+  },
+  {
+   "beats": 0.5,
+   "end": 49.3056,
+   "index": 127,
+   "label": "it",
+   "midi": 54,
+   "note": "F#3",
+   "part": 1,
+   "start": 49.0278,
+   "word_index": 94
+  },
+  {
+   "beats": 0.5,
+   "end": 49.5833,
+   "index": 128,
+   "label": "fades~1",
+   "midi": 56,
+   "note": "G#3",
+   "part": 1,
+   "start": 49.3056,
+   "word_index": 95
+  },
+  {
+   "beats": 1.5,
+   "end": 50.4167,
+   "index": 129,
+   "label": "fades~2",
+   "midi": 52,
+   "note": "E3",
+   "part": 2,
+   "start": 49.5833,
+   "word_index": 95
+  },
+  {
+   "beats": 1.25,
+   "end": 51.1111,
+   "index": 130,
+   "label": "-",
+   "midi": null,
+   "note": "rest",
+   "part": 0,
+   "start": 50.4167,
+   "word_index": null
+  },
+  {
+   "beats": 0.5,
+   "end": 51.3889,
+   "index": 131,
+   "label": "And",
+   "midi": 52,
+   "note": "E3",
+   "part": 1,
+   "start": 51.1111,
+   "word_index": 96
+  },
+  {
+   "beats": 0.5,
+   "end": 51.6667,
+   "index": 132,
+   "label": "every~1",
+   "midi": 56,
+   "note": "G#3",
+   "part": 1,
+   "start": 51.3889,
+   "word_index": 97
+  },
+  {
+   "beats": 1.0,
+   "end": 52.2222,
+   "index": 133,
+   "label": "every~2",
+   "midi": 54,
+   "note": "F#3",
+   "part": 2,
+   "start": 51.6667,
+   "word_index": 97
+  },
+  {
+   "beats": 0.5,
+   "end": 52.5,
+   "index": 134,
+   "label": "every~3",
+   "midi": 52,
+   "note": "E3",
+   "part": 3,
+   "start": 52.2222,
+   "word_index": 97
+  },
+  {
+   "beats": 0.5,
+   "end": 52.7778,
+   "index": 135,
+   "label": "morning~1",
+   "midi": 52,
+   "note": "E3",
+   "part": 1,
+   "start": 52.5,
+   "word_index": 98
+  },
+  {
+   "beats": 1.0,
+   "end": 53.3333,
+   "index": 136,
+   "label": "morning~2",
+   "midi": 52,
+   "note": "E3",
+   "part": 2,
+   "start": 52.7778,
+   "word_index": 98
+  },
+  {
+   "beats": 0.25,
+   "end": 53.4722,
+   "index": 137,
+   "label": "is",
+   "midi": 52,
+   "note": "E3",
+   "part": 1,
+   "start": 53.3333,
+   "word_index": 99
+  },
+  {
+   "beats": 0.25,
+   "end": 53.6111,
+   "index": 138,
+   "label": "a",
+   "midi": 54,
+   "note": "F#3",
+   "part": 1,
+   "start": 53.4722,
+   "word_index": 100
+  },
+  {
+   "beats": 0.5,
+   "end": 53.8889,
+   "index": 139,
+   "label": "window~1",
+   "midi": 54,
+   "note": "F#3",
+   "part": 1,
+   "start": 53.6111,
+   "word_index": 101
+  },
+  {
+   "beats": 0.25,
+   "end": 54.0278,
+   "index": 140,
+   "label": "window~2",
+   "midi": 52,
+   "note": "E3",
+   "part": 2,
+   "start": 53.8889,
+   "word_index": 101
+  },
+  {
+   "beats": 1.0,
+   "end": 54.5833,
+   "index": 141,
+   "label": "that",
+   "midi": 52,
+   "note": "E3",
+   "part": 1,
+   "start": 54.0278,
+   "word_index": 102
+  },
+  {
+   "beats": 1.0,
+   "end": 55.1389,
+   "index": 142,
+   "label": "the",
+   "midi": 54,
+   "note": "F#3",
+   "part": 1,
+   "start": 54.5833,
+   "word_index": 103
+  },
+  {
+   "beats": 1.0,
+   "end": 55.6944,
+   "index": 143,
+   "label": "sun",
+   "midi": 52,
+   "note": "E3",
+   "part": 1,
+   "start": 55.1389,
+   "word_index": 104
+  },
+  {
+   "beats": 0.5,
+   "end": 55.9722,
+   "index": 144,
+   "label": "invades~1",
+   "midi": 52,
+   "note": "E3",
+   "part": 1,
+   "start": 55.6944,
+   "word_index": 105
+  },
+  {
+   "beats": 0.25,
+   "end": 56.1111,
+   "index": 145,
+   "label": "invades~2",
+   "midi": 52,
+   "note": "E3",
+   "part": 2,
+   "start": 55.9722,
+   "word_index": 105
+  },
+  {
+   "beats": 1.5,
+   "end": 56.9444,
+   "index": 146,
+   "label": "invades~3",
+   "midi": 52,
+   "note": "E3",
+   "part": 3,
+   "start": 56.1111,
+   "word_index": 105
+  },
+  {
+   "beats": 1.5,
+   "end": 57.7778,
+   "index": 147,
+   "label": "-",
+   "midi": null,
+   "note": "rest",
+   "part": 0,
+   "start": 56.9444,
+   "word_index": null
+  },
+  {
+   "beats": 0.5,
+   "end": 58.0556,
+   "index": 148,
+   "label": "Hold",
+   "midi": 61,
+   "note": "C#4",
+   "part": 1,
+   "start": 57.7778,
+   "word_index": 106
+  },
+  {
+   "beats": 1.0,
+   "end": 58.6111,
+   "index": 149,
+   "label": "on",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 58.0556,
+   "word_index": 107
+  },
+  {
+   "beats": 0.25,
+   "end": 58.75,
+   "index": 150,
+   "label": "hold",
+   "midi": 66,
+   "note": "F#4",
+   "part": 1,
+   "start": 58.6111,
+   "word_index": 108
+  },
+  {
+   "beats": 0.5,
+   "end": 59.0278,
+   "index": 151,
+   "label": "on",
+   "midi": 68,
+   "note": "G#4",
+   "part": 1,
+   "start": 58.75,
+   "word_index": 109
+  },
+  {
+   "beats": 0.5,
+   "end": 59.3056,
+   "index": 152,
+   "label": "we're",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 59.0278,
+   "word_index": 110
+  },
+  {
+   "beats": 0.5,
+   "end": 59.5833,
+   "index": 153,
+   "label": "almost~1",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 59.3056,
+   "word_index": 111
+  },
+  {
+   "beats": 0.5,
+   "end": 59.8611,
+   "index": 154,
+   "label": "almost~2",
+   "midi": 66,
+   "note": "F#4",
+   "part": 2,
+   "start": 59.5833,
+   "word_index": 111
+  },
+  {
+   "beats": 1.5,
+   "end": 60.6944,
+   "index": 155,
+   "label": "home",
+   "midi": 59,
+   "note": "B3",
+   "part": 1,
+   "start": 59.8611,
+   "word_index": 112
+  },
+  {
+   "beats": 0.75,
+   "end": 61.1111,
+   "index": 156,
+   "label": "-",
+   "midi": null,
+   "note": "rest",
+   "part": 0,
+   "start": 60.6944,
+   "word_index": null
+  },
+  {
+   "beats": 0.5,
+   "end": 61.3889,
+   "index": 157,
+   "label": "The",
+   "midi": 61,
+   "note": "C#4",
+   "part": 1,
+   "start": 61.1111,
+   "word_index": 113
+  },
+  {
+   "beats": 0.5,
+   "end": 61.6667,
+   "index": 158,
+   "label": "night",
+   "midi": 61,
+   "note": "C#4",
+   "part": 1,
+   "start": 61.3889,
+   "word_index": 114
+  },
+  {
+   "beats": 0.25,
+   "end": 61.8056,
+   "index": 159,
+   "label": "is",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 61.6667,
+   "word_index": 115
+  },
+  {
+   "beats": 0.5,
+   "end": 62.0833,
+   "index": 160,
+   "label": "loud",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 61.8056,
+   "word_index": 116
+  },
+  {
+   "beats": 0.5,
+   "end": 62.3611,
+   "index": 161,
+   "label": "but",
+   "midi": 66,
+   "note": "F#4",
+   "part": 1,
+   "start": 62.0833,
+   "word_index": 117
+  },
+  {
+   "beats": 0.25,
+   "end": 62.5,
+   "index": 162,
+   "label": "we're",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 62.3611,
+   "word_index": 118
+  },
+  {
+   "beats": 0.5,
+   "end": 62.7778,
+   "index": 163,
+   "label": "not",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 62.5,
+   "word_index": 119
+  },
+  {
+   "beats": 0.5,
+   "end": 63.0556,
+   "index": 164,
+   "label": "alone~1",
+   "midi": 61,
+   "note": "C#4",
+   "part": 1,
+   "start": 62.7778,
+   "word_index": 120
+  },
+  {
+   "beats": 1.5,
+   "end": 63.8889,
+   "index": 165,
+   "label": "alone~2",
+   "midi": 59,
+   "note": "B3",
+   "part": 2,
+   "start": 63.0556,
+   "word_index": 120
+  },
+  {
+   "beats": 1.0,
+   "end": 64.4444,
+   "index": 166,
+   "label": "-",
+   "midi": null,
+   "note": "rest",
+   "part": 0,
+   "start": 63.8889,
+   "word_index": null
+  },
+  {
+   "beats": 1.0,
+   "end": 65.0,
+   "index": 167,
+   "label": "Hold",
+   "midi": 61,
+   "note": "C#4",
+   "part": 1,
+   "start": 64.4444,
+   "word_index": 121
+  },
+  {
+   "beats": 0.5,
+   "end": 65.2778,
+   "index": 168,
+   "label": "on",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 65.0,
+   "word_index": 122
+  },
+  {
+   "beats": 1.0,
+   "end": 65.8333,
+   "index": 169,
+   "label": "hold",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 65.2778,
+   "word_index": 123
+  },
+  {
+   "beats": 0.5,
+   "end": 66.1111,
+   "index": 170,
+   "label": "on",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 65.8333,
+   "word_index": 124
+  },
+  {
+   "beats": 0.25,
+   "end": 66.25,
+   "index": 171,
+   "label": "the",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 66.1111,
+   "word_index": 125
+  },
+  {
+   "beats": 0.25,
+   "end": 66.3889,
+   "index": 172,
+   "label": "road",
+   "midi": 61,
+   "note": "C#4",
+   "part": 1,
+   "start": 66.25,
+   "word_index": 126
+  },
+  {
+   "beats": 0.25,
+   "end": 66.5278,
+   "index": 173,
+   "label": "is",
+   "midi": 59,
+   "note": "B3",
+   "part": 1,
+   "start": 66.3889,
+   "word_index": 127
+  },
+  {
+   "beats": 1.5,
+   "end": 67.3611,
+   "index": 174,
+   "label": "long",
+   "midi": 59,
+   "note": "B3",
+   "part": 1,
+   "start": 66.5278,
+   "word_index": 128
+  },
+  {
+   "beats": 0.75,
+   "end": 67.7778,
+   "index": 175,
+   "label": "-",
+   "midi": null,
+   "note": "rest",
+   "part": 0,
+   "start": 67.3611,
+   "word_index": null
+  },
+  {
+   "beats": 0.25,
+   "end": 67.9167,
+   "index": 176,
+   "label": "Sing",
+   "midi": 61,
+   "note": "C#4",
+   "part": 1,
+   "start": 67.7778,
+   "word_index": 129
+  },
+  {
+   "beats": 0.5,
+   "end": 68.1944,
+   "index": 177,
+   "label": "it",
+   "midi": 66,
+   "note": "F#4",
+   "part": 1,
+   "start": 67.9167,
+   "word_index": 130
+  },
+  {
+   "beats": 1.0,
+   "end": 68.75,
+   "index": 178,
+   "label": "back",
+   "midi": 68,
+   "note": "G#4",
+   "part": 1,
+   "start": 68.1944,
+   "word_index": 131
+  },
+  {
+   "beats": 0.5,
+   "end": 69.0278,
+   "index": 179,
+   "label": "to",
+   "midi": 68,
+   "note": "G#4",
+   "part": 1,
+   "start": 68.75,
+   "word_index": 132
+  },
+  {
+   "beats": 0.25,
+   "end": 69.1667,
+   "index": 180,
+   "label": "me",
+   "midi": 68,
+   "note": "G#4",
+   "part": 1,
+   "start": 69.0278,
+   "word_index": 133
+  },
+  {
+   "beats": 0.25,
+   "end": 69.3056,
+   "index": 181,
+   "label": "I",
+   "midi": 68,
+   "note": "G#4",
+   "part": 1,
+   "start": 69.1667,
+   "word_index": 134
+  },
+  {
+   "beats": 1.0,
+   "end": 69.8611,
+   "index": 182,
+   "label": "know",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 69.3056,
+   "word_index": 135
+  },
+  {
+   "beats": 0.5,
+   "end": 70.1389,
+   "index": 183,
+   "label": "this",
+   "midi": 61,
+   "note": "C#4",
+   "part": 1,
+   "start": 69.8611,
+   "word_index": 136
+  },
+  {
+   "beats": 1.5,
+   "end": 70.9722,
+   "index": 184,
+   "label": "song",
+   "midi": 56,
+   "note": "G#3",
+   "part": 1,
+   "start": 70.1389,
+   "word_index": 137
+  },
+  {
+   "beats": 2.25,
+   "end": 72.2222,
+   "index": 185,
+   "label": "-",
+   "midi": null,
+   "note": "rest",
+   "part": 0,
+   "start": 70.9722,
+   "word_index": null
+  }
+ ],
+ "range": {
+  "high": 68,
+  "high_note": "G#4",
+  "low": 52,
+  "low_note": "E3",
+  "mean": 58.412
+ },
+ "seconds": 72.2222,
+ "style": "pop",
+ "text": "Streetlights flicker on the water tonight I keep my hands in my pockets and my eyes on the light You said the city never sleeps but it dreams And every window is a story with a secret in the seams Hold on hold on we're almost home The night is loud but we're not alone Hold on hold on the road is long Sing it back to me I know this song Coffee's cold and the paper's old Every headline is a promise that was never sold You said the summer never ends but it fades And every morning is a window that the sun invades Hold on hold on we're almost home The night is loud but we're not alone Hold on hold on the road is long Sing it back to me I know this song",
+ "transpose": 0,
+ "words": [
+  {
+   "end": 0.5556,
+   "parts": 2,
+   "start": 0.0,
+   "word": "Streetlights"
+  },
+  {
+   "end": 0.9722,
+   "parts": 2,
+   "start": 0.5556,
+   "word": "flicker"
+  },
+  {
+   "end": 1.25,
+   "parts": 1,
+   "start": 0.9722,
+   "word": "on"
+  },
+  {
+   "end": 1.5278,
+   "parts": 1,
+   "start": 1.25,
+   "word": "the"
+  },
+  {
+   "end": 2.0833,
+   "parts": 2,
+   "start": 1.5278,
+   "word": "water"
+  },
+  {
+   "end": 3.1944,
+   "parts": 2,
+   "start": 2.0833,
+   "word": "tonight"
+  },
+  {
+   "end": 4.5833,
+   "parts": 1,
+   "start": 4.4444,
+   "word": "I"
+  },
+  {
+   "end": 4.8611,
+   "parts": 1,
+   "start": 4.5833,
+   "word": "keep"
+  },
+  {
+   "end": 5.4167,
+   "parts": 1,
+   "start": 4.8611,
+   "word": "my"
+  },
+  {
+   "end": 5.9722,
+   "parts": 1,
+   "start": 5.4167,
+   "word": "hands"
+  },
+  {
+   "end": 6.1111,
+   "parts": 1,
+   "start": 5.9722,
+   "word": "in"
+  },
+  {
+   "end": 6.3889,
+   "parts": 1,
+   "start": 6.1111,
+   "word": "my"
+  },
+  {
+   "end": 7.2222,
+   "parts": 2,
+   "start": 6.3889,
+   "word": "pockets"
+  },
+  {
+   "end": 7.3611,
+   "parts": 1,
+   "start": 7.2222,
+   "word": "and"
+  },
+  {
+   "end": 7.6389,
+   "parts": 1,
+   "start": 7.3611,
+   "word": "my"
+  },
+  {
+   "end": 7.9167,
+   "parts": 1,
+   "start": 7.6389,
+   "word": "eyes"
+  },
+  {
+   "end": 8.4722,
+   "parts": 1,
+   "start": 7.9167,
+   "word": "on"
+  },
+  {
+   "end": 8.75,
+   "parts": 1,
+   "start": 8.4722,
+   "word": "the"
+  },
+  {
+   "end": 9.5833,
+   "parts": 1,
+   "start": 8.75,
+   "word": "light"
+  },
+  {
+   "end": 10.1389,
+   "parts": 1,
+   "start": 10.0,
+   "word": "You"
+  },
+  {
+   "end": 10.2778,
+   "parts": 1,
+   "start": 10.1389,
+   "word": "said"
+  },
+  {
+   "end": 10.8333,
+   "parts": 1,
+   "start": 10.2778,
+   "word": "the"
+  },
+  {
+   "end": 11.6667,
+   "parts": 2,
+   "start": 10.8333,
+   "word": "city"
+  },
+  {
+   "end": 12.5,
+   "parts": 2,
+   "start": 11.6667,
+   "word": "never"
+  },
+  {
+   "end": 13.0556,
+   "parts": 1,
+   "start": 12.5,
+   "word": "sleeps"
+  },
+  {
+   "end": 13.3333,
+   "parts": 1,
+   "start": 13.0556,
+   "word": "but"
+  },
+  {
+   "end": 13.4722,
+   "parts": 1,
+   "start": 13.3333,
+   "word": "it"
+  },
+  {
+   "end": 14.3056,
+   "parts": 1,
+   "start": 13.4722,
+   "word": "dreams"
+  },
+  {
+   "end": 15.8333,
+   "parts": 1,
+   "start": 15.5556,
+   "word": "And"
+  },
+  {
+   "end": 16.5278,
+   "parts": 3,
+   "start": 15.8333,
+   "word": "every"
+  },
+  {
+   "end": 17.0833,
+   "parts": 2,
+   "start": 16.5278,
+   "word": "window"
+  },
+  {
+   "end": 17.3611,
+   "parts": 1,
+   "start": 17.0833,
+   "word": "is"
+  },
+  {
+   "end": 17.5,
+   "parts": 1,
+   "start": 17.3611,
+   "word": "a"
+  },
+  {
+   "end": 18.0556,
+   "parts": 2,
+   "start": 17.5,
+   "word": "story"
+  },
+  {
+   "end": 18.3333,
+   "parts": 1,
+   "start": 18.0556,
+   "word": "with"
+  },
+  {
+   "end": 18.8889,
+   "parts": 1,
+   "start": 18.3333,
+   "word": "a"
+  },
+  {
+   "end": 19.7222,
+   "parts": 2,
+   "start": 18.8889,
+   "word": "secret"
+  },
+  {
+   "end": 20.0,
+   "parts": 1,
+   "start": 19.7222,
+   "word": "in"
+  },
+  {
+   "end": 20.5556,
+   "parts": 1,
+   "start": 20.0,
+   "word": "the"
+  },
+  {
+   "end": 21.3889,
+   "parts": 1,
+   "start": 20.5556,
+   "word": "seams"
+  },
+  {
+   "end": 22.5,
+   "parts": 1,
+   "start": 22.2222,
+   "word": "Hold"
+  },
+  {
+   "end": 23.0556,
+   "parts": 1,
+   "start": 22.5,
+   "word": "on"
+  },
+  {
+   "end": 23.1944,
+   "parts": 1,
+   "start": 23.0556,
+   "word": "hold"
+  },
+  {
+   "end": 23.4722,
+   "parts": 1,
+   "start": 23.1944,
+   "word": "on"
+  },
+  {
+   "end": 23.75,
+   "parts": 1,
+   "start": 23.4722,
+   "word": "we're"
+  },
+  {
+   "end": 24.3056,
+   "parts": 2,
+   "start": 23.75,
+   "word": "almost"
+  },
+  {
+   "end": 25.1389,
+   "parts": 1,
+   "start": 24.3056,
+   "word": "home"
+  },
+  {
+   "end": 25.8333,
+   "parts": 1,
+   "start": 25.5556,
+   "word": "The"
+  },
+  {
+   "end": 26.1111,
+   "parts": 1,
+   "start": 25.8333,
+   "word": "night"
+  },
+  {
+   "end": 26.25,
+   "parts": 1,
+   "start": 26.1111,
+   "word": "is"
+  },
+  {
+   "end": 26.5278,
+   "parts": 1,
+   "start": 26.25,
+   "word": "loud"
+  },
+  {
+   "end": 26.8056,
+   "parts": 1,
+   "start": 26.5278,
+   "word": "but"
+  },
+  {
+   "end": 26.9444,
+   "parts": 1,
+   "start": 26.8056,
+   "word": "we're"
+  },
+  {
+   "end": 27.2222,
+   "parts": 1,
+   "start": 26.9444,
+   "word": "not"
+  },
+  {
+   "end": 28.3333,
+   "parts": 2,
+   "start": 27.2222,
+   "word": "alone"
+  },
+  {
+   "end": 29.4444,
+   "parts": 1,
+   "start": 28.8889,
+   "word": "Hold"
+  },
+  {
+   "end": 29.7222,
+   "parts": 1,
+   "start": 29.4444,
+   "word": "on"
+  },
+  {
+   "end": 30.2778,
+   "parts": 1,
+   "start": 29.7222,
+   "word": "hold"
+  },
+  {
+   "end": 30.5556,
+   "parts": 1,
+   "start": 30.2778,
+   "word": "on"
+  },
+  {
+   "end": 30.6944,
+   "parts": 1,
+   "start": 30.5556,
+   "word": "the"
+  },
+  {
+   "end": 30.8333,
+   "parts": 1,
+   "start": 30.6944,
+   "word": "road"
+  },
+  {
+   "end": 30.9722,
+   "parts": 1,
+   "start": 30.8333,
+   "word": "is"
+  },
+  {
+   "end": 31.8056,
+   "parts": 1,
+   "start": 30.9722,
+   "word": "long"
+  },
+  {
+   "end": 32.3611,
+   "parts": 1,
+   "start": 32.2222,
+   "word": "Sing"
+  },
+  {
+   "end": 32.6389,
+   "parts": 1,
+   "start": 32.3611,
+   "word": "it"
+  },
+  {
+   "end": 33.1944,
+   "parts": 1,
+   "start": 32.6389,
+   "word": "back"
+  },
+  {
+   "end": 33.4722,
+   "parts": 1,
+   "start": 33.1944,
+   "word": "to"
+  },
+  {
+   "end": 33.6111,
+   "parts": 1,
+   "start": 33.4722,
+   "word": "me"
+  },
+  {
+   "end": 33.75,
+   "parts": 1,
+   "start": 33.6111,
+   "word": "I"
+  },
+  {
+   "end": 34.3056,
+   "parts": 1,
+   "start": 33.75,
+   "word": "know"
+  },
+  {
+   "end": 34.5833,
+   "parts": 1,
+   "start": 34.3056,
+   "word": "this"
+  },
+  {
+   "end": 35.4167,
+   "parts": 1,
+   "start": 34.5833,
+   "word": "song"
+  },
+  {
+   "end": 37.0833,
+   "parts": 2,
+   "start": 36.6667,
+   "word": "Coffee's"
+  },
+  {
+   "end": 37.6389,
+   "parts": 1,
+   "start": 37.0833,
+   "word": "cold"
+  },
+  {
+   "end": 38.1944,
+   "parts": 1,
+   "start": 37.6389,
+   "word": "and"
+  },
+  {
+   "end": 38.75,
+   "parts": 1,
+   "start": 38.1944,
+   "word": "the"
+  },
+  {
+   "end": 39.5833,
+   "parts": 2,
+   "start": 38.75,
+   "word": "paper's"
+  },
+  {
+   "end": 40.4167,
+   "parts": 1,
+   "start": 39.5833,
+   "word": "old"
+  },
+  {
+   "end": 42.2222,
+   "parts": 3,
+   "start": 41.1111,
+   "word": "Every"
+  },
+  {
+   "end": 42.6389,
+   "parts": 2,
+   "start": 42.2222,
+   "word": "headline"
+  },
+  {
+   "end": 42.9167,
+   "parts": 1,
+   "start": 42.6389,
+   "word": "is"
+  },
+  {
+   "end": 43.1944,
+   "parts": 1,
+   "start": 42.9167,
+   "word": "a"
+  },
+  {
+   "end": 43.6111,
+   "parts": 2,
+   "start": 43.1944,
+   "word": "promise"
+  },
+  {
+   "end": 43.8889,
+   "parts": 1,
+   "start": 43.6111,
+   "word": "that"
+  },
+  {
+   "end": 44.0278,
+   "parts": 1,
+   "start": 43.8889,
+   "word": "was"
+  },
+  {
+   "end": 44.5833,
+   "parts": 2,
+   "start": 44.0278,
+   "word": "never"
+  },
+  {
+   "end": 45.4167,
+   "parts": 1,
+   "start": 44.5833,
+   "word": "sold"
+  },
+  {
+   "end": 46.9444,
+   "parts": 1,
+   "start": 46.6667,
+   "word": "You"
+  },
+  {
+   "end": 47.5,
+   "parts": 1,
+   "start": 46.9444,
+   "word": "said"
+  },
+  {
+   "end": 47.6389,
+   "parts": 1,
+   "start": 47.5,
+   "word": "the"
+  },
+  {
+   "end": 47.9167,
+   "parts": 2,
+   "start": 47.6389,
+   "word": "summer"
+  },
+  {
+   "end": 48.4722,
+   "parts": 2,
+   "start": 47.9167,
+   "word": "never"
+  },
+  {
+   "end": 48.75,
+   "parts": 1,
+   "start": 48.4722,
+   "word": "ends"
+  },
+  {
+   "end": 49.0278,
+   "parts": 1,
+   "start": 48.75,
+   "word": "but"
+  },
+  {
+   "end": 49.3056,
+   "parts": 1,
+   "start": 49.0278,
+   "word": "it"
+  },
+  {
+   "end": 50.4167,
+   "parts": 2,
+   "start": 49.3056,
+   "word": "fades"
+  },
+  {
+   "end": 51.3889,
+   "parts": 1,
+   "start": 51.1111,
+   "word": "And"
+  },
+  {
+   "end": 52.5,
+   "parts": 3,
+   "start": 51.3889,
+   "word": "every"
+  },
+  {
+   "end": 53.3333,
+   "parts": 2,
+   "start": 52.5,
+   "word": "morning"
+  },
+  {
+   "end": 53.4722,
+   "parts": 1,
+   "start": 53.3333,
+   "word": "is"
+  },
+  {
+   "end": 53.6111,
+   "parts": 1,
+   "start": 53.4722,
+   "word": "a"
+  },
+  {
+   "end": 54.0278,
+   "parts": 2,
+   "start": 53.6111,
+   "word": "window"
+  },
+  {
+   "end": 54.5833,
+   "parts": 1,
+   "start": 54.0278,
+   "word": "that"
+  },
+  {
+   "end": 55.1389,
+   "parts": 1,
+   "start": 54.5833,
+   "word": "the"
+  },
+  {
+   "end": 55.6944,
+   "parts": 1,
+   "start": 55.1389,
+   "word": "sun"
+  },
+  {
+   "end": 56.9444,
+   "parts": 3,
+   "start": 55.6944,
+   "word": "invades"
+  },
+  {
+   "end": 58.0556,
+   "parts": 1,
+   "start": 57.7778,
+   "word": "Hold"
+  },
+  {
+   "end": 58.6111,
+   "parts": 1,
+   "start": 58.0556,
+   "word": "on"
+  },
+  {
+   "end": 58.75,
+   "parts": 1,
+   "start": 58.6111,
+   "word": "hold"
+  },
+  {
+   "end": 59.0278,
+   "parts": 1,
+   "start": 58.75,
+   "word": "on"
+  },
+  {
+   "end": 59.3056,
+   "parts": 1,
+   "start": 59.0278,
+   "word": "we're"
+  },
+  {
+   "end": 59.8611,
+   "parts": 2,
+   "start": 59.3056,
+   "word": "almost"
+  },
+  {
+   "end": 60.6944,
+   "parts": 1,
+   "start": 59.8611,
+   "word": "home"
+  },
+  {
+   "end": 61.3889,
+   "parts": 1,
+   "start": 61.1111,
+   "word": "The"
+  },
+  {
+   "end": 61.6667,
+   "parts": 1,
+   "start": 61.3889,
+   "word": "night"
+  },
+  {
+   "end": 61.8056,
+   "parts": 1,
+   "start": 61.6667,
+   "word": "is"
+  },
+  {
+   "end": 62.0833,
+   "parts": 1,
+   "start": 61.8056,
+   "word": "loud"
+  },
+  {
+   "end": 62.3611,
+   "parts": 1,
+   "start": 62.0833,
+   "word": "but"
+  },
+  {
+   "end": 62.5,
+   "parts": 1,
+   "start": 62.3611,
+   "word": "we're"
+  },
+  {
+   "end": 62.7778,
+   "parts": 1,
+   "start": 62.5,
+   "word": "not"
+  },
+  {
+   "end": 63.8889,
+   "parts": 2,
+   "start": 62.7778,
+   "word": "alone"
+  },
+  {
+   "end": 65.0,
+   "parts": 1,
+   "start": 64.4444,
+   "word": "Hold"
+  },
+  {
+   "end": 65.2778,
+   "parts": 1,
+   "start": 65.0,
+   "word": "on"
+  },
+  {
+   "end": 65.8333,
+   "parts": 1,
+   "start": 65.2778,
+   "word": "hold"
+  },
+  {
+   "end": 66.1111,
+   "parts": 1,
+   "start": 65.8333,
+   "word": "on"
+  },
+  {
+   "end": 66.25,
+   "parts": 1,
+   "start": 66.1111,
+   "word": "the"
+  },
+  {
+   "end": 66.3889,
+   "parts": 1,
+   "start": 66.25,
+   "word": "road"
+  },
+  {
+   "end": 66.5278,
+   "parts": 1,
+   "start": 66.3889,
+   "word": "is"
+  },
+  {
+   "end": 67.3611,
+   "parts": 1,
+   "start": 66.5278,
+   "word": "long"
+  },
+  {
+   "end": 67.9167,
+   "parts": 1,
+   "start": 67.7778,
+   "word": "Sing"
+  },
+  {
+   "end": 68.1944,
+   "parts": 1,
+   "start": 67.9167,
+   "word": "it"
+  },
+  {
+   "end": 68.75,
+   "parts": 1,
+   "start": 68.1944,
+   "word": "back"
+  },
+  {
+   "end": 69.0278,
+   "parts": 1,
+   "start": 68.75,
+   "word": "to"
+  },
+  {
+   "end": 69.1667,
+   "parts": 1,
+   "start": 69.0278,
+   "word": "me"
+  },
+  {
+   "end": 69.3056,
+   "parts": 1,
+   "start": 69.1667,
+   "word": "I"
+  },
+  {
+   "end": 69.8611,
+   "parts": 1,
+   "start": 69.3056,
+   "word": "know"
+  },
+  {
+   "end": 70.1389,
+   "parts": 1,
+   "start": 69.8611,
+   "word": "this"
+  },
+  {
+   "end": 70.9722,
+   "parts": 1,
+   "start": 70.1389,
+   "word": "song"
+  }
+ ]
+}
