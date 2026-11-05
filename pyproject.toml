@@ -19,6 +19,7 @@ coreai = ["coreai-core>=1.0.0b3"]
 scyllasband = "scyllasband.cli:main"
 scyllasband-speak = "scyllasband.cli:speak_main"
 scyllasband-group-speak = "scyllasband.cli:group_main"
+scyllasband-sing = "scyllasband.cli:sing_main"
 
 [tool.setuptools.packages.find]
 where = ["."]

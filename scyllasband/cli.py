@@ -11,8 +11,8 @@ import wave
 import numpy as np
 
 from .contract import validate_bundle_layout
-from .download import (DEFAULT_MODELS_DIR, FLAVORS, RELEASE, REPO_ID, bundle_dir, choose_flavors, default_installed_flavor, download_bundle,
-                       supported_flavors)
+from .download import (DEFAULT_MODELS_DIR, FLAVORS, RELEASE, REPO_ID, SING_RELEASE, SING_REPO_ID, bundle_dir, choose_flavors,
+                       default_installed_flavor, download_bundle, read_provenance, supported_flavors)
 from .planner import parse_group_lines, records_from_text
 from .runtime import SUPPORTED_BACKENDS, SUPPORTED_SAMPLERS, ScyllasBandRuntime
 from .text_normalizer import normalize_spoken_text
@@ -28,9 +28,13 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
                           help="bundle to download (default: Core ML on Apple silicon Macs, which are offered Core AI too when they "
                                "can build iOS/iPadOS/visionOS 27 apps; LiteRT elsewhere)")
     download.add_argument("--models-dir", type=Path, default=DEFAULT_MODELS_DIR)
-    download.add_argument("--repo-id", default=REPO_ID)
-    download.add_argument("--revision", default=RELEASE)
-    download.add_argument("--token")
+    download.add_argument("--repo", "--repo-id", dest="repo_id",
+                          help=f"download from this Hugging Face repository only (default: {SING_REPO_ID} when your login can reach it, "
+                               f"else {REPO_ID})")
+    download.add_argument("--revision", help=f"tag or branch (default: {SING_RELEASE} for the singing release, {RELEASE} for the "
+                                             "public one, the default branch elsewhere)")
+    download.add_argument("--public", action="store_true", help=f"skip the singing repository and download from {REPO_ID}")
+    download.add_argument("--token", help="Hugging Face token (default: the environment's or the saved login)")
     download.add_argument("--force", action="store_true")
     download.add_argument("-y", "--yes", action="store_true", help="download the default bundle without asking")
     download.add_argument("--no-validate-bundle", action="store_true")
@@ -56,6 +60,23 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
         command = sub.add_parser(name, help=help_text, allow_abbrev=False)
         _add_synthesis_args(command, group=name == "group-speak")
         command.set_defaults(func=func)
+
+    sing = sub.add_parser("sing", help="sing a melody score (JSON) into a WAV file; needs a v4 bundle", allow_abbrev=False)
+    sing.add_argument("--score", type=Path, required=True, help="score JSON: text, bpm, style (pop or ballad) and notes [label, note, beats]")
+    sing.add_argument("-o", "--output", type=Path, help="WAV path")
+    sing.add_argument("--metadata", type=Path, help="write the phrase plan and settings as JSON")
+    _add_bundle_args(sing)
+    sing.add_argument("--voice", default="scylla")
+    sing.add_argument("--language")
+    sing.add_argument("--seed", type=int)
+    sing.add_argument("--steps", type=int, help="flow steps (default: the bundle's singing setting, 8)")
+    sing.add_argument("--sampler", choices=SUPPORTED_SAMPLERS, help="default: the bundle's singing setting, heun")
+    sing.add_argument("--decoder", help="vocos or bigvgan (default: the bundle's singing setting where exported, else vocos)")
+    sing.add_argument("--guidance", type=float, help="classifier-free guidance on the melody and mode; 1 is off (default: the bundle's "
+                                                     "singing setting, else 1)")
+    sing.add_argument("--no-register", action="store_true", help="sing the score in the octave it is written in")
+    sing.add_argument("--no-progress", action="store_true")
+    sing.set_defaults(func=_sing)
     return parser
 
 
@@ -70,14 +91,7 @@ def _add_synthesis_args(parser: argparse.ArgumentParser, *, group: bool) -> None
     parser.add_argument("-o", "--output", type=Path, help="WAV path (speak/group-speak), JSON path (plan), chunk WAV dir (stream)")
     parser.add_argument("--metadata", type=Path, help="write synthesis metadata JSON")
     parser.add_argument("--events", type=Path, help="stream: write JSON events here instead of stdout")
-    parser.add_argument("--bundle", type=Path, help="model bundle directory (default: the installed bundle for --backend)")
-    parser.add_argument("--models-dir", type=Path, default=DEFAULT_MODELS_DIR)
-    parser.add_argument("--backend", choices=SUPPORTED_BACKENDS)
-    parser.add_argument("--threads", type=int, help="CPU threads per graph")
-    parser.add_argument("--compute-units", help="Core ML / Core AI: auto (default: the bundle's recommendation), gpu, cpu, ane "
-                                                "(the graphs the bundle marks for the Neural Engine, the rest on the CPU), or "
-                                                "per graph, e.g. gpu,g2p=cpu. ONNX Runtime: cpu (default) or gpu (NVIDIA, "
-                                                "CUDA; uses the webgpu bundle)")
+    _add_bundle_args(parser)
     parser.add_argument("--voice", default=None if group else "scylla")
     parser.add_argument("--language")
     parser.add_argument("--intensity", type=float, help="calm (negative) to intense (positive), in the voice's standard deviations "
@@ -94,6 +108,17 @@ def _add_synthesis_args(parser: argparse.ArgumentParser, *, group: bool) -> None
     parser.add_argument("--pause-ms", type=float, default=0.0, help="extra silence when the voice, language or delivery changes")
     parser.add_argument("--no-normalize-text", action="store_true")
     parser.add_argument("--no-progress", action="store_true")
+
+
+def _add_bundle_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--bundle", type=Path, help="model bundle directory (default: the installed bundle for --backend)")
+    parser.add_argument("--models-dir", type=Path, default=DEFAULT_MODELS_DIR)
+    parser.add_argument("--backend", choices=SUPPORTED_BACKENDS)
+    parser.add_argument("--threads", type=int, help="CPU threads per graph")
+    parser.add_argument("--compute-units", help="Core ML / Core AI: auto (default: the bundle's recommendation), gpu, cpu, ane "
+                                                "(the graphs the bundle marks for the Neural Engine, the rest on the CPU), or "
+                                                "per graph, e.g. gpu,g2p=cpu. ONNX Runtime: cpu (default) or gpu (NVIDIA, "
+                                                "CUDA; uses the webgpu bundle)")
     parser.add_argument("--no-validate-bundle", action="store_true")
 
 
@@ -105,8 +130,10 @@ def _download(args: argparse.Namespace) -> int:
         flavors = [args.flavor] if args.flavor else choose_flavors(interactive=not args.yes and sys.stdin.isatty())
     for flavor in flavors:
         path = download_bundle(flavor=flavor, models_dir=args.models_dir, repo_id=args.repo_id, revision=args.revision,
-                               token=args.token, force=args.force, validate=not args.no_validate_bundle)
-        print(f"Installed {flavor} bundle: {path}")
+                               token=args.token, force=args.force, validate=not args.no_validate_bundle, public=args.public)
+        origin = read_provenance(path) or {}
+        source = f" from {origin['repo_id']}@{origin.get('revision')}" if origin.get("repo_id") else ""
+        print(f"Installed {flavor} bundle{source}: {path}")
     return 0
 
 
@@ -170,6 +197,15 @@ def _stream(args: argparse.Namespace) -> int:
     finally:
         if sink is not sys.stdout:
             sink.close()
+    return 0
+
+
+def _sing(args: argparse.Namespace) -> int:
+    score = json.loads(args.score.read_text(encoding="utf-8"))
+    runtime = _runtime(args)
+    result = runtime.sing(score, args.voice, args.language, seed=args.seed, steps=args.steps, sampler=args.sampler, decoder=args.decoder,
+                          guidance=args.guidance, register=not args.no_register, progress=_progress(args))
+    _write_outputs(args, result.audio, result.sample_rate, result.metadata)
     return 0
 
 
@@ -273,3 +309,7 @@ def speak_main(argv: list[str] | None = None, *, prog: str | None = None) -> int
 
 def group_main(argv: list[str] | None = None, *, prog: str | None = None) -> int:
     return main(["group-speak", *(sys.argv[1:] if argv is None else argv)], prog=prog)
+
+
+def sing_main(argv: list[str] | None = None, *, prog: str | None = None) -> int:
+    return main(["sing", *(sys.argv[1:] if argv is None else argv)], prog=prog)
