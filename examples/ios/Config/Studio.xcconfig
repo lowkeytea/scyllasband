@@ -1,0 +1,4 @@
+// Project-wide settings of the sample app (the generator makes this the project's base configuration; CocoaPods owns the
+// target's). Local.xcconfig, git-ignored, holds settings that belong to one machine, such as the signing team:
+//     DEVELOPMENT_TEAM = ABCDE12345
+#include? "Local.xcconfig"

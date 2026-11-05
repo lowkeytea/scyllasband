@@ -16,11 +16,22 @@ project.root_object.development_region = 'en'
 target = project.new_target(:application, 'ScyllasBandStudio', :ios, '18.0')
 source_group = project.main_group.new_group('ScyllasBandStudio', 'ScyllasBandStudio')
 
-Dir.glob(File.join(root, 'ScyllasBandStudio', '*.swift')).sort.each do |absolute_path|
-  reference = source_group.new_file(File.basename(absolute_path))
+# Every Swift file under ScyllasBandStudio/, in a group per folder (Sing/ holds the singing screen).
+sources = File.join(root, 'ScyllasBandStudio')
+Dir.glob(File.join(sources, '**', '*.swift')).sort.each do |absolute_path|
+  relative = absolute_path.delete_prefix("#{sources}/")
+  group = File.dirname(relative).split('/').reject { |part| part == '.' }.reduce(source_group) do |parent, part|
+    parent.children.find { |child| child.display_name == part } || parent.new_group(part, part)
+  end
+  reference = group.new_file(File.basename(relative))
   target.source_build_phase.add_file_reference(reference)
 end
 source_group.new_file('Info.plist')
+
+# Config/Studio.xcconfig is the project's base configuration (CocoaPods sets the target's); it includes the git-ignored
+# Config/Local.xcconfig when present, which holds per-machine settings such as DEVELOPMENT_TEAM.
+config_group = project.main_group.new_group('Config', 'Config')
+studio_config = config_group.new_file('Studio.xcconfig')
 
 asset_phase = target.new_shell_script_build_phase('Prepare Scylla\'s Band assets')
 asset_phase.shell_path = '/bin/zsh'
@@ -31,6 +42,7 @@ asset_phase.show_env_vars_in_log = '0'
 asset_phase.always_out_of_date = '1'
 
 project.build_configurations.each do |configuration|
+  configuration.base_configuration_reference = studio_config
   configuration.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '18.0'
   configuration.build_settings['XROS_DEPLOYMENT_TARGET'] = '2.0'
 end

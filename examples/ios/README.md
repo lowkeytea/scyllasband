@@ -96,8 +96,10 @@ CocoaPods generates pod targets for a single platform, so the `Podfile`'s
 `pod install`.
 
 To run the app, open `ScyllasBandStudio.xcworkspace` (not the `.xcodeproj`,
-which fails with `No such module 'ScyllasBandKit'`), select a development team,
-and run the `ScyllasBandStudio` scheme. The app needs no network, microphone,
+which fails with `No such module 'ScyllasBandKit'`), set your development team
+in `Config/Local.xcconfig` (git-ignored; one line, `DEVELOPMENT_TEAM = <team id>`,
+included by the project's `Config/Studio.xcconfig`, so regenerating the project
+keeps it), and run the `ScyllasBandStudio` scheme. The app needs no network, microphone,
 or storage permission.
 
 The **Prepare Scylla's Band assets** build phase
@@ -108,7 +110,11 @@ the three example documents, and fails if neither bundle exists. Each bundle
 must contain all seven v3 graphs: `g2p`, `duration_predictor`, the pitch
 predictor (`pitch_context_encoder` and `pitch_estimator`),
 `vector_context_encoder`, `vector_estimator` and `vocoder`; the phase fails
-on a v2 bundle, which has no pitch predictor. Simulator
+on a v2 bundle, which has no pitch predictor. A v4 bundle that sings through
+BigVGAN must also contain `vocoder_bigvgan`. The example scores in
+`scyllasband/models/melodies` (installed by `python -m scyllasband download`
+from the singing release) are embedded as `scyllasband/melodies` for the Sing
+tab. Simulator
 builds embed only Core ML. Set `SCYLLASBAND_IOS_BUNDLE_DIR` to embed one
 specific bundle directory instead. At launch, the app runs Core AI on iOS and
 visionOS 27 devices when that bundle was embedded and Core ML everywhere else, falling
@@ -116,7 +122,10 @@ back to Core ML if Core AI can't load.
 
 In Debug builds, the launch argument `-autoplay` plays the first-launch
 document as soon as the voices are ready. `-showSegmentSettings` opens the
-first segment's settings. The app logs runtime timings under the
+first segment's settings. For the Sing tab, `-singTab` opens it,
+`-singExample <name>` loads an example score (`song_pop_gwen`,
+`phrase_pop_00`, …), `-singTurbo` selects Turbo, `-selectFirstNote` opens the
+note editor and `-autosing` sings once the voices are ready. The app logs runtime timings under the
 `org.scyllasband.studio` subsystem:
 
 ```bash
@@ -131,6 +140,37 @@ changing generated build settings:
 Scripts/generate_xcode_project.rb
 pod install
 ```
+
+## Sing
+
+The Sing tab builds a melody line by line and sings it with a v4 bundle (the
+singing release). Type a line's lyrics (`ba-by` splits a word into syllables,
+`_` holds the previous syllable over another note); each syllable becomes a
+note chip under a sketch of the line's melody. Tap a chip to set its pitch on a
+one-octave keyboard, its length (a sixteenth to a whole note), or to turn it
+into a rest, split it, join it with the next note or delete it. Lines are sung
+one at a time, separated by their rests. The song card sets the title, voice,
+style (pop or ballad), tempo, sound and transpose:
+
+- **Quality** renders with BigVGAN, the singing decoder; **Turbo** with Vocos,
+  the speech decoder, which is much faster and adds some harmonic artefacts on
+  sustained notes in some voices.
+- The key readout says how the melody sits in the voice's range after the
+  automatic octave register, and suggests a transpose when it sits outside.
+
+**Preview** plays the melody as tones at the pitch it will be sung, at once.
+**Sing** renders phrase by phrase; it plays while it renders when rendering
+keeps ahead of playback (always with Turbo), otherwise it renders the song and
+then plays it. The take is kept until the song changes, and **Another take**
+draws a new one. Songs save to the app's Documents, and the share button exports
+the score (the runtime's JSON, which `python -m scyllasband sing --score` also
+reads) and the last take as a WAV file. The **Examples** menu loads the
+release's twenty example scores as editable songs.
+
+Every check of a song goes through the runtime: the score is validated by
+`SBScyllasBand.parseScore(json:transpose:)` (an error names the note at fault,
+which the editor outlines in red), the range by `singFit(for:)` and the tones
+by `preview(for:)`. None of these runs a model or waits for a song in progress.
 
 ## First launch
 
@@ -176,7 +216,11 @@ xcrun devicectl device process launch --device <udid> --console --terminate-exis
 ```
 
 `<bundle>` is `coreai`, `coreml` or a folder copied to the app's
-`Documents/benchmark/`; the unit is `auto`, `cpu`, `gpu` or `ane`. Pass
+`Documents/benchmark/`; the unit is `auto`, `cpu`, `gpu` or `ane`.
+
+`-benchmarkSing <bundle> <unit> <score> <decoder> [requests]` sings an embedded
+example score (`phrase_pop_02.json`, `song_pop_gwen.json`, …) with `bigvgan` or
+`vocos` and reports the same figures for singing. Pass
 `--environment-variables '{"SCYLLASBAND_COMPUTE_UNITS": "cpu,vector_estimator=ane"}'`
 with `auto` to try another per-model placement.
 

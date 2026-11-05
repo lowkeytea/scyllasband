@@ -3,6 +3,8 @@
 NS_ASSUME_NONNULL_BEGIN
 
 FOUNDATION_EXPORT NSErrorDomain const ScyllasBandErrorDomain;
+/** In the userInfo of a score error: the index (NSNumber) of the note at fault in the score's "notes". */
+FOUNDATION_EXPORT NSErrorUserInfoKey const SBScyllasBandScoreNoteIndexKey;
 
 typedef NS_ERROR_ENUM(ScyllasBandErrorDomain, SBScyllasBandErrorCode) {
     SBScyllasBandErrorInvalidArgument = 1,
@@ -109,6 +111,11 @@ typedef NS_ENUM(NSInteger, SBScyllasBandSingingDecoder) {
 @property(nonatomic, readonly) float guidance;
 /** The MIDI pitch each voice sings around; a score is moved by octaves next to it. */
 @property(nonatomic, copy, readonly) NSDictionary<NSString *, NSNumber *> *voiceMidiCenters;
+/** The band around a voice's centre, in semitones, that the octave register aims a song's mean pitch for (-3, +5). */
+@property(nonatomic, readonly) float registerBelow;
+@property(nonatomic, readonly) float registerAbove;
+/** The longest phrase the bundle sings in one piece; put rests (0.25 s or more) between lines. */
+@property(nonatomic, readonly) float maxPhraseSeconds;
 - (instancetype)init NS_UNAVAILABLE;
 @end
 
@@ -163,7 +170,7 @@ typedef NS_ENUM(NSInteger, SBScyllasBandSingingDecoder) {
 @property(nonatomic, copy, nullable) NSNumber *seed;
 /** Flow steps; 0 uses the bundle's singing setting (8). */
 @property(nonatomic) NSInteger steps;
-/** Classifier-free guidance on the melody; nil uses the bundle's setting (2); 1 turns it off. */
+/** Classifier-free guidance on the melody and mode; nil uses the bundle's setting (2); 1 turns it off. */
 @property(nonatomic, copy, nullable) NSNumber *guidance;
 /** Initially SBScyllasBandSingingDecoderDefault (BigVGAN where the bundle carries it). Vocos is the fast ("turbo") option. */
 @property(nonatomic) SBScyllasBandSingingDecoder decoder;
@@ -175,7 +182,7 @@ typedef NS_ENUM(NSInteger, SBScyllasBandSingingDecoder) {
 - (instancetype)init NS_UNAVAILABLE;
 @end
 
-/** A copy of one sentence's mono Float32 PCM; it stays valid after the callback returns. */
+/** A copy of mono Float32 PCM (one spoken sentence, a whole sung song, or a tone preview); valid after the callback returns. */
 @interface SBScyllasBandAudioChunk : NSObject
 @property(nonatomic, copy, readonly) NSData *pcmFloat32Data;
 @property(nonatomic, readonly) NSInteger sampleCount;
@@ -186,9 +193,9 @@ typedef NS_ENUM(NSInteger, SBScyllasBandSingingDecoder) {
 @end
 
 /**
- One sung phrase of mono Float32 PCM and its place on the song's timeline: it starts `offsetSamples` into the song (the
- gap after the previous phrase is silence; a phrase can also overlap the previous one's release, in which case add
- them). The song is `songSampleCount` samples long.
+ The song audio one sung phrase settles, as mono Float32 PCM: samples [startSample, startSample + sampleCount) of the song,
+ final and contiguous with the previous phrase's, so a player appends them in order (rests are already silence in them).
+ The song is `songSampleCount` samples long. `sampleCount` may be 0.
  */
 @interface SBScyllasBandSungPhrase : NSObject
 @property(nonatomic, copy, readonly) NSData *pcmFloat32Data;
@@ -196,7 +203,7 @@ typedef NS_ENUM(NSInteger, SBScyllasBandSingingDecoder) {
 @property(nonatomic, readonly) NSInteger sampleRate;
 @property(nonatomic, readonly) NSInteger phraseIndex;
 @property(nonatomic, readonly) NSInteger phraseCount;
-@property(nonatomic, readonly) NSInteger offsetSamples;
+@property(nonatomic, readonly) NSInteger startSample;
 @property(nonatomic, readonly) NSInteger songSampleCount;
 @property(nonatomic, copy, readonly) NSString *text;
 - (instancetype)init NS_UNAVAILABLE;
@@ -250,7 +257,7 @@ typedef BOOL (^SBScyllasBandSungPhraseBlock)(SBScyllasBandSungPhrase *phrase);
  The phrase plan of a score without singing it: {"seconds", "samples", "register_shift", "phrases": [{"text", "start",
  "end", "frames", ...}], ...}. nil with an error for an invalid score or a bundle that cannot sing.
  */
-- (nullable NSDictionary *)singPlanForRequest:(SBScyllasBandSingRequest *)request error:(NSError **)error;
+- (nullable NSDictionary *)singPlanForRequest:(SBScyllasBandSingRequest *)request error:(NSError **)error NS_SWIFT_NAME(singPlan(for:));
 
 /**
  Sings the score phrase by phrase (bundleInfo.singing.supported must be YES). Callbacks run on the calling thread. Returns
@@ -259,10 +266,33 @@ typedef BOOL (^SBScyllasBandSungPhraseBlock)(SBScyllasBandSungPhrase *phrase);
 - (BOOL)singRequest:(SBScyllasBandSingRequest *)request
       phraseStarted:(nullable SBScyllasBandPhraseStartedBlock)phraseStarted
         phraseAudio:(SBScyllasBandSungPhraseBlock)phraseAudio
-              error:(NSError **)error;
+              error:(NSError **)error NS_SWIFT_NAME(sing(_:phraseStarted:phraseAudio:));
 
 /** Sings the whole score into one waveform (phrases on the song's timeline, silence in the rests). */
-- (nullable SBScyllasBandAudioChunk *)singRequest:(SBScyllasBandSingRequest *)request error:(NSError **)error;
+- (nullable SBScyllasBandAudioChunk *)singRequest:(SBScyllasBandSingRequest *)request error:(NSError **)error NS_SWIFT_NAME(sing(_:));
+
+/**
+ Checks a score without a runtime and returns it normalized after `transpose` semitones: {"text", "bpm", "style", "mode",
+ "seconds", "notes": [{"index", "label", "word_index", "part", "note", "midi", "beats", "start", "end"}], "words", "range",
+ "lines": [{"first", "last"}]}. An invalid score fails with SBScyllasBandErrorInvalidArgument, and its userInfo names the
+ note at fault (SBScyllasBandScoreNoteIndexKey) when there is one.
+ */
++ (nullable NSDictionary *)parseScoreJSON:(NSString *)scoreJSON transpose:(NSInteger)transpose error:(NSError **)error
+    NS_SWIFT_NAME(parseScore(json:transpose:));
+
+/**
+ How the request's score sits in its voice's range: {"voice_center", "band", "transpose", "register_shift", "mean_midi",
+ "low_note", "high_note", "outside_semitones", "suggested_transpose"}. Runs no graph and does not wait for a song in
+ progress, so it can follow every edit.
+ */
+- (nullable NSDictionary *)singFitForRequest:(SBScyllasBandSingRequest *)request error:(NSError **)error NS_SWIFT_NAME(singFit(for:));
+
+/** The request's score as plain tones at the pitch it will be sung (transpose and register applied); instant, no graph. */
+- (nullable SBScyllasBandAudioChunk *)previewForRequest:(SBScyllasBandSingRequest *)request error:(NSError **)error NS_SWIFT_NAME(preview(for:));
+
+/** Loads the graphs a short sung phrase needs with `decoder`, so the first song starts quickly. */
+- (BOOL)warmUpSingingWithVoice:(nullable NSString *)voiceIdentifier decoder:(SBScyllasBandSingingDecoder)decoder error:(NSError **)error
+    NS_SWIFT_NAME(warmUpSinging(voice:decoder:));
 
 /** Stops requests already issued (running or waiting) at their next graph call; later requests are unaffected. */
 - (void)requestCancellation;

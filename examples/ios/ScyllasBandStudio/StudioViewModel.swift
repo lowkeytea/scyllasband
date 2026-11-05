@@ -1,169 +1,58 @@
+import Combine
 import Foundation
 import os
 @preconcurrency import ScyllasBandKit
 
 private let log = Logger(subsystem: "org.scyllasband.studio", category: "runtime")
 
-/// Set from the main thread by Stop, polled by the synthesis worker.
-private final class CancellationFlag: @unchecked Sendable {
-    private let lock = NSLock()
-    private var cancelled = false
-
-    var isSet: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return cancelled
-    }
-
-    func set() {
-        lock.lock()
-        cancelled = true
-        lock.unlock()
-    }
-}
-
 @MainActor
 final class StudioViewModel: ObservableObject {
-    @Published var bundleInfo: SBScyllasBandBundleInfo?
     @Published var segments: [ScriptSegment] = []
     @Published var status = "Preparing voices…"
-    @Published var isPreparing = true
-    @Published var preparingDetail = ""
     @Published var isPlaying = false
     @Published var nowPlayingText: String?
     @Published var nowPlayingContext: String?
     @Published var nowPlayingProgress: String?
-    /// "Core ML" or "Core AI" once a runtime is ready.
-    @Published private(set) var backend: String?
-    /// The compute unit chosen in the runtime settings.
-    @Published private(set) var computeUnit: ComputeUnitOption
-    /// The compute unit the current runtime was created with.
-    @Published private(set) var activeComputeUnit: ComputeUnitOption?
 
-    private static let computeUnitKey = "computeUnit"
-    private let worker = DispatchQueue(label: "org.scyllasband.studio.runtime", qos: .userInitiated)
-    private var runtime: SBScyllasBand?
-    private var runtimeGeneration = 0
+    let controller: RuntimeController
     private var audioPlayer: StreamingAudioPlayer?
     private var playbackCancellation: CancellationFlag?
     private var didAutoplay = false
+    private var changes: AnyCancellable?
 
-    init() {
-        computeUnit = ComputeUnitOption(rawValue: UserDefaults.standard.integer(forKey: Self.computeUnitKey)) ?? .automatic
+    init(controller: RuntimeController) {
+        self.controller = controller
+        // The views watch this model; pass the runtime's changes (ready, compute unit, activity) on to them.
+        changes = controller.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+        controller.onReady { [weak self] _, message in self?.runtimeReady(message) }
+        controller.onWillReload { [weak self] in self?.stopPlayback() }
     }
+
+    var bundleInfo: SBScyllasBandBundleInfo? { controller.bundleInfo }
+    var isPreparing: Bool { controller.isPreparing }
+    var preparingDetail: String { controller.preparingDetail }
+    var backend: String? { controller.backend }
+    var computeUnit: ComputeUnitOption { controller.computeUnit }
+    var activeComputeUnit: ComputeUnitOption? { controller.activeComputeUnit }
+    var runtimeSummary: String { controller.summary }
+    /// The status line: the runtime's failure while it has one, else this tab's status.
+    var statusText: String { controller.failure ?? status }
 
     var canPlay: Bool {
-        runtime != nil && !isPreparing && segments.contains { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-    }
-
-    /// e.g. "Core ML · Automatic".
-    var runtimeSummary: String {
-        "\(backend ?? "Preparing") · \((activeComputeUnit ?? effectiveComputeUnit).title)"
-    }
-
-    private var effectiveComputeUnit: ComputeUnitOption {
-        ComputeUnitOption.isSelectable ? computeUnit : .cpu
+        controller.runtime != nil && !controller.isPreparing && (controller.activity == nil || isPlaying)
+            && segments.contains { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
 
     func initialize() {
-        guard runtimeGeneration == 0 else { return }
-        loadRuntime()
+        controller.initialize()
     }
 
     func setComputeUnit(_ option: ComputeUnitOption) {
-        guard option != computeUnit else { return }
-        computeUnit = option
-        UserDefaults.standard.set(option.rawValue, forKey: Self.computeUnitKey)
-        stopPlayback()
-        loadRuntime()
+        controller.setComputeUnit(option)
     }
 
-    /// The embedded bundles to try, best first: Core AI on iOS 27 devices, then Core ML. The Simulator has no Core AI.
-    private static func bundleCandidates() -> [URL] {
-        guard let directory = Bundle.main.resourceURL?.appendingPathComponent("scyllasband", isDirectory: true) else {
-            return []
-        }
-        var candidates: [URL] = []
-        #if !targetEnvironment(simulator)
-        if let preferred = SBScyllasBand.preferredBundleURL(inDirectory: directory) {
-            candidates.append(preferred)
-        }
-        #endif
-        let coreML = directory.appendingPathComponent("coreml", isDirectory: true)
-        if FileManager.default.fileExists(atPath: coreML.appendingPathComponent("manifest.json").path),
-           !candidates.contains(where: { $0.lastPathComponent == "coreml" }) {
-            candidates.append(coreML)
-        }
-        return candidates
-    }
-
-    /// Creates and warms a runtime on the worker queue; it runs after any playback still finishing there.
-    private func loadRuntime() {
-        runtimeGeneration += 1
-        let generation = runtimeGeneration
-        runtime = nil
-        backend = nil
-        activeComputeUnit = nil
-        isPreparing = true
-        let candidates = Self.bundleCandidates()
-        guard let first = candidates.first else {
-            isPreparing = false
-            status = "Model bundle missing. Download a Core ML or Core AI bundle and rebuild (see README)."
-            return
-        }
-        status = "Preparing voices…"
-        preparingDetail = first.lastPathComponent == "coreai"
-            ? "Core AI optimizes the voices for this device the first time they load after installing the app or updating iOS. This can take a minute; later launches are quick."
-            : "Loading the Core ML voices. The first launch after installing takes longest."
-        let unit = effectiveComputeUnit
-        worker.async { [weak self] in
-            var failures: [String] = []
-            for bundleURL in candidates {
-                let flavor = backendLabel(bundleURL.lastPathComponent)
-                let started = Date()
-                do {
-                    log.notice("Creating the \(flavor, privacy: .public) runtime on \(unit.title, privacy: .public)")
-                    let runtime = try SBScyllasBand(bundleURL: bundleURL, computeUnit: unit.native)
-                    try runtime.warmUp(withVoice: runtime.bundleInfo.defaultVoice)
-                    let seconds = Date().timeIntervalSince(started)
-                    log.notice("\(flavor, privacy: .public) runtime created and warmed up in \(seconds, format: .fixed(precision: 2)) s")
-                    let fallbackNote = failures.first
-                    DispatchQueue.main.async {
-                        self?.runtimeReady(runtime, unit: unit, generation: generation, seconds: seconds, fallbackNote: fallbackNote)
-                    }
-                    return
-                } catch {
-                    log.error("\(flavor, privacy: .public) runtime failed: \(error.localizedDescription, privacy: .public)")
-                    failures.append("\(flavor) failed: \(error.localizedDescription)")
-                }
-            }
-            DispatchQueue.main.async {
-                guard let self, generation == self.runtimeGeneration else { return }
-                self.isPreparing = false
-                self.status = "Model initialization failed. " + failures.joined(separator: " ")
-            }
-        }
-    }
-
-    private func runtimeReady(
-        _ runtime: SBScyllasBand,
-        unit: ComputeUnitOption,
-        generation: Int,
-        seconds: TimeInterval,
-        fallbackNote: String?
-    ) {
-        guard generation == runtimeGeneration else { return }
-        let info = runtime.bundleInfo
-        let label = backendLabel(info.backend)
-        self.runtime = runtime
-        bundleInfo = info
-        backend = label
-        activeComputeUnit = unit
-        isPreparing = false
-        var ready = "\(label) ready on \(unit.title) in \(seconds.formatted(.number.precision(.fractionLength(1)))) s"
-        if let fallbackNote {
-            ready += " (\(fallbackNote))"
-        }
+    private func runtimeReady(_ ready: String) {
+        guard let info = controller.bundleInfo else { return }
         if segments.isEmpty {
             loadExample(.walkthrough, statusPrefix: ready)
         } else {
@@ -219,13 +108,13 @@ final class StudioViewModel: ObservableObject {
     func stopPlayback() {
         guard isPlaying else { return }
         playbackCancellation?.set()
-        runtime?.requestCancellation()
+        controller.runtime?.requestCancellation()
         audioPlayer?.stop()
         status = "Stopping after the current model call…"
     }
 
     private func startPlayback() {
-        guard let runtime, let info = bundleInfo else { return }
+        guard let runtime = controller.runtime, let info = bundleInfo else { return }
         let playable = segments.compactMap { segment -> ScriptSegment? in
             let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return nil }
@@ -239,6 +128,10 @@ final class StudioViewModel: ObservableObject {
             return
         }
 
+        guard controller.begin("speaking") else {
+            status = "The runtime is busy singing; stop it first."
+            return
+        }
         let cancellation = CancellationFlag()
         playbackCancellation = cancellation
         isPlaying = true
@@ -248,7 +141,7 @@ final class StudioViewModel: ObservableObject {
         status = "Starting playback…"
         let requested = Date()
         log.notice("Playback requested: \(playable.count) segments")
-        worker.async { [weak self] in
+        controller.worker.async { [weak self] in
             var firstAudio: TimeInterval?
             var playerError: Error?
             do {
@@ -313,6 +206,7 @@ final class StudioViewModel: ObservableObject {
     }
 
     private func finishPlayback(cancelled: Bool, firstAudio: TimeInterval?, error: Error?) {
+        controller.end("speaking")
         audioPlayer = nil
         playbackCancellation = nil
         isPlaying = false
@@ -346,6 +240,20 @@ enum LaunchOptions {
     static func consumeShowSegmentSettings() -> Bool {
         defer { showSegmentSettings = false }
         return showSegmentSettings
+    }
+
+    // The Sing tab: `-singTab` opens it, `-singExample <file stem>` loads an example (e.g. song_pop_gwen), `-singTurbo` picks
+    // Turbo, `-selectFirstNote` opens the note inspector, `-autosing` sings once the voices are ready.
+    static let singTab = ProcessInfo.processInfo.arguments.contains("-singTab")
+    static let singTurbo = ProcessInfo.processInfo.arguments.contains("-singTurbo")
+    static let selectFirstNote = ProcessInfo.processInfo.arguments.contains("-selectFirstNote")
+    static let autosing = ProcessInfo.processInfo.arguments.contains("-autosing")
+    /// With -autosing: print the result (`SBSING <status>`) and quit once the song has played, for automated checks.
+    static let exitAfterSing = ProcessInfo.processInfo.arguments.contains("-exitAfterSing")
+    static var singExample: String? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-singExample"), index + 1 < arguments.count else { return nil }
+        return arguments[index + 1]
     }
 }
 #endif

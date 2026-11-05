@@ -33,7 +33,8 @@ final class StreamingAudioPlayer {
     private var nextBufferID: UInt64 = 0
     private var stopped = false
 
-    init(sampleRate: Int) throws {
+    /// `mode`: .spokenAudio for speech, .default for singing and tone previews.
+    init(sampleRate: Int, mode: AVAudioSession.Mode = .spokenAudio) throws {
         guard let format = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
             sampleRate: Double(sampleRate),
@@ -44,7 +45,7 @@ final class StreamingAudioPlayer {
         }
         self.format = format
         let audioSession = AVAudioSession.sharedInstance()
-        try audioSession.setCategory(.playback, mode: .spokenAudio)
+        try audioSession.setCategory(.playback, mode: mode)
         try audioSession.setActive(true)
         engine.attach(player)
         engine.connect(player, to: engine.mainMixerNode, format: format)
@@ -57,22 +58,34 @@ final class StreamingAudioPlayer {
         shouldStop: () -> Bool,
         onPlaybackStarted: @escaping @MainActor () -> Void
     ) throws -> Bool {
-        guard chunk.sampleCount >= 0,
-              chunk.pcmFloat32Data.count == chunk.sampleCount * MemoryLayout<Float>.size,
+        try enqueue(pcmFloat32Data: chunk.pcmFloat32Data, sampleCount: chunk.sampleCount, shouldStop: shouldStop,
+                    onPlaybackStarted: onPlaybackStarted)
+    }
+
+    /// Queues mono Float32 samples after those already queued (sung phrases and previews arrive this way).
+    func enqueue(
+        pcmFloat32Data data: Data,
+        sampleCount: Int,
+        shouldStop: () -> Bool,
+        onPlaybackStarted: @escaping @MainActor () -> Void
+    ) throws -> Bool {
+        if sampleCount == 0 { return !stopped && !shouldStop() }   // nothing to play (a phrase may settle no samples)
+        guard sampleCount > 0,
+              data.count == sampleCount * MemoryLayout<Float>.size,
               let buffer = AVAudioPCMBuffer(
                 pcmFormat: format,
-                frameCapacity: AVAudioFrameCount(chunk.sampleCount)
+                frameCapacity: AVAudioFrameCount(sampleCount)
               ),
               let samples = buffer.floatChannelData?[0] else {
             throw StreamingAudioPlayerError.invalidChunk
         }
-        chunk.pcmFloat32Data.copyBytes(
+        data.copyBytes(
             to: UnsafeMutableRawBufferPointer(
                 start: samples,
-                count: chunk.pcmFloat32Data.count
+                count: data.count
             )
         )
-        buffer.frameLength = AVAudioFrameCount(chunk.sampleCount)
+        buffer.frameLength = AVAudioFrameCount(sampleCount)
 
         condition.lock()
         while scheduledBuffers.count >= maximumScheduledBufferCount && !stopped && !shouldStop() {

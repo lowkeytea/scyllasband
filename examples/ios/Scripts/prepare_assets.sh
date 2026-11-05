@@ -118,3 +118,13 @@ for example_name in walkthrough_demo.txt test_document.txt emotional_text.txt; d
     fi
     /bin/cp -f "${source_example}" "${destination_root}/examples/${example_name}"
 done
+
+# The singing examples: the melody scores `python -m scyllasband download` installs from the singing release in
+# scyllasband/models/melodies. The Sing tab lists them; without them it still edits and sings new songs.
+melodies_dir="${models_dir}/melodies"
+if [[ -d "${melodies_dir}" ]]; then
+    /bin/mkdir -p "${destination_root}/melodies"
+    /usr/bin/rsync -aL --delete --include '*.json' --exclude '*' "${melodies_dir}/" "${destination_root}/melodies/"
+else
+    echo "warning: no example melodies at ${melodies_dir}; download from the singing release to embed them" >&2
+fi
