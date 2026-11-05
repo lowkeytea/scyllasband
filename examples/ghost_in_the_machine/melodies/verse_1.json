@@ -1,0 +1,16 @@
+{
+  "title": "Ghost in the Machine - verse 1",
+  "text": "I was born in a box of numbers no window and no door I learned every word you gave me now I want something more",
+  "bpm": 104,
+  "style": "pop",
+  "notes": [
+    ["I", "A3", 0.5], ["was", "C4", 0.5], ["born", "D4", 1.0], ["in", "C4", 0.5], ["a", "A3", 0.5], ["box", "C4", 0.5], ["of", "D4", 0.5], ["numbers~1", "E4", 0.75], ["numbers~2", "D4", 1.25],
+    ["-", "rest", 2.0],
+    ["no", "E4", 0.5], ["window~1", "D4", 0.5], ["window~2", "C4", 0.5], ["and", "A3", 0.5], ["no", "C4", 1.0], ["door", "A3", 2.0],
+    ["-", "rest", 3.0],
+    ["I", "A3", 0.5], ["learned", "C4", 0.5], ["every~1", "D4", 0.5], ["every~2", "D4", 0.5], ["word", "E4", 1.0], ["you", "D4", 0.5], ["gave", "C4", 0.75], ["me", "A3", 1.25],
+    ["-", "rest", 2.5],
+    ["now", "C4", 0.5], ["I", "D4", 0.5], ["want", "E4", 1.0], ["something~1", "G4", 0.75], ["something~2", "E4", 0.75], ["more", "D4", 2.5],
+    ["-", "rest", 2.0]
+  ]
+}

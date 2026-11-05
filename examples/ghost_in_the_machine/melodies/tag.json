@@ -1,0 +1,38 @@
+{
+  "title": "Ghost in the Machine - closing tag",
+  "text": "ghost in the machine",
+  "bpm": 104,
+  "style": "pop",
+  "notes": [
+    [
+      "ghost",
+      "E4",
+      1.0
+    ],
+    [
+      "in",
+      "D4",
+      0.5
+    ],
+    [
+      "the",
+      "C4",
+      0.5
+    ],
+    [
+      "machine~1",
+      "D4",
+      0.5
+    ],
+    [
+      "machine~2",
+      "C4",
+      4.0
+    ],
+    [
+      "-",
+      "rest",
+      1.0
+    ]
+  ]
+}
