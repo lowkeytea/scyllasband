@@ -23,11 +23,16 @@ class ScyllasBandSingingTest {
     }
 
     @Test
-    fun phrasesLandOnTheTimelineAndOverlapsAdd() {
-        val first = ScyllasBandSungPhrase(floatArrayOf(0.5f, 0.5f, 0.5f), 0, 2, 1, 8, "a")
-        val second = ScyllasBandSungPhrase(floatArrayOf(0.75f, 0.25f, 0.25f, 0.25f), 1, 2, 3, 8, "b")
-        assertArrayEquals(floatArrayOf(0f, 0.5f, 0.5f, 1f, 0.25f, 0.25f, 0.25f, 0f), assembleSong(listOf(first, second), 8), 0f)
-        val tooLong = ScyllasBandSungPhrase(floatArrayOf(0.1f, 0.1f, 0.1f), 0, 1, 6, 8, "c")
-        assertArrayEquals(floatArrayOf(0f, 0f, 0f, 0f, 0f, 0f, 0.1f, 0.1f), assembleSong(listOf(tooLong), 8), 0f)
+    fun phrasesAreContiguousSoTheSongIsTheirSamplesInOrder() {
+        val first = ScyllasBandSungPhrase(floatArrayOf(0f, 0.5f, 0.5f), 0, 3, 0, 7, "a")
+        val empty = ScyllasBandSungPhrase(floatArrayOf(), 1, 3, 3, 7, "b")
+        val last = ScyllasBandSungPhrase(floatArrayOf(1f, 0.25f, 0.25f, 0f), 2, 3, 3, 7, "c")
+        assertArrayEquals(floatArrayOf(0f, 0.5f, 0.5f, 1f, 0.25f, 0.25f, 0f), joinSong(listOf(first, empty, last)), 0f)
+    }
+
+    @Test
+    fun scoreErrorsCarryTheNoteAtFault() {
+        assertEquals(3, ScyllasBandScoreException("Unknown note 'H4'", 3).noteIndex)
+        assertNull(ScyllasBandScoreException("Score needs a numeric bpm", null).noteIndex)
     }
 }

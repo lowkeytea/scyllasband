@@ -173,7 +173,7 @@ class ScyllasBand private constructor(
                             samples = samples,
                             phraseIndex = phraseIndex,
                             phraseCount = phraseCount,
-                            offsetSamples = metadata?.optInt("offset_samples", 0) ?: 0,
+                            startSample = metadata?.optInt("start_sample", 0) ?: 0,
                             songSamples = metadata?.optInt("song_samples", 0) ?: 0,
                             text = metadata?.optString("text").orEmpty(),
                         ),
@@ -193,7 +193,33 @@ class ScyllasBand private constructor(
         val phrases = mutableListOf<ScyllasBandSungPhrase>()
         val finished = singStreaming(scoreJson, voiceId, language, options) { phrase -> phrases += phrase; true }
         if (!finished) return null
-        return assembleSong(phrases, phrases.firstOrNull()?.songSamples ?: 0)
+        return joinSong(phrases)
+    }
+
+    /** How [scoreJson] sits in the voice's range after the transpose and the octave register; runs no graph. */
+    fun singFit(
+        scoreJson: String,
+        voiceId: String,
+        language: String? = null,
+        options: ScyllasBandSingOptions = ScyllasBandSingOptions(),
+    ): JSONObject {
+        requireSinging(scoreJson, voiceId, language)
+        val handle = synchronized(handleLock) { nativeHandle }
+        return JSONObject(ScyllasBandNative.singFitJson(handle, scoreJson, voiceId, language, options.transpose, options.useRegister))
+    }
+
+    /** [scoreJson] as plain tones at the pitch it will be sung, at [ScyllasBandBundleInfo.sampleRate]; runs no graph. */
+    fun preview(scoreJson: String, voiceId: String, options: ScyllasBandSingOptions = ScyllasBandSingOptions()): FloatArray {
+        requireSinging(scoreJson, voiceId, null)
+        val handle = synchronized(handleLock) { nativeHandle }
+        return ScyllasBandNative.singPreview(handle, scoreJson, voiceId, options.transpose, options.useRegister)
+    }
+
+    /** Loads the graphs a short sung phrase needs with [decoder], so the first song starts quickly. */
+    @Synchronized
+    fun warmUpSinging(voiceId: String? = null, decoder: ScyllasBandSingingDecoder = ScyllasBandSingingDecoder.DEFAULT) {
+        checkNotNull(bundleInfo) { "Call initialize() before singing" }
+        ScyllasBandNative.warmupSinging(nativeHandle, voiceId, decoder.id)
     }
 
     private fun requireSinging(scoreJson: String, voiceId: String, language: String?): ScyllasBandBundleInfo {
@@ -293,6 +319,9 @@ class ScyllasBand private constructor(
             sampler = singing.optString("sampler"),
             guidance = singing.optDouble("guidance", 1.0).toFloat(),
             voiceMidiCenters = centers?.keys()?.asSequence()?.associateWith { centers.getDouble(it).toFloat() } ?: emptyMap(),
+            registerBelow = singing.optJSONArray("register_band")?.optDouble(0, -3.0)?.toFloat() ?: -3f,
+            registerAbove = singing.optJSONArray("register_band")?.optDouble(1, 5.0)?.toFloat() ?: 5f,
+            maxPhraseSeconds = singing.optDouble("max_phrase_seconds", 10.0).toFloat(),
         )
     }
 
@@ -300,5 +329,19 @@ class ScyllasBand private constructor(
         private const val TAG = "ScyllasBand"
 
         fun create(context: Context): ScyllasBand = ScyllasBand(context.applicationContext)
+
+        /**
+         * Checks [scoreJson] without a runtime and returns it normalized after [transpose] semitones: notes with their MIDI,
+         * word, part and times, words, range and the lines an editor shows. Throws [ScyllasBandScoreException] (naming the
+         * note at fault when there is one) for a score the runtime refuses.
+         */
+        fun parseScore(scoreJson: String, transpose: Int = 0): JSONObject {
+            val result = JSONObject(ScyllasBandNative.scoreParseJson(scoreJson, transpose))
+            if (result.has("error")) {
+                val index = if (result.isNull("note_index")) null else result.optInt("note_index")
+                throw ScyllasBandScoreException(result.getString("error"), index)
+            }
+            return result
+        }
     }
 }

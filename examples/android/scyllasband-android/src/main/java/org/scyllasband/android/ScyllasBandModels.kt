@@ -50,6 +50,11 @@ data class ScyllasBandSingingInfo(
     val guidance: Float = 1f,
     /** The MIDI pitch each voice sings around; a score is moved by octaves next to it. */
     val voiceMidiCenters: Map<String, Float> = emptyMap(),
+    /** The band around a voice's centre, in semitones, that the octave register aims a song's mean pitch for. */
+    val registerBelow: Float = -3f,
+    val registerAbove: Float = 5f,
+    /** The longest phrase the bundle sings in one piece; put rests (0.25 s or more) between lines. */
+    val maxPhraseSeconds: Float = 10f,
 ) {
     val hasBigVgan: Boolean get() = "bigvgan" in decoders
 }
@@ -74,28 +79,32 @@ data class ScyllasBandSingOptions(
 }
 
 /**
- * One sung phrase: mono float PCM that starts [offsetSamples] into the song (the gap after the previous phrase is silence; a
- * phrase can overlap the previous one's release, in which case the samples add). The song is [songSamples] long.
+ * The song audio one sung phrase settles: samples [startSample, startSample + samples.size) of the song, final and
+ * contiguous with the previous phrase's, so a player appends them in order (the rests are already silence in them). The
+ * song is [songSamples] long; [samples] may be empty.
  */
 class ScyllasBandSungPhrase(
     val samples: FloatArray,
     val phraseIndex: Int,
     val phraseCount: Int,
-    val offsetSamples: Int,
+    val startSample: Int,
     val songSamples: Int,
     val text: String,
 )
 
-/** Places sung phrases on the song's timeline, adding where they overlap, clipped to [-1, 1]. */
-fun assembleSong(phrases: List<ScyllasBandSungPhrase>, songSamples: Int): FloatArray {
-    val song = FloatArray(songSamples)
+/** The whole song from its phrases' audio, in order (each phrase's samples follow the previous one's). */
+fun joinSong(phrases: List<ScyllasBandSungPhrase>): FloatArray {
+    val song = FloatArray(phrases.sumOf { it.samples.size })
+    var position = 0
     for (phrase in phrases) {
-        val count = minOf(phrase.samples.size, songSamples - phrase.offsetSamples)
-        for (i in 0 until maxOf(0, count)) song[phrase.offsetSamples + i] += phrase.samples[i]
+        phrase.samples.copyInto(song, position)
+        position += phrase.samples.size
     }
-    for (i in song.indices) song[i] = song[i].coerceIn(-1f, 1f)
     return song
 }
+
+/** A score the runtime refused; [noteIndex] is the index of the note at fault in the score's "notes", when there is one. */
+class ScyllasBandScoreException(message: String, val noteIndex: Int?) : IllegalArgumentException(message)
 
 /** Where the LiteRT graphs run. ONNX Runtime builds always run on the CPU. */
 enum class ScyllasBandAccelerator(internal val code: Int) {

@@ -55,6 +55,27 @@ internal object ScyllasBandNative {
         listener: ScyllasBandNativeSingListener,
     ): Boolean
 
+    /**
+     * Checks a score without a runtime: the normalized score JSON, or {"error": message, "note_index": n | null} when the
+     * runtime refuses it.
+     */
+    external fun scoreParseJson(scoreJson: String, transpose: Int): String
+
+    /** How a score sits in its voice's range (no graph runs). */
+    external fun singFitJson(
+        handle: Long,
+        scoreJson: String,
+        voiceId: String,
+        language: String?,
+        transpose: Int,
+        useRegister: Boolean,
+    ): String
+
+    /** The score as tones at the pitch it will be sung, at the bundle's sample rate (no graph runs). */
+    external fun singPreview(handle: Long, scoreJson: String, voiceId: String, transpose: Int, useRegister: Boolean): FloatArray
+
+    external fun warmupSinging(handle: Long, voiceId: String?, decoder: String?)
+
     external fun cancel(handle: Long)
 
     external fun destroy(handle: Long)
@@ -63,7 +84,7 @@ internal object ScyllasBandNative {
 internal interface ScyllasBandNativeSingListener {
     fun onPhraseStarted(phraseIndex: Int, phraseCount: Int, metadataJson: String?): Boolean
 
-    /** [metadataJson] carries offset_samples (the phrase's start on the song's timeline) and song_samples. */
+    /** [samples] continue the song where the previous phrase's ended; [metadataJson] carries start_sample and song_samples. */
     fun onPhraseAudio(samples: FloatArray, phraseIndex: Int, phraseCount: Int, metadataJson: String?): Boolean
 }
 
