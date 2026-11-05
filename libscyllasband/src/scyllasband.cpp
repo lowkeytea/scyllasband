@@ -1,72 +1,21 @@
 // C ABI over the engine (include/scyllasband.h) and the parity-harness entry points (src/scyllasband_test_api.h).
-#include "scyllasband.h"
-
-#include "scyllasband_engine.h"
+#include "scyllasband_abi_internal.h"
 #include "scyllasband_song_render.h"
 #include "scyllasband_speech_stream.h"
-#include "scyllasband_test_api.h"
 #include "scyllasband_text.h"
 
-#include <algorithm>
 #include <cmath>
 #include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <mutex>
-#include <string>
 
 using namespace scyllasband;
+using namespace scyllasband::abi;
 
-struct ScyllasBandRuntime {
-    std::unique_ptr<Engine> engine;
-    std::string voices_json;
-    std::mutex mutex;
-    ScyllasBandTestNoise test_noise = nullptr;
-    void* test_noise_user = nullptr;
-};
+std::string& scyllasband::abi::last_error() {
+    thread_local std::string message;
+    return message;
+}
 
 namespace {
-
-thread_local std::string g_last_error;
-
-template <typename Fn>
-ScyllasBandStatus guarded(Fn&& fn) {
-    try {
-        fn();
-        g_last_error.clear();
-        return SCYLLASBAND_OK;
-    } catch (const CancelledError& error) {
-        g_last_error = error.what();
-        return SCYLLASBAND_ERROR_CANCELLED;
-    } catch (const std::invalid_argument& error) {
-        g_last_error = error.what();
-        return SCYLLASBAND_ERROR_INVALID_ARGUMENT;
-    } catch (const std::exception& error) {
-        g_last_error = error.what();
-        return SCYLLASBAND_ERROR_RUNTIME;
-    } catch (...) {
-        g_last_error = "Unknown native error";
-        return SCYLLASBAND_ERROR_RUNTIME;
-    }
-}
-
-char* copy_string(const std::string& value) {
-    char* out = static_cast<char*>(std::malloc(value.size() + 1));
-    if (out == nullptr) throw std::bad_alloc();
-    std::memcpy(out, value.c_str(), value.size() + 1);
-    return out;
-}
-
-float* copy_floats(const std::vector<float>& values) {
-    float* out = static_cast<float*>(std::malloc(std::max<std::size_t>(1, values.size()) * sizeof(float)));
-    if (out == nullptr) throw std::bad_alloc();
-    std::copy(values.begin(), values.end(), out);
-    return out;
-}
-
-void require(bool condition, const char* message) {
-    if (!condition) throw std::invalid_argument(message);
-}
 
 SynthesisOptions options_from(const ScyllasBandRequest* request) {
     require(request != nullptr, "request is required");
@@ -114,54 +63,6 @@ Json annotate(Engine& engine, Json metadata, const SynthesisOptions& options, co
     return metadata;
 }
 
-SingRequest sing_options_from(const ScyllasBandSingRequest* request) {
-    require(request != nullptr, "request is required");
-    require(request->voice_id != nullptr && request->voice_id[0] != '\0', "request.voice_id is required");
-    require(request->score_json != nullptr && request->score_json[0] != '\0', "request.score_json is required");
-    SingRequest options;
-    options.voice = request->voice_id;
-    options.language = request->language ? request->language : "";
-    if (request->has_seed) options.seed = request->seed;
-    options.steps = request->steps;
-    switch (request->sampler) {
-        case SCYLLASBAND_SAMPLER_DEFAULT: break;
-        case SCYLLASBAND_SAMPLER_HEUN: options.sampler = "heun"; break;
-        case SCYLLASBAND_SAMPLER_EULER: options.sampler = "euler"; break;
-        default: throw std::invalid_argument("Unsupported sampler");
-    }
-    if (request->guidance > 0.0f) options.guidance = static_cast<double>(request->guidance);
-    options.decoder = request->decoder ? request->decoder : "";
-    options.plan.transpose = request->transpose;
-    options.plan.use_register = request->use_register != 0;
-    return options;
-}
-
-PhraseNoiseFn sing_test_noise(ScyllasBandRuntime* runtime) {
-    if (runtime->test_noise == nullptr) return nullptr;
-    const int dim = 2 + runtime->engine->latent_dim();
-    return [runtime, dim](int index, uint64_t seed, bool has_seed, int64_t frames, float* out) {
-        runtime->test_noise(index, seed, has_seed ? 1 : 0, dim, frames, out, runtime->test_noise_user);
-    };
-}
-
-Json sing_annotate(Engine& engine, Json metadata, const SingRequest& options) {
-    metadata.set("backend", Json(engine.backend_name()));
-    metadata.set("accelerator", Json(engine.accelerator()));
-    metadata.set("bundle_dir", Json(engine.bundle_dir()));
-    metadata.set("voice_id", Json(options.voice));
-    return metadata;
-}
-
-Json sing_plan(Engine& engine, const ScyllasBandSingRequest* request, bool with_melody) {
-    const SingRequest options = sing_options_from(request);
-    EngineSongFrontend frontend(engine);
-    const ResolvedSing resolved = resolve_sing_request(frontend, parse_score_text(request->score_json), options);
-    const SongPlan plan = plan_song(resolved.score, frontend, resolved.voice, resolved.language, options.plan);
-    Json out = plan.to_json(with_melody);
-    out.set("samples", Json(static_cast<int64_t>(std::ceil(plan.seconds() * engine.sample_rate()))));
-    return out;
-}
-
 std::vector<int64_t> int_list(const Json& value) {
     std::vector<int64_t> out;
     for (const Json& item : value.elements()) out.push_back(item.integer());
@@ -184,7 +85,7 @@ const char* scyllasband_backend(void) {
 #endif
 }
 
-const char* scyllasband_last_error(void) { return g_last_error.c_str(); }
+const char* scyllasband_last_error(void) { return last_error().c_str(); }
 
 void scyllasband_request_init(ScyllasBandRequest* request) {
     if (request == nullptr) return;
@@ -306,69 +207,6 @@ ScyllasBandStatus scyllasband_synthesize_stream(ScyllasBandRuntime* runtime, con
             out.sample_rate = engine.sample_rate();
             return callback(&out, user_data) == 0;
         }, test_noise(runtime));
-    });
-}
-
-void scyllasband_sing_request_init(ScyllasBandSingRequest* request) {
-    if (request == nullptr) return;
-    std::memset(request, 0, sizeof(*request));
-    request->use_register = 1;
-}
-
-ScyllasBandStatus scyllasband_sing_plan_json(ScyllasBandRuntime* runtime, const ScyllasBandSingRequest* request, char** out_json) {
-    return guarded([&] {
-        require(runtime != nullptr && out_json != nullptr, "runtime and out_json are required");
-        *out_json = nullptr;
-        std::lock_guard<std::mutex> lock(runtime->mutex);
-        *out_json = copy_string(sing_plan(*runtime->engine, request, false).dump());
-    });
-}
-
-ScyllasBandStatus scyllasband_sing(ScyllasBandRuntime* runtime, const ScyllasBandSingRequest* request, ScyllasBandAudio* out_audio) {
-    return guarded([&] {
-        require(runtime != nullptr && out_audio != nullptr, "runtime and out_audio are required");
-        *out_audio = ScyllasBandAudio{};
-        const SingRequest options = sing_options_from(request);
-        const Score score = parse_score_text(request->score_json);
-        const uint64_t generation = runtime->engine->cancel_generation();
-        std::lock_guard<std::mutex> lock(runtime->mutex);
-        Engine& engine = *runtime->engine;
-        engine.begin_request(generation);
-        Json metadata;
-        std::vector<float> samples = sing(engine, score, options, &metadata, sing_test_noise(runtime));
-        metadata = sing_annotate(engine, std::move(metadata), options);
-        out_audio->samples = copy_floats(samples);
-        out_audio->sample_count = static_cast<int64_t>(samples.size());
-        out_audio->sample_rate = engine.sample_rate();
-        out_audio->metadata_json = copy_string(metadata.dump());
-    });
-}
-
-ScyllasBandStatus scyllasband_sing_stream(ScyllasBandRuntime* runtime, const ScyllasBandSingRequest* request, ScyllasBandEventCallback callback,
-                                          void* user_data) {
-    return guarded([&] {
-        require(runtime != nullptr && callback != nullptr, "runtime and callback are required");
-        const SingRequest options = sing_options_from(request);
-        const Score score = parse_score_text(request->score_json);
-        const uint64_t generation = runtime->engine->cancel_generation();
-        std::lock_guard<std::mutex> lock(runtime->mutex);
-        Engine& engine = *runtime->engine;
-        engine.begin_request(generation);
-        sing_stream(engine, score, options, [&](const SingEvent& event) {
-            const std::string metadata = event.metadata.dump();
-            char chunk_id[32] = {0};
-            if (event.phrase) std::snprintf(chunk_id, sizeof(chunk_id), "phrase_%04d", event.phrase->index + 1);
-            ScyllasBandEvent out{};
-            out.type = static_cast<ScyllasBandEventType>(event.type);
-            out.chunk_index = event.phrase ? event.phrase->index : -1;
-            out.chunk_count = event.phrase_count;
-            out.chunk_id = event.phrase ? chunk_id : nullptr;
-            out.metadata_json = metadata.c_str();
-            out.samples = event.audio ? event.audio->data() : nullptr;
-            out.sample_count = event.audio ? static_cast<int64_t>(event.audio->size()) : 0;
-            out.sample_rate = engine.sample_rate();
-            return callback(&out, user_data) == 0;
-        }, sing_test_noise(runtime));
     });
 }
 
@@ -515,14 +353,6 @@ void scyllasband_test_set_noise(ScyllasBandRuntime* runtime, ScyllasBandTestNois
     std::lock_guard<std::mutex> lock(runtime->mutex);
     runtime->test_noise = noise;
     runtime->test_noise_user = user_data;
-}
-
-int32_t scyllasband_test_sing_plan(ScyllasBandRuntime* runtime, const ScyllasBandSingRequest* request, char** out_json) {
-    return guarded([&] {
-        require(runtime != nullptr && out_json != nullptr, "runtime and out_json are required");
-        std::lock_guard<std::mutex> lock(runtime->mutex);
-        *out_json = copy_string(sing_plan(*runtime->engine, request, true).dump());
-    });
 }
 
 }  // extern "C"

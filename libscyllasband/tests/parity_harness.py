@@ -246,14 +246,17 @@ class Native:
 
 
     class SingRequest(ctypes.Structure):
-        _fields_ = [("score_json", ctypes.c_char_p), ("voice_id", ctypes.c_char_p), ("language", ctypes.c_char_p), ("steps", ctypes.c_int32),
-                    ("sampler", ctypes.c_int), ("seed", ctypes.c_uint64), ("has_seed", ctypes.c_int32), ("guidance", ctypes.c_float),
-                    ("decoder", ctypes.c_char_p), ("transpose", ctypes.c_int32), ("use_register", ctypes.c_int32)]
+        _fields_ = [("struct_size", ctypes.c_uint32), ("score_json", ctypes.c_char_p), ("voice_id", ctypes.c_char_p), ("language", ctypes.c_char_p),
+                    ("transpose", ctypes.c_int32), ("use_register", ctypes.c_int32), ("steps", ctypes.c_int32), ("sampler", ctypes.c_int),
+                    ("seed", ctypes.c_uint64), ("has_seed", ctypes.c_int32), ("guidance", ctypes.c_float), ("has_guidance", ctypes.c_int32),
+                    ("decoder", ctypes.c_char_p)]
 
     def _sing_request(self, score: dict, voice: str, *, seed: int | None = None, decoder: str | None = None, transpose: int = 0,
                       register: bool = True):
         request = self.SingRequest()
         self.lib.scyllasband_sing_request_init(ctypes.byref(request))
+        if request.struct_size != ctypes.sizeof(self.SingRequest):   # the library's layout differs from this declaration
+            raise RuntimeError(f"ScyllasBandSingRequest is {request.struct_size} bytes in the library, {ctypes.sizeof(self.SingRequest)} here")
         request._score = json.dumps(score).encode()   # keep the bytes alive with the request
         request.score_json, request.voice_id = request._score, voice.encode()
         if seed is not None:

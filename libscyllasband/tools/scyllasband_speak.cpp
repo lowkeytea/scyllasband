@@ -187,7 +187,10 @@ int main(int argc, char** argv) {
         } else if (arg == "--decoder") decoder = value();
         else if (arg == "--turbo-sing" || arg == "--turboSing") decoder = "vocos";
         else if (arg == "--sing-steps") sing_steps = std::stoi(value());
-        else if (arg == "--guidance") sing_request.guidance = std::stof(value());
+        else if (arg == "--guidance") {
+            sing_request.guidance = std::stof(value());
+            sing_request.has_guidance = 1;
+        }
         else if (arg == "--transpose") sing_request.transpose = std::stoi(value());
         else if (arg == "--no-register") sing_request.use_register = 0;
         else if (arg == "--timings-file") {

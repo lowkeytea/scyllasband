@@ -149,7 +149,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(scyllasband_core PUBLIC $<$<COMPILE_LANGUAGE:C,CXX,OBJCXX>:-ffp-contract=off>)
 endif()
 
-add_library(scyllasband_native SHARED src/scyllasband.cpp)
+add_library(scyllasband_native SHARED src/scyllasband.cpp src/scyllasband_abi_sing.cpp)
 add_library(scyllasband::native ALIAS scyllasband_native)
 target_link_libraries(scyllasband_native PRIVATE scyllasband_core)
 target_include_directories(scyllasband_native PUBLIC

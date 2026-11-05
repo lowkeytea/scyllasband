@@ -28,14 +28,33 @@ int64_t EngineSongFrontend::max_phrase_frames() const {
     return frames;
 }
 
+Json describe_plan(const SongPlan& plan, const ResolvedSing& resolved, const SingRequest& request, const SingingControls& controls,
+                   int sample_rate, bool with_melody) {
+    Json out = plan.to_json(with_melody);
+    out.set("samples", Json(static_cast<int64_t>(std::ceil(plan.seconds() * sample_rate))));
+    out.set("decoder", Json(resolved.settings.decoder));
+    out.set("steps", Json(resolved.settings.steps));
+    out.set("sampler", Json(resolved.settings.sampler));
+    out.set("guidance", Json(resolved.settings.guidance));
+    out.set("fit", song_fit(controls, resolved.score, resolved.voice, request.plan.transpose, request.plan.use_register).to_json());
+    return out;
+}
+
+SongPlan plan_request(Engine& engine, const Score& score, const SingRequest& request, ResolvedSing* resolved_out) {
+    EngineSongFrontend frontend(engine);
+    ResolvedSing resolved = resolve_sing_request(frontend, score, request);
+    SongPlan plan = plan_song(resolved.score, frontend, resolved.voice, resolved.language, request.plan);
+    if (resolved_out) *resolved_out = std::move(resolved);
+    return plan;
+}
+
 Json sing_stream(Engine& engine, const Score& score, const SingRequest& request, const std::function<bool(const SingEvent&)>& emit,
                  const PhraseNoiseFn& phrase_noise) {
-    EngineSongFrontend frontend(engine);
-    const ResolvedSing resolved = resolve_sing_request(frontend, score, request);
+    ResolvedSing resolved;
+    const SongPlan plan = plan_request(engine, score, request, &resolved);
     const std::string& voice = resolved.voice;
     const std::string& language = resolved.language;
     const SingSettings& settings = resolved.settings;
-    const SongPlan plan = plan_song(resolved.score, frontend, voice, language, request.plan);
     const auto started = std::chrono::steady_clock::now();
     const int sample_rate = engine.sample_rate();
     const int phrase_count = static_cast<int>(plan.phrases.size());
@@ -47,9 +66,7 @@ Json sing_stream(Engine& engine, const Score& score, const SingRequest& request,
     std::vector<int64_t> starts;
     for (const PhrasePlan& item : plan.phrases) starts.push_back(round_half_even(item.phrase.start * sample_rate));
     SongTimeline timeline(song_samples, starts);
-    Json plan_json = plan.to_json();
-    plan_json.set("samples", Json(song_samples));
-    send(SingEvent{SingEvent::kPlan, nullptr, 0, nullptr, 0, plan_json});
+    send(SingEvent{SingEvent::kPlan, nullptr, 0, nullptr, 0, describe_plan(plan, resolved, request, engine.singing(), sample_rate)});
 
     // No delivery request: sung clips were trained without intensity or pace, and the score sets the timing.
     DeliveryTensors delivery{};

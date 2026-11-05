@@ -49,7 +49,7 @@ typedef enum {
 } ScyllasBandAccelerator;
 
 typedef enum {
-    SCYLLASBAND_SAMPLER_DEFAULT = 0,  /* the bundle default (Euler for the released bundles) */
+    SCYLLASBAND_SAMPLER_DEFAULT = 0,  /* the bundle default: for speech Euler in the released bundles, for singing the bundle's singing sampler (Heun) */
     SCYLLASBAND_SAMPLER_HEUN = 1,
     SCYLLASBAND_SAMPLER_EULER = 2
 } ScyllasBandSampler;
@@ -119,7 +119,8 @@ SCYLLASBAND_API void scyllasband_runtime_destroy(ScyllasBandRuntime* runtime);
 /* {"backend", "accelerator", "sample_rate", "release_id", "default_voice", "voices": [{"id", "languages", "default_language"}],
    "delivery": {"ranges": {control: [low, high]}, "defaults": {voice: {control: value}}, "units": {control: unit}},
    "graph_contract", "singing": {"supported", "styles", "decoders", "default_decoder", "sampler", "steps", "guidance",
-   "voice_midi_center": {voice: MIDI pitch}}} ("singing" has supported = false on spoken-only bundles). Owned by the runtime. */
+   "voice_midi_center": {voice: MIDI pitch}, "register_band": [below, above] (semitones around the centre the register aims
+   for), "max_phrase_seconds"}} ("singing" has supported = false on spoken-only bundles). Owned by the runtime. */
 SCYLLASBAND_API const char* scyllasband_voices_json(ScyllasBandRuntime* runtime);
 
 /* Loads the graphs a short sentence needs so the first request starts quickly. voice_id may be NULL. */
@@ -143,42 +144,74 @@ SCYLLASBAND_API void scyllasband_cancel(ScyllasBandRuntime* runtime);
 /* --- singing (ABI 3.1.0; v4 bundles whose voices_json "singing.supported" is true) ---------------------------------------
 
    A score is JSON: {"text", "bpm", "style": "pop" | "ballad", "notes": [[label, note, beats], ...]}; note a pitch name with
-   octave ("C4", "F#3", "Bb3") or "rest" (label "-"); a word over several notes is numbered ("baby~1", "baby~2"). The song is
-   sung phrase by phrase (phrases split at rests of 0.25 s or more), moved by octaves into the voice's range. */
+   octave ("C4", "F#3", "Bb3") or "rest" (label "-"); a word over several notes is numbered ("baby~1", "baby~2", or its
+   syllables "ba~1", "by~2"). The song is sung phrase by phrase (phrases split at rests of 0.25 s or more), moved by octaves
+   into the voice's sung range. */
 typedef struct {
+    uint32_t struct_size;      /* sizeof(ScyllasBandSingRequest): set by scyllasband_sing_request_init, checked by every call */
     const char* score_json;
     const char* voice_id;
     const char* language;      /* NULL or "": the voice's default language */
-    int32_t steps;             /* flow steps; 0: the bundle's singing setting (8) */
-    ScyllasBandSampler sampler;/* DEFAULT: the bundle's singing sampler (Heun) */
-    uint64_t seed;             /* phrase i draws its noise from seed + i */
-    int32_t has_seed;          /* 0: fresh random noise */
-    float guidance;            /* classifier-free guidance on the melody and mode; <= 0: the bundle's setting (2); 1: off */
-    /* NULL or "": the bundle's singing decoder ("bigvgan" where the bundle carries it, else "vocos"); "bigvgan"; or "vocos",
-       the speech decoder: much faster ("turbo"), with some harmonic artefacts on sustained notes in some voices. */
-    const char* decoder;
     int32_t transpose;         /* semitones added to the whole score before the octave register */
     int32_t use_register;      /* nonzero (default): move the song by octaves into the voice's sung range */
+    int32_t steps;             /* flow steps; 0: the bundle's singing setting (8) */
+    ScyllasBandSampler sampler;/* DEFAULT: the bundle's singing sampler (Heun; speech's default sampler is Euler) */
+    uint64_t seed;             /* phrase i draws its noise from seed + i */
+    int32_t has_seed;          /* 0: fresh random noise */
+    float guidance;            /* classifier-free guidance on the melody and mode when has_guidance is set; 1 turns it off */
+    int32_t has_guidance;      /* 0: the bundle's setting (2 for the released model) */
+    /* NULL or "": the bundle's singing decoder ("bigvgan" where this backend has it, else "vocos"); "bigvgan"; or "vocos", the
+       speech decoder: much faster ("turbo"), with some harmonic artefacts on sustained notes in some voices. */
+    const char* decoder;
 } ScyllasBandSingRequest;
 
-/* Fills the defaults: steps 0, default sampler, no seed, guidance 0 (the bundle's), default decoder, transpose 0, register on. */
+/* Fills the defaults and struct_size: no transpose, register on, the bundle's steps, sampler, guidance and decoder, no seed. */
 SCYLLASBAND_API void scyllasband_sing_request_init(ScyllasBandSingRequest* request);
 
-/* The phrase plan for a score ({"voice", "language", "mode", "mode_id", "register_shift", "transpose", "bpm", "style", "text",
-   "seconds", "samples", "phrases": [{"index", "start", "end", "text", "frames", "phones", "durations", "notes"}]}), without
-   singing. Free *out_json with scyllasband_string_free. */
+/* Checks a score without a runtime and returns it normalized after transposing it by `transpose` semitones: {"text", "bpm",
+   "style", "mode", "seconds", "transpose", "notes": [{"index", "label", "word_index", "part", "note", "midi", "beats", "start",
+   "end"}], "words": [{"word", "start", "end", "parts"}], "range": {"low", "high", "mean", "low_note", "high_note"}, "lines":
+   [{"first", "last"}]} (lines: note index ranges that end at rests of 0.25 s or more). On SCYLLASBAND_ERROR_INVALID_ARGUMENT
+   *out_json is {"error": message, "note_index": index of the note at fault, or null}. Thread-safe. Free *out_json with
+   scyllasband_string_free. */
+SCYLLASBAND_API ScyllasBandStatus scyllasband_score_parse(const char* score_json, int32_t transpose, char** out_json);
+
+/* How the score sits in the voice's range after the transpose and the octave register: {"voice_center", "band": [low, high],
+   "transpose", "register_shift", "mean_midi", "low_midi", "high_midi", "low_note", "high_note", "outside_semitones",
+   "suggested_transpose"} (suggested_transpose: the request's transpose when the song fits, else the smallest transpose in
+   [-6, 6] that fits or comes nearest). Runs no graph and does not wait for a request in progress. */
+SCYLLASBAND_API ScyllasBandStatus scyllasband_sing_fit_json(ScyllasBandRuntime* runtime, const ScyllasBandSingRequest* request, char** out_json);
+
+/* The phrase plan for a score, without singing: {"voice", "language", "mode", "mode_id", "register_shift", "transpose", "bpm",
+   "style", "text", "seconds", "samples", "decoder", "steps", "sampler", "guidance", "fit", "phrases": [{"index", "start",
+   "end", "text", "frames", "phones", "durations", "notes"}]}. Runs the bundle's G2P. */
 SCYLLASBAND_API ScyllasBandStatus scyllasband_sing_plan_json(ScyllasBandRuntime* runtime, const ScyllasBandSingRequest* request, char** out_json);
 
-/* Sings the whole score into one waveform (phrases on the song's timeline, silence in the rests). Free with
-   scyllasband_audio_free. metadata_json: the plan, the rendered phrases (bucket, seconds, seed) and the settings used. */
+/* Sings the whole score into one waveform (silence in the rests). Free with scyllasband_audio_free. metadata_json: the plan,
+   the rendered phrases (bucket, seconds, seed) and the settings used. */
 SCYLLASBAND_API ScyllasBandStatus scyllasband_sing(ScyllasBandRuntime* runtime, const ScyllasBandSingRequest* request, ScyllasBandAudio* out_audio);
 
-/* Sings phrase by phrase, calling `callback` from the calling thread: SCYLLASBAND_EVENT_PLAN (metadata: the plan, with
-   "samples", the song's length), SCYLLASBAND_EVENT_CHUNK_STARTED per phrase (chunk_id "phrase_0001", ...), SCYLLASBAND_EVENT_AUDIO
-   per phrase (its samples; metadata "offset_samples" places them on the song's timeline, the gap before them is silence,
-   and "song_samples" is the song's length), SCYLLASBAND_EVENT_DONE (timing summary). */
+/* Sings phrase by phrase, calling `callback` from the calling thread:
+   - SCYLLASBAND_EVENT_PLAN: metadata is the plan (as scyllasband_sing_plan_json, with "samples", the song's length);
+   - SCYLLASBAND_EVENT_CHUNK_STARTED per phrase (chunk_id "phrase_0001", ...);
+   - SCYLLASBAND_EVENT_AUDIO once per phrase: the song audio that phrase settles, contiguous with the previous AUDIO event's
+     (metadata "start_sample", "sample_count", "song_samples"); appended in order, the events are the whole song, sample for
+     sample as scyllasband_sing returns it. An event may carry no samples;
+   - SCYLLASBAND_EVENT_DONE: timing summary.
+   Cancelling (or returning nonzero from the callback) stops at the next graph call; audio already delivered is final. */
 SCYLLASBAND_API ScyllasBandStatus scyllasband_sing_stream(ScyllasBandRuntime* runtime, const ScyllasBandSingRequest* request,
                                                           ScyllasBandEventCallback callback, void* user_data);
+
+/* The score as plain tones at the pitch it will be sung (after the transpose and, with a runtime, the voice's octave register),
+   for an instant preview. `runtime` may be NULL (no register); sample_rate 0 takes the runtime's (24000 without one). Runs no
+   graph and does not wait for a request in progress. metadata_json: {"transpose", "register_shift", "seconds"}. Free with
+   scyllasband_audio_free. */
+SCYLLASBAND_API ScyllasBandStatus scyllasband_sing_preview(ScyllasBandRuntime* runtime, const ScyllasBandSingRequest* request,
+                                                           int32_t sample_rate, ScyllasBandAudio* out_audio);
+
+/* Loads the graphs a short sung phrase needs with `decoder` (NULL or "": the bundle's singing decoder), so the first song
+   starts quickly. voice_id may be NULL. */
+SCYLLASBAND_API ScyllasBandStatus scyllasband_warmup_singing(ScyllasBandRuntime* runtime, const char* voice_id, const char* decoder);
 
 SCYLLASBAND_API void scyllasband_audio_free(ScyllasBandAudio* audio);
 SCYLLASBAND_API void scyllasband_string_free(char* value);
