@@ -9,7 +9,7 @@
 // fp16_fp32_accumulation), allow int8 weights (controls.litert.gpu.quantized_weights) and name the graph files that use
 // the GPU (controls.litert.gpu.graphs, file names without .tflite; the others run on the CPU; default all);
 // SCYLLASBAND_GPU_PRECISION, SCYLLASBAND_GPU_PRIORITY (low, normal, high) and SCYLLASBAND_GPU_GRAPHS (comma-separated)
-// override for a device. Options travel as LiteRT opaque TOML
+// override for a device; SCYLLASBAND_GPU_TOML and SCYLLASBAND_CPU_TOML pass raw options for experiments. Options travel as LiteRT opaque TOML
 // payloads ("xnnpack", "gpu_options"): libLiteRt 2.2.0 does not export the typed option setters.
 #include "scyllasband_graph.h"
 
@@ -234,6 +234,12 @@ private:
         std::string cpu;
         if (settings_.threads > 0) cpu += "num_threads = " + std::to_string(settings_.threads) + "\n";
         if (cache && settings_.weight_cache) cpu += "weight_cache_file_path = \"" + base + ".xnnpack-cache\"\n";
+        // SCYLLASBAND_CPU_TOML adds options (LiteRT "xnnpack" TOML, keys separated by ';'), for device experiments.
+        std::string extra_cpu = env_string("SCYLLASBAND_CPU_TOML");
+        if (!extra_cpu.empty()) {
+            std::replace(extra_cpu.begin(), extra_cpu.end(), ';', '\n');
+            cpu += extra_cpu + "\n";
+        }
         if (status == kLiteRtStatusOk && !cpu.empty()) status = add_opaque(options, "xnnpack", cpu);
         if (status == kLiteRtStatusOk && (hardware & kLiteRtHwAcceleratorGpu)) {
             std::string gpu = "enable_constant_tensors_sharing = true\nmadvise_original_shared_tensors = true\n";
