@@ -439,8 +439,9 @@ class SongPlan:
     language: str
     mode: str
     mode_id: int
-    register_shift: int
+    register_shift: int          # octaves, as semitones
     phrases: list[PhrasePlan] = field(default_factory=list)
+    transpose: int = 0           # semitones asked for, applied before the register shift
 
     @property
     def seconds(self) -> float:
@@ -448,16 +449,18 @@ class SongPlan:
 
     def to_dict(self) -> dict[str, Any]:
         return dict(voice=self.voice, language=self.language, mode=self.mode, mode_id=self.mode_id, register_shift=self.register_shift,
-                    bpm=self.score.bpm, style=self.score.style, text=self.score.text, seconds=round(self.seconds, 3),
+                    transpose=self.transpose, bpm=self.score.bpm, style=self.score.style, text=self.score.text, seconds=round(self.seconds, 3),
                     phrases=[p.to_dict() for p in self.phrases])
 
 
 def plan_song(score: Score | Mapping[str, Any], engine: Engine, voice: str, language: str, *, register: bool = True,
-              phrase_rest: float = PHRASE_REST, max_seconds: float | None = None, pad: float = PAD,
+              transpose: int = 0, phrase_rest: float = PHRASE_REST, max_seconds: float | None = None, pad: float = PAD,
               vowel_share: float | None = None) -> SongPlan:
     """Phrases ready for the engine. ``engine`` supplies the bundle's G2P (with its lexicon), phone vocabulary, manifest
-    and bucket limit. ``register``: shift the song by octaves into the voice's sung range. ``max_seconds``: the longest
-    phrase; by default what the bundle's largest bucket holds, at most ``MAX_PHRASE_SECONDS``."""
+    and bucket limit. ``transpose``: semitones added to the whole score first (to put a song in the voice's key; the
+    register is octaves only, so a voice can otherwise sit up to six semitones from its centre). ``register``: then shift
+    the song by octaves into the voice's sung range. ``max_seconds``: the longest phrase; by default what the bundle's
+    largest bucket holds, at most ``MAX_PHRASE_SECONDS``."""
     if not isinstance(score, Score):
         score = parse_score(score)
     if not engine.delivery_modes:
@@ -469,13 +472,16 @@ def plan_song(score: Score | Mapping[str, Any], engine: Engine, voice: str, lang
     hop = int(engine.manifest.get("audio", {}).get("latent_hop_length", HOP))
     melody_spec = engine.singing.get("melody") or {}
     midi_center, midi_scale = float(melody_spec.get("midi_center", MIDI_CENTER)), float(melody_spec.get("midi_scale", MIDI_SCALE))
+    transpose = int(transpose)
+    if transpose:
+        score = score.transposed(transpose)
     shift = register_shift(score, voice_sung_center(engine, voice)) if register else 0
     score = score.transposed(shift)
     longest = (engine.max_frames - 2) * hop / sample_rate - 2 * pad
     max_seconds = min(MAX_PHRASE_SECONDS if max_seconds is None else float(max_seconds), longest)
     share = VOWEL_SHARE.get(score.mode, VOWEL_SHARE["sung"]) if vowel_share is None else float(vowel_share)
     plan = SongPlan(score=score, voice=voice, language=language, mode=score.mode, mode_id=engine.delivery_modes[score.mode],
-                    register_shift=shift)
+                    register_shift=shift, transpose=transpose)
     for index, phrase in enumerate(split_phrases(score, phrase_rest=phrase_rest, max_seconds=max_seconds, pad=pad)):
         phones, starts = word_phones([w.text for w in phrase.words], engine.phonemize, language)
         total = int(round(phrase.notes[-1].end * sample_rate / hop)) + 2
@@ -493,12 +499,12 @@ def plan_song(score: Score | Mapping[str, Any], engine: Engine, voice: str, lang
 # --- rendering -----------------------------------------------------------------------------------------------------------------
 def sing(engine: Engine, score: Score | Mapping[str, Any], voice: str, language: str, *, seed: int | None = None,
          steps: int | None = None, sampler: str | None = None, decoder: str | None = None, guidance: float | None = None,
-         register: bool = True, progress: TextIO | None = None, **planning: Any) -> "SynthesisResult":
+         register: bool = True, transpose: int = 0, progress: TextIO | None = None, **planning: Any) -> "SynthesisResult":
     """Render a score as one waveform. ``steps``, ``sampler`` and ``decoder`` default to the bundle's singing settings
     (``controls.delivery_modes.singing``); a preferred decoder the bundle does not carry falls back to vocos. ``seed``:
     phrase ``i`` draws from ``seed + i``. Extra keyword arguments go to :func:`plan_song`."""
     from .runtime import SynthesisResult
-    plan = plan_song(score, engine, voice, language, register=register, **planning)
+    plan = plan_song(score, engine, voice, language, register=register, transpose=transpose, **planning)
     singing = engine.singing
     steps = int(steps or singing.get("steps") or 8)
     sampler = str(sampler or singing.get("sampler") or "heun").lower()

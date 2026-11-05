@@ -161,6 +161,16 @@ class PlanTest(unittest.TestCase):
         self.assertEqual(plan_song(SCORE, engine, "scylla", "en_us", pad=PAD).register_shift, 12)   # mean 63.25 -> 75.25 in [69, 77]
         self.assertEqual(plan_song(SCORE, _fake_engine(v4=True), "scylla", "en_us", pad=PAD).register_shift, 0)
 
+    def test_transpose_moves_the_score_by_semitones_before_the_register(self):
+        engine = _v4_engine(voice_midi_center=dict(scylla=72.0))
+        plain = plan_song(SCORE, engine, "scylla", "en_us", pad=PAD)
+        plan = plan_song(SCORE, engine, "scylla", "en_us", pad=PAD, transpose=-5)
+        self.assertEqual((plan.transpose, plan.register_shift), (-5, 12))   # mean 63.25 - 5 + 12 = 70.25, still in [69, 77]
+        self.assertEqual(plan.score.pitched, [m - 5 for m in plain.score.pitched])
+        self.assertEqual(plan.to_dict()["transpose"], -5)
+        self.assertEqual(plan_song(SCORE, engine, "scylla", "en_us", pad=PAD, transpose=-5, register=False).score.pitched,
+                         [m - 5 for m in parse_score(SCORE).pitched])
+
 
 class SingTest(unittest.TestCase):
     def test_a_sung_phrase_feeds_the_mode_and_melody_and_decodes_with_bigvgan(self):

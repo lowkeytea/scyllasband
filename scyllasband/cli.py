@@ -74,6 +74,8 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     sing.add_argument("--decoder", help="vocos or bigvgan (default: the bundle's singing setting where exported, else vocos)")
     sing.add_argument("--guidance", type=float, help="classifier-free guidance on the melody and mode; 1 is off (default: the bundle's "
                                                      "singing setting, else 1)")
+    sing.add_argument("--transpose", type=int, default=0, help="semitones added to the whole score (to put it in the voice's key) "
+                                                                "before the octave register")
     sing.add_argument("--no-register", action="store_true", help="sing the score in the octave it is written in")
     sing.add_argument("--no-progress", action="store_true")
     sing.set_defaults(func=_sing)
@@ -204,7 +206,7 @@ def _sing(args: argparse.Namespace) -> int:
     score = json.loads(args.score.read_text(encoding="utf-8"))
     runtime = _runtime(args)
     result = runtime.sing(score, args.voice, args.language, seed=args.seed, steps=args.steps, sampler=args.sampler, decoder=args.decoder,
-                          guidance=args.guidance, register=not args.no_register, progress=_progress(args))
+                          guidance=args.guidance, register=not args.no_register, transpose=args.transpose, progress=_progress(args))
     _write_outputs(args, result.audio, result.sample_rate, result.metadata)
     return 0
 

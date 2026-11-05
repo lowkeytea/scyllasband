@@ -182,10 +182,11 @@ class ScyllasBandRuntime:
 
     def sing(self, score: Mapping[str, Any], voice_id: str, language: str | None = None, *, seed: int | None = None,
              steps: int | None = None, sampler: str | None = None, decoder: str | None = None, guidance: float | None = None,
-             register: bool = True, progress: TextIO | None = None) -> SynthesisResult:
+             register: bool = True, transpose: int = 0, progress: TextIO | None = None) -> SynthesisResult:
         """Sing a melody score (``text``, ``bpm``, ``style``, ``notes``; see :mod:`scyllasband.singing`) with a voice.
         ``steps``, ``sampler`` and ``decoder`` default to the bundle's singing settings (Heun, 8 steps, BigVGAN where
-        exported); ``register`` moves the song by octaves into the voice's sung range."""
+        exported); ``transpose`` adds semitones to the whole score, then ``register`` moves it by octaves into the voice's
+        sung range."""
         from .singing import sing as sing_score
         if not self.supports_singing:
             raise ValueError("Singing needs a v4 bundle with delivery modes; this bundle is spoken only. Download a current model: "
@@ -194,7 +195,7 @@ class ScyllasBandRuntime:
             raise ValueError(f"Unsupported sampler {sampler!r}; choose one of {', '.join(SUPPORTED_SAMPLERS)}")
         language = self.resolve_language_for_voice(voice_id, language)
         result = sing_score(self.engine, score, voice_id, language, seed=seed, steps=steps, sampler=sampler, decoder=decoder,
-                            guidance=guidance, register=register, progress=progress)
+                            guidance=guidance, register=register, transpose=transpose, progress=progress)
         result.metadata.update(backend=self.backend, bundle_dir=str(self.bundle_dir), voice_id=voice_id)
         return result
 
