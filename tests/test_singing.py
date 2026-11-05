@@ -7,7 +7,7 @@ import unittest
 import numpy as np
 
 from scyllasband.engine import OverlongError
-from scyllasband.singing import (HOP, SAMPLE_RATE, Note, ScoreError, frame_melody, midi_to_note, note_to_midi, parse_score, plan_song,
+from scyllasband.singing import (HOP, LEAD_GATE, RELEASE, SAMPLE_RATE, Note, gate_phrase, ScoreError, frame_melody, midi_to_note, note_to_midi, parse_score, plan_song,
                                  register_shift, sing, singing_styles, split_phrases, voice_sung_center)
 from test_runtime import V4_DELIVERY_MODES, _fake_engine
 
@@ -170,6 +170,20 @@ class PlanTest(unittest.TestCase):
         self.assertEqual(plan.to_dict()["transpose"], -5)
         self.assertEqual(plan_song(SCORE, engine, "scylla", "en_us", pad=PAD, transpose=-5, register=False).score.pitched,
                          [m - 5 for m in parse_score(SCORE).pitched])
+
+
+class GateTest(unittest.TestCase):
+    def test_gate_silences_the_lead_in_and_fades_the_release(self):
+        sr = 1000
+        audio = np.ones(2000, dtype=np.float32)
+        out = gate_phrase(audio, sr, first=0.12, last=1.0)
+        self.assertEqual(float(audio[0]), 1.0)                          # the input is untouched
+        self.assertTrue(np.all(out[: int((0.12 - LEAD_GATE) * sr)] == 0.0))
+        self.assertAlmostEqual(float(out[int((0.12 - LEAD_GATE) * sr) + 30]), 1.0, places=5)
+        self.assertEqual(float(out[500]), 1.0)
+        self.assertTrue(np.all(out[int((1.0 + RELEASE) * sr) + 30:] == 0.0))
+        self.assertTrue(np.all(np.diff(out[int((1.0 + RELEASE) * sr): int((1.0 + RELEASE) * sr) + 30]) <= 0.0))
+        self.assertEqual(gate_phrase(np.ones(10, dtype=np.float32), sr, first=0.0, last=5.0).tolist(), [1.0] * 10)
 
 
 class SingTest(unittest.TestCase):

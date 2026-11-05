@@ -65,6 +65,9 @@ Put the stressed syllable on the long note. The first draft held `machine~1` (th
 every voice sang "ma-mah-chine"; with `["machine~1", "E4", 0.5], ["machine~2", "G4", 2.5]` the word is clear. The same
 goes for any word whose first syllable is a schwa: give it an eighth and let the stressed syllable carry the pitch.
 
+The runtime silences each phrase's lead-in up to 40 ms before its first note and fades it out a quarter second after its
+last, because the model sometimes voices a breath or a stray syllable there that is not in the score.
+
 A quick way to check a score before rendering it: `python -m scyllasband sing --score melodies/chorus.json --voice tuesday
 --transpose -4 -o chorus.wav`.
 
@@ -80,11 +83,15 @@ A quick way to check a score before rendering it: `python -m scyllasband sing --
  "score": "melodies/chorus.json", "transpose": -4, "seed": 5, "gap": 0.6}
 ```
 
-- `speak`: one voice, one line, the usual delivery controls (`intensity`, `pace`, `pitch`, each from -2 to 2).
+- `speak`: one voice, one line, the usual delivery controls (`intensity`, `pace`, `pitch`, each from -2 to 2). Write
+  narration as flowing sentences: a run of very short sentences ("It talks. Now it sings.") puts a pause after each, and
+  the voice breathes into those pauses, which reads as noise in a mix. One sentence with commas is clean.
 - `sing`: one or more voices on one score. With several voices the score is rendered once per voice and the takes are
   summed (they share the score's timeline, so they line up), each scaled by its gain: unison, each voice in its own
-  register. Keep one voice as the lead (gain 1) and the others lower, or the words blur. `seed` fixes the take; change
-  it for a different performance of the same score.
+  register. Each voice times its consonants a little differently (up to about 150 ms on a syllable), so a unison sum
+  flams on consonant-heavy words; this piece keeps every sung section to one voice and passes the title line between
+  voices instead (Tuesday's chorus, Orpheus's answer, Thistle's tag). Use several voices on a cue for long open vowels, or
+  as a quiet double under a lead. `seed` fixes the take; change it for a different performance of the same score.
 - `gap` is the silence after the cue (the script's `gap` is the default). Leading and trailing silence of each render is
   trimmed so the gaps are what you wrote.
 

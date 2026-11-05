@@ -497,6 +497,29 @@ def plan_song(score: Score | Mapping[str, Any], engine: Engine, voice: str, lang
 
 
 # --- rendering -----------------------------------------------------------------------------------------------------------------
+LEAD_GATE = 0.04            # seconds before the first note that a phrase's audio may start (the lead-in before it is silenced)
+RELEASE = 0.25              # seconds after the last note that a phrase's audio may ring, then it fades out
+GATE_RAMP = 0.03            # seconds of raised-cosine ramp at the gate edges
+
+
+def gate_phrase(audio: np.ndarray, sample_rate: int, *, first: float, last: float) -> np.ndarray:
+    """Silence a phrase's lead-in up to ``LEAD_GATE`` before its first note and fade it out ``RELEASE`` after its last note:
+    the model sometimes voices a breath or a syllable in the lead-in and the closing rest, which is not in the score."""
+    audio = np.array(audio, dtype=np.float32, copy=True)
+    ramp = max(1, int(GATE_RAMP * sample_rate))
+    rise = 0.5 - 0.5 * np.cos(np.linspace(0.0, np.pi, ramp, dtype=np.float32))
+    start = max(0, int((first - LEAD_GATE) * sample_rate))
+    if start > 0:
+        audio[:start] = 0.0
+        audio[start:start + ramp] *= rise[: max(0, min(ramp, audio.size - start))]
+    end = int((last + RELEASE) * sample_rate)
+    if end < audio.size:
+        fall = rise[::-1][: max(0, min(ramp, audio.size - end))]
+        audio[end:end + fall.size] *= fall
+        audio[end + fall.size:] = 0.0
+    return audio
+
+
 def sing(engine: Engine, score: Score | Mapping[str, Any], voice: str, language: str, *, seed: int | None = None,
          steps: int | None = None, sampler: str | None = None, decoder: str | None = None, guidance: float | None = None,
          register: bool = True, transpose: int = 0, progress: TextIO | None = None, **planning: Any) -> "SynthesisResult":
@@ -530,7 +553,8 @@ def sing(engine: Engine, score: Score | Mapping[str, Any], voice: str, language:
         result = engine.synthesize_sentence(item.sentence, voice=voice, language=language, delivery=delivery, steps=steps, sampler=sampler,
                                             rng=rng, durations=item.durations, melody=item.melody, delivery_mode=plan.mode_id,
                                             guidance=guidance)
-        audio = engine.decode(result.latents, voice=voice, language=language, decoder=decoder)
+        audio = gate_phrase(engine.decode(result.latents, voice=voice, language=language, decoder=decoder), sample_rate,
+                            first=phrase.notes[0].start, last=max(n.end for n in phrase.notes if n.midi is not None))
         offset = int(round(phrase.start * sample_rate))
         if offset < 0:
             audio, offset = audio[-offset:], 0

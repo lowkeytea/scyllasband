@@ -51,14 +51,20 @@
       "name": "chorus",
       "type": "sing",
       "voices": [
-        "tuesday",
-        "orpheus"
-      ],
-      "gains": [
-        1.0,
-        0.6
+        "tuesday"
       ],
       "score": "melodies/chorus.json",
+      "transpose": -4,
+      "seed": 5,
+      "gap": 0.25
+    },
+    {
+      "name": "chorus_answer",
+      "type": "sing",
+      "voices": [
+        "orpheus"
+      ],
+      "score": "melodies/tag.json",
       "transpose": -4,
       "seed": 5,
       "gap": 0.6
@@ -101,14 +107,7 @@
       "name": "tag",
       "type": "sing",
       "voices": [
-        "thistle",
-        "tuesday",
-        "orpheus"
-      ],
-      "gains": [
-        1.0,
-        0.7,
-        0.7
+        "thistle"
       ],
       "score": "melodies/tag.json",
       "transpose": -4,
@@ -122,9 +121,9 @@
       "language": "en_us",
       "delivery": {
         "intensity": -0.4,
-        "pace": -0.3
+        "pace": -0.2
       },
-      "text": "Scylla's Band. It talks. Now it sings. On your phone, with no cloud in sight."
+      "text": "Scylla's Band talks, and now it sings, on your phone, with no cloud in sight."
     }
   ]
 }
