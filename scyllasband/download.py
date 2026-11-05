@@ -27,7 +27,7 @@ from .contract import validate_bundle_layout
 REPO_ID = "spybyscript/scyllasband"
 RELEASE = "v3-20261104-apple"   # v3-20261104 with its Core ML and Core AI bundles
 SING_REPO_ID = "spybyscript/scyllasband_sing"
-SING_RELEASE = "v4-20261105"    # the singing release candidate (LiteRT, ONNX, PyTorch); the official release is RELEASE in REPO_ID
+SING_RELEASE = "v4-20261105-apple"   # the singing release candidate (LiteRT, ONNX, PyTorch, Core ML, Core AI); the official release is RELEASE in REPO_ID
 MELODIES = "melodies"           # example scores the singing repository publishes; installed as <models dir>/melodies
 PROVENANCE_FILE = "download_provenance.json"
 DEFAULT_MODELS_DIR = Path("scyllasband/models")
