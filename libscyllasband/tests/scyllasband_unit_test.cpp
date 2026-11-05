@@ -872,6 +872,113 @@ void singing_suite(const Json& fixture) {
         expect(!unknown.voice_center && unknown.register_shift == 0 && unknown.suggested_transpose == 2 && unknown.mean_midi == 74.0,
                "no centre for an unknown voice: " + unknown.to_json().dump());
     }
+    // Windowed decoding: a BigVGAN stand-in whose every sample is its frame's first latent channel (0 where masked), so windows
+    // stitched from the frames each keeps must equal one whole decode exactly, and run through the window's bucket only.
+    {
+        struct FrameGraph : Graph {
+            FrameGraph(std::string name, std::vector<std::string>* calls) : name(std::move(name)), calls(calls) {}
+            GraphOutput run(const std::vector<TensorView>& inputs) override {
+                calls->push_back(name);
+                const int64_t frames = inputs[0].shape.back();
+                const float* latents = static_cast<const float*>(inputs[0].data);   // [1, latent_dim, frames]: channel 0 first
+                const uint8_t* mask = static_cast<const uint8_t*>(inputs[1].data);
+                GraphOutput out{{1, frames * 512}, std::vector<float>(static_cast<std::size_t>(frames * 512), 0.0f)};
+                for (int64_t t = 0; t < frames; ++t) std::fill_n(out.values.begin() + t * 512, 512, mask[t] ? latents[t] : 0.0f);
+                return out;
+            }
+            std::string name;
+            std::vector<std::string>* calls;
+        };
+        struct WindowBackend : FakeBackend {
+            WindowBackend(Json tokenizer, std::vector<std::string>* calls) : FakeBackend(1.0f, std::move(tokenizer)), calls(calls) {}
+            std::unique_ptr<Graph> open(const std::string& component, const Json& spec) override {
+                if (component.rfind("vocoder_bigvgan", 0) == 0) return std::make_unique<FrameGraph>(component, calls);
+                return FakeBackend::open(component, spec);
+            }
+            std::vector<std::string>* calls;
+        };
+        auto with_window = [&](const char* window) {   // the v4 fake bundle's files, BigVGAN given `window` (JSON) when set
+            Json files = bundles.get("v4");
+            Json manifest = files.get("manifest.json"), controls = manifest.get("controls"), decoders = controls.get("decoders");
+            Json bigvgan = decoders.get("bigvgan");
+            if (window) bigvgan.set("window", Json::parse(window));
+            decoders.set("bigvgan", bigvgan);
+            controls.set("decoders", decoders);
+            manifest.set("controls", controls);
+            files.set("manifest.json", manifest);
+            return files;
+        };
+        const Json plain_files = with_window(nullptr), windowed_files = with_window(R"({"frames": 8, "context": 2})");
+        const FakeBundle plain_bundle(plain_files), windowed_bundle(windowed_files);
+        std::vector<std::string> plain_calls, windowed_calls;
+        auto open_engine = [](const FakeBundle& bundle, const Json& files, std::vector<std::string>* calls) {
+            BackendOptions options;
+            options.bundle_dir = bundle.dir.string();
+            return std::make_unique<Engine>(options, std::make_unique<WindowBackend>(files.get("assets/g2p/tokenizer.json"), calls));
+        };
+        auto plain = open_engine(plain_bundle, plain_files, &plain_calls);
+        auto windowed = open_engine(windowed_bundle, windowed_files, &windowed_calls);
+        expect(windowed->decoders().at("bigvgan").window_frames == 8 && windowed->decoders().at("bigvgan").window_context == 2 &&
+                   plain->decoders().at("bigvgan").window_frames == 0,
+               "the manifest's decoder window");
+        auto latents_of = [](int64_t frames, float base) {   // channel 0 counts frames up from `base`; the rest are 0.5
+            std::vector<float> latents(static_cast<std::size_t>(24 * frames), 0.5f);
+            for (int64_t t = 0; t < frames; ++t) latents[static_cast<std::size_t>(t)] = base + static_cast<float>(t) / 100.0f;
+            return latents;
+        };
+        DecodeRequest decode;
+        decode.voice = "scylla";
+        decode.language = "en_us";
+        decode.decoder = "bigvgan";
+        // 13 frames in windows of 8 with 2 frames of context: keeps [0, 6), [6, 10), [10, 13).
+        const std::vector<float> long_latents = latents_of(13, 0.1f);
+        const std::vector<float> whole = plain->decode(long_latents, 13, decode), stitched = windowed->decode(long_latents, 13, decode);
+        expect(stitched == whole && whole.size() == 13 * 512, "windows stitch to the whole decode");
+        expect(windowed_calls == std::vector<std::string>(3, "vocoder_bigvgan_8") && plain_calls == std::vector<std::string>{"vocoder_bigvgan"},
+               "windows run through the window's bucket only: " + std::to_string(windowed_calls.size()) + " calls");
+        // With left context (speech chunks): only the target's samples come back, still the same.
+        const std::vector<float> left = latents_of(5, 0.7f);
+        decode.left = &left;
+        decode.left_frames = 5;
+        expect(windowed->decode(long_latents, 13, decode) == plain->decode(long_latents, 13, decode), "windows with left context");
+        decode.left = nullptr;
+        decode.left_frames = 0;
+        // A decode shorter than the window is one call in the window's bucket.
+        windowed_calls.clear();
+        const std::vector<float> short_latents = latents_of(5, 0.3f);
+        expect(windowed->decode(short_latents, 5, decode) == plain->decode(short_latents, 5, decode) &&
+                   windowed_calls == std::vector<std::string>{"vocoder_bigvgan_8"},
+               "a short decode in the window's bucket");
+        // A context that leaves nothing to keep is refused, and Vocos (frames * 512 - 256 samples) cannot window.
+        for (const char* bad : {R"({"frames": 8, "context": 4})"}) {
+            const Json files = with_window(bad);
+            const FakeBundle bundle(files);
+            bool refused = false;
+            try {
+                std::vector<std::string> calls;
+                open_engine(bundle, files, &calls);
+            } catch (const std::invalid_argument&) {
+                refused = true;
+            }
+            expect(refused, std::string("a window refused: ") + bad);
+        }
+#ifndef _WIN32
+        setenv("SCYLLASBAND_DECODER_WINDOW", "bigvgan=8:3", 1);
+        std::vector<std::string> env_calls;
+        auto from_env = open_engine(plain_bundle, plain_files, &env_calls);
+        setenv("SCYLLASBAND_DECODER_WINDOW", "vocos=8", 1);
+        bool vocos_refused = false;
+        try {
+            open_engine(plain_bundle, plain_files, &env_calls);
+        } catch (const std::invalid_argument&) {
+            vocos_refused = true;
+        }
+        unsetenv("SCYLLASBAND_DECODER_WINDOW");
+        expect(from_env->decoders().at("bigvgan").window_frames == 8 && from_env->decoders().at("bigvgan").window_context == 3 &&
+                   from_env->decode(long_latents, 13, decode) == whole && vocos_refused,
+               "SCYLLASBAND_DECODER_WINDOW sets a window; Vocos cannot window");
+#endif
+    }
 }
 
 }  // namespace

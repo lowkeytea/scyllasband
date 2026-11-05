@@ -169,6 +169,15 @@ split into phrases at rests of 0.25 s or more, moved by octaves into the voice's
 Vocos with `decoder = "vocos"`. Phrase *i* draws its noise from `seed + i`. Score parse, fit and preview don't wait for a
 request in progress, so an editor can call them while a song renders.
 
+On LiteRT each bucket graph a process opens keeps its own working memory, about 2 MB per latent frame for BigVGAN, so a
+song whose phrases fall into several buckets holds several. A decoder window decodes every phrase through one bucket graph
+instead, with `context` frames of overlap either side of each cut: `controls.decoders.bigvgan.window: {"frames": 256,
+"context": 16}` in the manifest, or `SCYLLASBAND_DECODER_WINDOW=bigvgan=256:16` (`bigvgan=0` turns it off). The 71 s
+example song then peaks at 1.5 GB instead of 3.7 GB on a Galaxy Z Fold 8 (3 % slower) and at 1.0 GB instead of 3.5 GB on a
+Mac (7 % slower), with audio within 68 dB of whole-phrase decoding (16 frames of overlap is enough; 8 leaves audible
+joins). A phrase shorter than the window is padded to it: a 3.6 s phrase (176 frames) takes 36 % longer in a 256-frame
+window than in its own 192-frame bucket. Only a decoder whose output is whole frames (BigVGAN) can window.
+
 `ScyllasBandRecordsRequest` and `ScyllasBandSingRequest` start with `struct_size`; initialize requests with their
 init function so a caller built against another layout gets an error instead of misread fields. Every 3.0.0 type and
 function is unchanged in 3.1 (`scyllasband_abi` checks it).

@@ -320,6 +320,54 @@ void Engine::load_decoders() {
         }
         std::sort(graphs.begin(), graphs.end());
     }
+    load_decoder_windows(declared);
+}
+
+namespace {
+
+int64_t window_number(const std::string& text, const std::string& entry) {
+    if (text.empty() || !std::all_of(text.begin(), text.end(), [](char c) { return c >= '0' && c <= '9'; }) || text.size() > 6) {
+        throw std::invalid_argument("SCYLLASBAND_DECODER_WINDOW entry '" + entry + "' is not decoder=frames[:context]");
+    }
+    return std::stoll(text);
+}
+
+}  // namespace
+
+void Engine::load_decoder_windows(const Json& declared) {
+    for (auto& [name, decoder] : decoders_) {
+        const Json& window = declared.get(name).get("window");
+        decoder.window_frames = window.get("frames").integer(0);
+        decoder.window_context = window.get("context").integer(0);
+    }
+    // SCYLLASBAND_DECODER_WINDOW overrides the manifest: "bigvgan=256:32" (frames, context), "bigvgan=0" (off).
+    const char* value = std::getenv("SCYLLASBAND_DECODER_WINDOW");
+    const std::string text = value ? value : "";
+    for (std::size_t start = 0; start < text.size();) {
+        const std::size_t comma = std::min(text.find(',', start), text.size());
+        const std::string entry = text.substr(start, comma - start);
+        start = comma + 1;
+        if (entry.empty()) continue;
+        const std::size_t equals = entry.find('='), colon = entry.find(':');
+        if (equals == std::string::npos) throw std::invalid_argument("SCYLLASBAND_DECODER_WINDOW entry '" + entry + "' is not decoder=frames[:context]");
+        auto decoder = decoders_.find(entry.substr(0, equals));
+        if (decoder == decoders_.end()) throw std::invalid_argument("SCYLLASBAND_DECODER_WINDOW names no decoder of this bundle: '" + entry + "'");
+        decoder->second.window_frames = window_number(entry.substr(equals + 1, colon == std::string::npos ? std::string::npos : colon - equals - 1), entry);
+        decoder->second.window_context = colon == std::string::npos ? 0 : window_number(entry.substr(colon + 1), entry);
+    }
+    for (auto& [name, decoder] : decoders_) {
+        if (decoder.window_frames <= 0) {
+            decoder.window_frames = decoder.window_context = 0;
+            continue;
+        }
+        // Windows stitch whole frames, so only a decoder that returns frames * hop samples can window (BigVGAN, not Vocos).
+        if (decoder.short_samples != 0) throw std::invalid_argument("The " + name + " decoder cannot decode in windows (its output is not whole frames)");
+        if (has_decoder(name)) decoder.window_frames = decoder_bucket(name, std::min(decoder.window_frames, decoder_max_frames(name))).first;
+        if (decoder.window_context < 0 || 2 * decoder.window_context >= decoder.window_frames) {
+            throw std::invalid_argument("The " + name + " decoder's window context must leave frames to keep: " + std::to_string(decoder.window_frames) +
+                                        " frames, " + std::to_string(decoder.window_context) + " context");
+        }
+    }
 }
 
 bool Engine::has_decoder(const std::string& decoder) const {
@@ -787,6 +835,7 @@ std::vector<float> Engine::decode(const std::vector<float>& latents, int64_t fra
     const int64_t left_frames = request.left ? request.left_frames : 0;
     auto spec = decoders_.find(decoder);
     if (spec == decoders_.end()) decoder_bucket(decoder, frames);  // throws: unknown decoder
+    if (spec->second.window_frames > 0) return decode_windowed(latents, frames, request, spec->second);
     const int per_frame = spec->second.samples_per_frame;
     auto graphs = decoder_graphs_.find(decoder);
     const int64_t max_frames = graphs->second.empty() ? buckets_.back().frames : graphs->second.back().first;
@@ -824,6 +873,49 @@ std::vector<float> Engine::decode(const std::vector<float>& latents, int64_t fra
     const std::size_t start = static_cast<std::size_t>(context * per_frame), count = static_cast<std::size_t>(frames * per_frame);
     std::vector<float> out(count, 0.0f);
     for (std::size_t i = 0; i < count && start + i < audio.values.size(); ++i) out[i] = std::clamp(audio.values[start + i], -1.0f, 1.0f);
+    return out;
+}
+
+std::vector<float> Engine::decode_windowed(const std::vector<float>& latents, int64_t frames, const DecodeRequest& request, const DecoderSpec& spec) {
+    const auto [window, component] = decoder_bucket(spec.name, spec.window_frames);
+    const int64_t context = spec.window_context;
+    // The sequence to decode: up to decode_context frames of left context, then the target. Each call decodes `window` frames
+    // of it (fewer at a short sequence, padded and masked) and keeps those at least `context` frames from either cut inside
+    // the sequence; the last window ends at the sequence end and moves left to decode a full window where it can.
+    const int64_t left = request.left ? std::min<int64_t>(request.left_frames, decode_context_) : 0;
+    const int64_t total = left + frames;
+    const std::size_t D = static_cast<std::size_t>(latent_dim_), T = static_cast<std::size_t>(total), W = static_cast<std::size_t>(window);
+    std::vector<float> sequence(D * T);
+    for (std::size_t d = 0; d < D; ++d) {
+        for (int64_t t = 0; t < left; ++t) {
+            sequence[d * T + static_cast<std::size_t>(t)] =
+                (*request.left)[d * static_cast<std::size_t>(request.left_frames) + static_cast<std::size_t>(request.left_frames - left + t)];
+        }
+        std::copy_n(latents.begin() + static_cast<std::ptrdiff_t>(d * static_cast<std::size_t>(frames)), static_cast<std::size_t>(frames),
+                    sequence.begin() + static_cast<std::ptrdiff_t>(d * T + static_cast<std::size_t>(left)));
+    }
+    int64_t voice_id = voice_index(request.voice), language_id = language_index(request.language), emotion_id = 0;
+    const std::size_t hop = static_cast<std::size_t>(spec.samples_per_frame);
+    std::vector<float> out(static_cast<std::size_t>(frames) * hop, 0.0f), padded(D * W);
+    std::vector<uint8_t> mask(W);
+    for (int64_t start = left; start < total;) {
+        const int64_t from = std::max<int64_t>(0, std::min(start - context, total - window));
+        const int64_t to = std::min(total, from + window);
+        const int64_t keep = to == total ? total : to - context;  // > start: window > 2 * context (load_decoder_windows)
+        std::fill(padded.begin(), padded.end(), 0.0f);
+        for (std::size_t d = 0; d < D; ++d) {
+            std::copy_n(sequence.begin() + static_cast<std::ptrdiff_t>(d * T + static_cast<std::size_t>(from)), static_cast<std::size_t>(to - from),
+                        padded.begin() + static_cast<std::ptrdiff_t>(d * W));
+        }
+        std::fill(mask.begin(), mask.end(), uint8_t{0});
+        std::fill_n(mask.begin(), static_cast<std::size_t>(to - from), uint8_t{1});
+        GraphOutput audio = run(component, {view(DType::f32, {1, latent_dim_, window}, padded.data()), view(DType::b8, {1, window}, mask.data()),
+                                            view(DType::i64, {1}, &voice_id), view(DType::i64, {1}, &language_id), view(DType::i64, {1}, &emotion_id)});
+        const std::size_t first = static_cast<std::size_t>(start - from) * hop, last = static_cast<std::size_t>(keep - from) * hop;
+        const std::size_t at = static_cast<std::size_t>(start - left) * hop;
+        for (std::size_t i = first; i < last && i < audio.values.size(); ++i) out[at + i - first] = std::clamp(audio.values[i], -1.0f, 1.0f);
+        start = keep;
+    }
     return out;
 }
 

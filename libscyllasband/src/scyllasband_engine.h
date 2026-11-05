@@ -74,6 +74,11 @@ struct DecoderSpec {
     std::string name, component;
     int samples_per_frame = 512;
     int short_samples = 0;  // samples the output falls short of frames * samples_per_frame
+    // Windowed decoding (0: off): every decode runs through the one bucket graph of window_frames, decoding window_context
+    // frames either side of the frames each call keeps. On LiteRT each bucket graph a process opens keeps its own working
+    // memory (BigVGAN: about 2 MB per frame), so one bucket bounds it whatever the phrase lengths. From the manifest's
+    // controls.decoders.<name>.window {frames, context}, or SCYLLASBAND_DECODER_WINDOW ("bigvgan=256:32"; "bigvgan=0": off).
+    int64_t window_frames = 0, window_context = 0;
 };
 
 // A target sung from a score: its melody input [frames, 3] replaces the pitch predictor's contour, `mode` is fed to the
@@ -194,8 +199,11 @@ private:
     const Bucket& bucket(int64_t frames) const;
     void validate() const;
     void load_decoders();
+    void load_decoder_windows(const Json& declared);
     // The smallest bucket of at least `frames` with a graph for `decoder`, and that graph.
     std::pair<int64_t, std::string> decoder_bucket(const std::string& decoder, int64_t frames) const;
+    // decode() for a decoder with a window: fixed windows through one bucket graph, hard cuts between the frames each keeps.
+    std::vector<float> decode_windowed(const std::vector<float>& latents, int64_t frames, const DecodeRequest& request, const DecoderSpec& spec);
     // The delivery graph inputs for a target: none set when it has fewer than min_spoken_phones spoken phones.
     void target_delivery(const std::vector<std::string>& phones, const DeliveryTensors& delivery, float values[5], uint8_t present[5]) const;
     double pause_scale(const DeliveryTensors& delivery) const;
