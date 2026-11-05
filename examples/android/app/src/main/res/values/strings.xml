@@ -111,6 +111,9 @@
     <string name="sing_sound">Sound</string>
     <string name="sing_quality">Quality</string>
     <string name="sing_turbo">Turbo</string>
+    <string name="sing_quality_short">Quality · BigVGAN</string>
+    <string name="sing_turbo_short">Turbo · Vocos</string>
+    <string name="sing_settings_hint">Settings ›</string>
     <string name="sing_sound_help">Quality renders with BigVGAN, the singing decoder: cleanest on held notes, and the slowest (on the GPU here). Turbo renders with Vocos, the speech decoder: much faster, with some harmonic artefacts on sustained notes in some voices.</string>
     <string name="sing_sound_vocos_only">This bundle has no BigVGAN decoder; songs render with Vocos.</string>
     <string name="sing_key">Key</string>

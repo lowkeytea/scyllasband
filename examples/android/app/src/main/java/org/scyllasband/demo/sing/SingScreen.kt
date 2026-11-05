@@ -86,6 +86,8 @@ class SingScreen(
     private val songFit: TextView = root.findViewById(R.id.songFit)
     private val linesContainer: LinearLayout = root.findViewById(R.id.linesContainer)
     private val addLineButton: MaterialButton = root.findViewById(R.id.addLineButton)
+    private val soundToggle: MaterialButtonToggleGroup = root.findViewById(R.id.soundToggle)
+    private var renderingSound = false
     private val previewButton: MaterialButton = root.findViewById(R.id.previewButton)
     private val singButton: MaterialButton = root.findViewById(R.id.singButton)
     private val anotherTakeButton: MaterialButton = root.findViewById(R.id.anotherTakeButton)
@@ -126,6 +128,9 @@ class SingScreen(
         songsButton.setOnClickListener { showSongs() }
         songCard.setOnClickListener { showSettings() }
         addLineButton.setOnClickListener { change(SongEditing.addLine(song)) }
+        soundToggle.addOnButtonCheckedListener { _, id, checked ->
+            if (checked && !renderingSound) change(song.copy(decoder = if (id == R.id.soundQuality) SongDecoder.QUALITY else SongDecoder.TURBO))
+        }
         previewButton.setOnClickListener { preview() }
         singButton.setOnClickListener { singOrStop() }
         anotherTakeButton.setOnClickListener { anotherTake() }
@@ -292,6 +297,10 @@ class SingScreen(
         songFit.text = fitSummary
         songFit.setTextColor(if (suggestedTranspose == null) songDetails.currentTextColor else activity.getColor(android.R.color.holo_orange_dark))
         renderLines()
+        renderingSound = true
+        soundToggle.check(if (song.decoder == SongDecoder.QUALITY && hasBigVgan) R.id.soundQuality else R.id.soundTurbo)
+        renderingSound = false
+        for (i in 0 until soundToggle.childCount) soundToggle.getChildAt(i).isEnabled = hasBigVgan && !singing
         val ready = bundle != null && canSing
         previewButton.text = activity.getString(if (previewing) R.string.stop else R.string.sing_preview)
         previewButton.isEnabled = ready && !singing && (previewing || problem == null)
