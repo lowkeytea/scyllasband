@@ -91,12 +91,14 @@ if(SCYLLASBAND_SANITIZE)
     add_link_options(-fsanitize=address,undefined)
 endif()
 
-# The frontend: text, events, JSON, noise and scores. No graph runtime, so it builds and is tested without any SDK.
+# The frontend: text, events, JSON, noise, scores, the song timeline and tone previews. No graph runtime, so it builds and is tested without any SDK.
 add_library(scyllasband_frontend STATIC
     src/scyllasband_events.cpp
     src/scyllasband_json.cpp
     src/scyllasband_noise.cpp
     src/scyllasband_score.cpp
+    src/scyllasband_song_preview.cpp
+    src/scyllasband_song_timeline.cpp
     src/scyllasband_text.cpp
     src/scyllasband_unicode.cpp
 )
@@ -188,7 +190,7 @@ if(SCYLLASBAND_BUILD_TESTS)
         # Frontend modules alone (no SDK): configure with -DSCYLLASBAND_SANITIZE=ON to run them under ASan and UBSan.
         add_executable(scyllasband_frontend_test tests/scyllasband_frontend_test.cpp)
         target_link_libraries(scyllasband_frontend_test PRIVATE scyllasband_frontend)
-        foreach(_scyllasband_suite noise)
+        foreach(_scyllasband_suite noise score timeline preview)
             add_test(NAME scyllasband_frontend_${_scyllasband_suite}
                      COMMAND scyllasband_frontend_test ${_scyllasband_suite} "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
         endforeach()

@@ -44,9 +44,12 @@ Json sing_stream(Engine& engine, const Score& score, const SingRequest& request,
         if (!emit(event)) throw CancelledError();
     };
     const int64_t song_samples = static_cast<int64_t>(std::ceil(plan.seconds() * sample_rate));
+    std::vector<int64_t> starts;
+    for (const PhrasePlan& item : plan.phrases) starts.push_back(round_half_even(item.phrase.start * sample_rate));
+    SongTimeline timeline(song_samples, starts);
     Json plan_json = plan.to_json();
     plan_json.set("samples", Json(song_samples));
-    send(SingEvent{SingEvent::kPlan, nullptr, 0, nullptr, plan_json});
+    send(SingEvent{SingEvent::kPlan, nullptr, 0, nullptr, 0, plan_json});
 
     // No delivery request: sung clips were trained without intensity or pace, and the score sets the timing.
     DeliveryTensors delivery{};
@@ -56,7 +59,7 @@ Json sing_stream(Engine& engine, const Score& score, const SingRequest& request,
     Json::Array rendered;
     for (const PhrasePlan& item : plan.phrases) {
         Json started_json = item.to_json();
-        send(SingEvent{SingEvent::kPhraseStarted, &item, 0, nullptr, started_json});
+        send(SingEvent{SingEvent::kPhraseStarted, &item, 0, nullptr, 0, started_json});
         const std::optional<uint64_t> seed = request.seed ? std::optional<uint64_t>(*request.seed + static_cast<uint64_t>(item.index)) : std::nullopt;
         const uint64_t draw_seed = seed ? *seed : (static_cast<uint64_t>(entropy()) << 32) ^ entropy();
         NoiseFn noise = [&](int64_t frames, float* pitch, float* flow) {
@@ -85,25 +88,26 @@ Json sing_stream(Engine& engine, const Score& score, const SingRequest& request,
         decode.voice = voice;
         decode.language = language;
         decode.decoder = settings.decoder;
-        std::vector<float> audio = engine.decode(result.latents, result.frames, decode);
-        int64_t offset = round_half_even(item.phrase.start * sample_rate);
-        if (offset < 0) {
-            audio.erase(audio.begin(), audio.begin() + static_cast<std::ptrdiff_t>(std::min<int64_t>(-offset, static_cast<int64_t>(audio.size()))));
-            offset = 0;
-        }
+        const std::vector<float> audio = engine.decode(result.latents, result.frames, decode);
+        const int64_t offset = starts[static_cast<std::size_t>(item.index)];
+        // The part of the phrase on the song's timeline (a lead-in before the song's start is cut).
+        const int64_t placed = static_cast<int64_t>(audio.size()) - std::min<int64_t>(std::max<int64_t>(-offset, 0), static_cast<int64_t>(audio.size()));
+        const int64_t start_sample = timeline.released();
+        const std::vector<float> settled = timeline.add(audio);
         if (!first_audio_ms) first_audio_ms = elapsed_ms(started);
         Json phrase_json = item.to_json();
         phrase_json.set("bucket", Json(result.bucket));
-        phrase_json.set("seconds", Json(round_to(static_cast<double>(audio.size()) / sample_rate, 3)));
+        phrase_json.set("seconds", Json(round_to(static_cast<double>(placed) / sample_rate, 3)));
         phrase_json.set("seed", seed ? Json(static_cast<int64_t>(*seed)) : Json());
         rendered.push_back(phrase_json);
         Json metadata = phrase_json;
-        metadata.set("offset_samples", Json(offset));
+        metadata.set("start_sample", Json(start_sample));
+        metadata.set("sample_count", Json(static_cast<int64_t>(settled.size())));
         metadata.set("song_samples", Json(song_samples));
         metadata.set("decoder", Json(settings.decoder));
         metadata.set("first_audio_ms", Json(round_to(*first_audio_ms, 1)));
         metadata.set("elapsed_ms", Json(round_to(elapsed_ms(started), 1)));
-        send(SingEvent{SingEvent::kAudio, &item, 0, &audio, metadata});
+        send(SingEvent{SingEvent::kAudio, &item, 0, &settled, start_sample, metadata});
     }
     Json summary{Json::Object{}};
     summary.set("phrases", Json(phrase_count));
@@ -111,7 +115,7 @@ Json sing_stream(Engine& engine, const Score& score, const SingRequest& request,
     summary.set("elapsed_ms", Json(round_to(elapsed_ms(started), 1)));
     summary.set("samples", Json(song_samples));
     summary.set("seconds", Json(round_to(plan.seconds(), 3)));
-    send(SingEvent{SingEvent::kDone, nullptr, 0, nullptr, summary});
+    send(SingEvent{SingEvent::kDone, nullptr, 0, nullptr, 0, summary});
 
     Json metadata = plan.to_json();
     metadata.set("phrases", Json(std::move(rendered)));
@@ -129,18 +133,10 @@ Json sing_stream(Engine& engine, const Score& score, const SingRequest& request,
 
 std::vector<float> sing(Engine& engine, const Score& score, const SingRequest& request, Json* metadata, const PhraseNoiseFn& phrase_noise) {
     std::vector<float> song;
-    const int sample_rate = engine.sample_rate();
     Json result = sing_stream(engine, score, request, [&](const SingEvent& event) {
-        if (event.type == SingEvent::kPlan) song.assign(static_cast<std::size_t>(event.metadata.get("samples").integer() + sample_rate / 10), 0.0f);
-        if (event.type == SingEvent::kAudio) {
-            const std::size_t offset = static_cast<std::size_t>(event.metadata.get("offset_samples").integer());
-            const std::size_t count = offset < song.size() ? std::min(event.audio->size(), song.size() - offset) : 0;
-            for (std::size_t i = 0; i < count; ++i) song[offset + i] += (*event.audio)[i];
-        }
+        if (event.type == SingEvent::kAudio) song.insert(song.end(), event.audio->begin(), event.audio->end());
         return true;
     }, phrase_noise);
-    song.resize(static_cast<std::size_t>(result.get("samples").integer()));
-    for (float& sample : song) sample = std::clamp(sample, -1.0f, 1.0f);
     if (metadata) *metadata = std::move(result);
     return song;
 }

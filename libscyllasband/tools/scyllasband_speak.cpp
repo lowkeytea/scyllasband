@@ -80,15 +80,14 @@ int sing_main(ScyllasBandRuntime* runtime, ScyllasBandSingRequest& request, cons
         if (event->type == SCYLLASBAND_EVENT_PLAN) {
             const char* key = std::strstr(event->metadata_json, "\"samples\":");
             t->song_samples = key ? std::atoll(key + 10) : 0;
-            t->song.assign(static_cast<std::size_t>(t->song_samples), 0.0f);
+            t->song.reserve(static_cast<std::size_t>(t->song_samples));
         }
+        // Each phrase's AUDIO event carries the song samples it settled, contiguous with the previous ones: append them.
         if (event->type == SCYLLASBAND_EVENT_AUDIO) {
-            if (t->first_audio_ms < 0) t->first_audio_ms = milliseconds_since(t->start);
+            if (t->first_audio_ms < 0 && event->sample_count > 0) t->first_audio_ms = milliseconds_since(t->start);
             t->rate = event->sample_rate;
             ++t->phrases;
-            const char* key = std::strstr(event->metadata_json, "\"offset_samples\":");
-            const int64_t offset = key ? std::atoll(key + 17) : 0;
-            for (int64_t i = 0; i < event->sample_count && offset + i < static_cast<int64_t>(t->song.size()); ++i) t->song[static_cast<std::size_t>(offset + i)] += event->samples[i];
+            t->song.insert(t->song.end(), event->samples, event->samples + event->sample_count);
         }
         return 0;
     };

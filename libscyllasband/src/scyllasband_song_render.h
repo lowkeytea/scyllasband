@@ -7,6 +7,7 @@
 
 #include "scyllasband_engine.h"
 #include "scyllasband_song_plan.h"
+#include "scyllasband_song_timeline.h"
 
 #include <cstdint>
 #include <functional>
@@ -34,12 +35,15 @@ private:
     Engine& engine_;
 };
 
+// Events of a sung stream: the plan, each phrase as it starts, then for each phrase the song audio it settles (contiguous:
+// the AUDIO events' samples, concatenated, are the whole song), and the summary.
 struct SingEvent {
     enum Type { kPlan = 1, kPhraseStarted = 2, kAudio = 3, kDone = 4 };
     Type type;
     const PhrasePlan* phrase = nullptr;
     int phrase_count = 0;
-    const std::vector<float>* audio = nullptr;  // the phrase's samples; metadata "offset_samples" places them on the song timeline
+    const std::vector<float>* audio = nullptr;  // AUDIO: song samples [start_sample, start_sample + size()), final (may be empty)
+    int64_t start_sample = 0;
     Json metadata;
 };
 
