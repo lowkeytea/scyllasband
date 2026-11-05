@@ -263,5 +263,32 @@ class SingTest(unittest.TestCase):
             v3.sing(SCORE, "scylla")
 
 
+class TurboSingTest(unittest.TestCase):
+    def _decoder(self, *flags):
+        """The decoder the sing command passes to runtime.sing for these flags."""
+        import json
+        import tempfile
+        from pathlib import Path
+        from unittest import mock
+        from scyllasband import cli
+        with tempfile.TemporaryDirectory() as tmp:
+            score = Path(tmp) / "score.json"
+            score.write_text(json.dumps(SCORE))
+            args = cli.build_parser().parse_args(["sing", "--score", str(score), "-o", str(Path(tmp) / "out.wav"), *flags])
+            runtime = mock.Mock()
+            with mock.patch.object(cli, "_runtime", return_value=runtime), mock.patch.object(cli, "_write_outputs"):
+                args.func(args)
+            return runtime.sing.call_args.kwargs["decoder"]
+
+    def test_turbo_sing_decodes_with_vocos(self):
+        self.assertIsNone(self._decoder())                                   # the bundle's singing decoder
+        self.assertEqual(self._decoder("--turboSing"), "vocos")
+        self.assertEqual(self._decoder("--turbo-sing"), "vocos")
+        self.assertEqual(self._decoder("--turboSing", "--decoder", "vocos"), "vocos")
+        self.assertEqual(self._decoder("--decoder", "bigvgan"), "bigvgan")
+        with self.assertRaisesRegex(SystemExit, "cannot be combined"):
+            self._decoder("--turboSing", "--decoder", "bigvgan")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -193,8 +193,11 @@ A v4 bundle can sing a melody score. The `sing` command takes a score in JSON an
 
 ```bash
 python -m scyllasband sing --score song.json --voice gwen --seed 0 -o song.wav
-python -m scyllasband sing --score song.json --voice felix --decoder vocos --metadata song_plan.json -o song.wav
+python -m scyllasband sing --score song.json --voice felix --turboSing --metadata song_plan.json -o song.wav
+python -m scyllasband sing --score scyllasband/models/melodies/phrase_pop_00.json --voice poppy -o ring.wav
 ```
+
+`download` from the singing repository also installs its twenty example scores (four songs, sixteen phrases) in `scyllasband/models/melodies`.
 
 An installed package also provides `scyllasband-sing`. A score is the lyric, the tempo, a style and the notes:
 
@@ -219,7 +222,7 @@ An installed package also provides `scyllasband-sing`. A score is the lyric, the
 - Two styles: `pop` (the sung delivery) and `ballad` (slower, sustained). The style picks the delivery mode the model was trained with; the notes set the pitch and the timing.
 - Phrases are split at rests of 0.25 s or more and rendered one at a time, up to about ten seconds each (less when the bundle's largest bucket is shorter), so put a rest between lines. The whole song is moved by octaves into the voice's sung range (`--no-register` keeps the written octave), so write in any octave; `--transpose N` adds N semitones first, to put a song in the voice's key (a voice sings most accurately within about five semitones of its centre, which the bundle lists per voice).
 
-Singing uses the bundle's singing settings (Heun, 8 steps, the BigVGAN decoder where the bundle carries it; `--steps`, `--sampler` and `--decoder` override them) and the score's timing in place of the duration and pitch predictors. In Python, `runtime.sing(score, voice_id, language=None, seed=None, steps=None, sampler=None, decoder=None)` returns the same `SynthesisResult` as `synthesize`, with the phrase plan in `metadata["phrases"]`; `runtime.supports_singing` tells whether the loaded bundle can sing. Singing requires a v4 bundle (graph contract `scyllasband_measured_controls_v4`); v3 bundles speak exactly as before and report that they cannot sing.
+Singing uses the bundle's singing settings (Heun, 8 steps, the BigVGAN decoder where the bundle carries it; `--steps`, `--sampler` and `--decoder` override them) and the score's timing in place of the duration and pitch predictors. `--turboSing` (same as `--decoder vocos`) decodes with Vocos, the speech decoder: decoding then costs about as much as for speech instead of most of the render, at the price of some harmonic artefacts on sustained notes in some voices. In Python, `runtime.sing(score, voice_id, language=None, seed=None, steps=None, sampler=None, decoder=None)` returns the same `SynthesisResult` as `synthesize`, with the phrase plan in `metadata["phrases"]`; `runtime.supports_singing` tells whether the loaded bundle can sing. Singing requires a v4 bundle (graph contract `scyllasband_measured_controls_v4`); v3 bundles speak exactly as before and report that they cannot sing.
 
 ## Voices and languages
 

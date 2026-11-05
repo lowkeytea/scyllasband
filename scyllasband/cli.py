@@ -72,6 +72,9 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     sing.add_argument("--steps", type=int, help="flow steps (default: the bundle's singing setting, 8)")
     sing.add_argument("--sampler", choices=SUPPORTED_SAMPLERS, help="default: the bundle's singing setting, heun")
     sing.add_argument("--decoder", help="vocos or bigvgan (default: the bundle's singing setting where exported, else vocos)")
+    sing.add_argument("--turboSing", "--turbo-sing", dest="turbo_sing", action="store_true",
+                      help="decode with Vocos, the speech decoder, instead of BigVGAN: much faster, with some harmonic artefacts on "
+                           "sustained notes in some voices (same as --decoder vocos)")
     sing.add_argument("--guidance", type=float, help="classifier-free guidance on the melody and mode; 1 is off (default: the bundle's "
                                                      "singing setting, else 1)")
     sing.add_argument("--transpose", type=int, default=0, help="semitones added to the whole score (to put it in the voice's key) "
@@ -203,9 +206,14 @@ def _stream(args: argparse.Namespace) -> int:
 
 
 def _sing(args: argparse.Namespace) -> int:
+    decoder = args.decoder
+    if args.turbo_sing:
+        if decoder not in (None, "vocos"):
+            raise SystemExit(f"--turboSing decodes with vocos; it cannot be combined with --decoder {decoder}")
+        decoder = "vocos"
     score = json.loads(args.score.read_text(encoding="utf-8"))
     runtime = _runtime(args)
-    result = runtime.sing(score, args.voice, args.language, seed=args.seed, steps=args.steps, sampler=args.sampler, decoder=args.decoder,
+    result = runtime.sing(score, args.voice, args.language, seed=args.seed, steps=args.steps, sampler=args.sampler, decoder=decoder,
                           guidance=args.guidance, register=not args.no_register, transpose=args.transpose, progress=_progress(args))
     _write_outputs(args, result.audio, result.sample_rate, result.metadata)
     return 0

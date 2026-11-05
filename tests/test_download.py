@@ -25,15 +25,18 @@ class _FakeHub:
         if isinstance(published, BaseException):
             raise published
         for flavor in published or ():
-            if allow_patterns[0] == f"{flavor}/**":
+            if flavor == "melodies" and "melodies/**" in allow_patterns:
+                (Path(local_dir) / "melodies").mkdir(parents=True)
+                (Path(local_dir) / "melodies" / "song.json").write_text(json.dumps(dict(source=repo_id)))
+            elif allow_patterns[0] == f"{flavor}/**":
                 bundle = Path(local_dir) / flavor
                 bundle.mkdir(parents=True)
                 (bundle / "manifest.json").write_text(json.dumps(dict(controls=dict(graph_input_contract=f"{repo_id}:{revision}"))))
 
 
 def _hub_error(cls, status=None):
-    from huggingface_hub.utils import HfHubHTTPError
-    exc = cls("denied") if cls is not HfHubHTTPError else HfHubHTTPError("denied")
+    # huggingface_hub 1.0 and later require the HTTP response; earlier releases accept it as a keyword too.
+    exc = cls("denied", response=mock.Mock(status_code=status, headers={}))
     if status is not None:
         exc.response = mock.Mock(status_code=status)
     return exc
@@ -88,6 +91,15 @@ class FallbackTest(unittest.TestCase):
             self.assertEqual(origin, f"{REPO_ID}:{RELEASE}")
             self.assertEqual(log.count("\n"), 1)
             self.assertIn("not accessible", log)
+
+    def test_the_sing_repository_melodies_are_installed_beside_the_bundles(self):
+        hub = _FakeHub({SING_REPO_ID: ["litert", "melodies"], REPO_ID: ["litert"]})
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(download, "_require_snapshot_download", return_value=hub):
+            download_bundle(flavor="litert", models_dir=tmp, validate=False, log=io.StringIO())
+            song = Path(tmp) / "melodies" / "song.json"
+            self.assertEqual(json.loads(song.read_text())["source"], SING_REPO_ID)
+            download_bundle(flavor="litert", models_dir=tmp, validate=False, public=True, log=io.StringIO())
+            self.assertTrue(song.is_file())                      # a repository without melodies keeps the installed copy
 
     def test_a_flavour_the_sing_repository_lacks_falls_back(self):
         calls, provenance, _, log = self.run_download({SING_REPO_ID: ["litert", "onnx"], REPO_ID: ["litert", "coreml"]})

@@ -28,6 +28,7 @@ REPO_ID = "spybyscript/scyllasband"
 RELEASE = "v3-20261104-apple"   # v3-20261104 with its Core ML and Core AI bundles
 SING_REPO_ID = "spybyscript/scyllasband_sing"
 SING_RELEASE = "v4-20261105"    # the singing release candidate (LiteRT, ONNX, PyTorch); the official release is RELEASE in REPO_ID
+MELODIES = "melodies"           # example scores the singing repository publishes; installed as <models dir>/melodies
 PROVENANCE_FILE = "download_provenance.json"
 DEFAULT_MODELS_DIR = Path("scyllasband/models")
 DEFAULT_FLAVOR = "litert"
@@ -156,8 +157,8 @@ def download_bundle(*, flavor: str = DEFAULT_FLAVOR, models_dir: str | Path = DE
             last = index == len(candidates) - 1
             local = Path(tmp) / f"try{index}"
             try:
-                snapshot_download(repo_id=repo, repo_type="model", allow_patterns=[f"{flavor}/**"], local_dir=str(local),
-                                  force_download=force, token=token, revision=rev)
+                snapshot_download(repo_id=repo, repo_type="model", allow_patterns=[f"{flavor}/**", f"{MELODIES}/**"],
+                                  local_dir=str(local), force_download=force, token=token, revision=rev)
             except Exception as exc:   # noqa: BLE001 - only the Hub's "not accessible" errors fall through to the next repository
                 if last or not inaccessible(exc):
                     raise
@@ -185,7 +186,18 @@ def download_bundle(*, flavor: str = DEFAULT_FLAVOR, models_dir: str | Path = DE
             raise
         if had_target:
             shutil.rmtree(backup)
+        _install_melodies(local / MELODIES, target.parent / MELODIES)
     return target
+
+
+def _install_melodies(source: Path, target: Path) -> None:
+    """The singing repository's example scores (``melodies/``) beside the bundles, replacing an earlier copy; the sample apps
+    embed them from there. Repositories without them leave an installed copy alone."""
+    if not source.is_dir():
+        return
+    if target.exists():
+        shutil.rmtree(target)
+    shutil.copytree(source, target)
 
 
 def inaccessible(exc: BaseException) -> bool:
