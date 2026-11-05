@@ -135,7 +135,41 @@ acoustics as context; a record that changes any of the three starts a new chain,
 `pause_ms` of silence opens every chain after the first (at the start of that target's audio). Chunk *i* of the
 whole plan, counted across records, draws its noise from `seed + i`. The rules and messages are the Python runtime's (`planner.plan_records`).
 
-`ScyllasBandRecordsRequest`, like `ScyllasBandSingRequest`, starts with `struct_size`; initialize requests with their
+### Singing (ABI 3.1)
+
+A v4 bundle (`voices_json` → `"singing": {"supported": true, ...}`) sings a melody score:
+
+```c
+ScyllasBandSingRequest request;
+scyllasband_sing_request_init(&request);   /* sets struct_size, which every call checks */
+request.score_json = "{\"text\": \"hold on tight\", \"bpm\": 104, \"style\": \"pop\","
+                     " \"notes\": [[\"hold\", \"E3\", 1], [\"on\", \"G3\", 1], [\"tight\", \"A3\", 2]]}";
+request.voice_id = "gwen";
+request.decoder = "vocos";                 /* NULL: the bundle's singing decoder (BigVGAN); "vocos": turbo */
+request.seed = 7;
+request.has_seed = 1;
+scyllasband_sing_stream(runtime, &request, on_event, user_data);
+```
+
+| Function | Purpose |
+| --- | --- |
+| `scyllasband_sing_request_init` | Defaults and `struct_size` for a `ScyllasBandSingRequest`. |
+| `scyllasband_score_parse` | Checks a score without a runtime and returns it normalized (notes with MIDI and times, words, range, lines); an error names the note at fault. |
+| `scyllasband_sing_fit_json` | How the song sits in the voice's range after transpose and octave register, with a suggested transpose. No graph runs. |
+| `scyllasband_sing_plan_json` | The phrase plan (phones, durations, notes per phrase) and the settings a sing would use. |
+| `scyllasband_sing` | The whole song as one waveform, silence in the rests. |
+| `scyllasband_sing_stream` | Plan, phrase-started, audio and done events; the audio events are contiguous, so a player appends them. |
+| `scyllasband_sing_preview` | The score as plain tones at the pitch it will be sung, for an instant preview. No graph runs. |
+| `scyllasband_warmup_singing` | Loads the graphs a short phrase needs with a decoder. |
+
+A score is `{"text", "bpm", "style": "pop" | "ballad", "notes": [[label, note, beats], ...]}`: a note is a pitch name with
+octave (`C4`, `F#3`, `Bb3`) or `rest` (label `-`), and a word over several notes is numbered (`ba~1`, `by~2`). The song is
+split into phrases at rests of 0.25 s or more, moved by octaves into the voice's sung range (`use_register`) after
+`transpose`, and each phrase is sung with the bundle's singing settings (8 Heun steps, guidance 2) through BigVGAN, or
+Vocos with `decoder = "vocos"`. Phrase *i* draws its noise from `seed + i`. Score parse, fit and preview don't wait for a
+request in progress, so an editor can call them while a song renders.
+
+`ScyllasBandRecordsRequest` and `ScyllasBandSingRequest` start with `struct_size`; initialize requests with their
 init function so a caller built against another layout gets an error instead of misread fields. Every 3.0.0 type and
 function is unchanged in 3.1 (`scyllasband_abi` checks it).
 
@@ -201,6 +235,16 @@ build/litert/scyllasband_speak --bundle ../scyllasband/models/litert --voice ink
 ```
 
 `--plan-only` prints the sentence plan; `--stream` prints the stream events.
+
+```bash
+build/litert/scyllasband_speak --bundle ../scyllasband/models/litert --voice gwen \
+    --score ../scyllasband/models/melodies/phrase_pop_02.json --seed 7 --output phrase.wav   # BigVGAN
+build/litert/scyllasband_speak --bundle ../scyllasband/models/litert --voice gwen \
+    --score ../scyllasband/models/melodies/phrase_pop_02.json --turbo-sing --timings 3       # Vocos, timed
+```
+
+`--score` sings a score on a v4 bundle, with `--decoder bigvgan|vocos` (`--turbo-sing` = Vocos), `--sing-steps`,
+`--guidance`, `--transpose` and `--no-register`.
 
 ## Tests
 
