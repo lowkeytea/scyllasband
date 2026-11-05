@@ -176,7 +176,11 @@ instead, with `context` frames of overlap either side of each cut: `controls.dec
 example song then peaks at 1.5 GB instead of 3.7 GB on a Galaxy Z Fold 8 (3 % slower) and at 1.0 GB instead of 3.5 GB on a
 Mac (7 % slower), with audio within 68 dB of whole-phrase decoding (16 frames of overlap is enough; 8 leaves audible
 joins). A phrase shorter than the window is padded to it: a 3.6 s phrase (176 frames) takes 36 % longer in a 256-frame
-window than in its own 192-frame bucket. Only a decoder whose output is whole frames (BigVGAN) can window.
+window than in its own 192-frame bucket. Only a decoder whose output is whole frames (BigVGAN) can window. A windowed
+decoder decodes any length, so a bundle may carry it at the window's bucket only (its phrase limit is then the flow's):
+the LiteRT bundle's BigVGAN as the one 256-frame signature peaks at 1.4 GB on the Fold for the same song, at the same
+speed. FP16 BigVGAN, as the Apple bundles carry it, does not help on LiteRT's CPU path: XNNPACK expands FP16 weights to
+FP32 when it loads them (more memory, same speed), and its FP16 compute mode cannot use the weight cache in LiteRT 2.2.0.
 
 `ScyllasBandRecordsRequest` and `ScyllasBandSingRequest` start with `struct_size`; initialize requests with their
 init function so a caller built against another layout gets an error instead of misread fields. Every 3.0.0 type and

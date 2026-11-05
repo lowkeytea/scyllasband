@@ -362,7 +362,8 @@ void Engine::load_decoder_windows(const Json& declared) {
         }
         // Windows stitch whole frames, so only a decoder that returns frames * hop samples can window (BigVGAN, not Vocos).
         if (decoder.short_samples != 0) throw std::invalid_argument("The " + name + " decoder cannot decode in windows (its output is not whole frames)");
-        if (has_decoder(name)) decoder.window_frames = decoder_bucket(name, std::min(decoder.window_frames, decoder_max_frames(name))).first;
+        const std::vector<std::pair<int64_t, std::string>>& graphs = decoder_graphs_[name];
+        if (!graphs.empty()) decoder.window_frames = decoder_bucket(name, std::min(decoder.window_frames, graphs.back().first)).first;
         if (decoder.window_context < 0 || 2 * decoder.window_context >= decoder.window_frames) {
             throw std::invalid_argument("The " + name + " decoder's window context must leave frames to keep: " + std::to_string(decoder.window_frames) +
                                         " frames, " + std::to_string(decoder.window_context) + " context");
@@ -385,7 +386,11 @@ std::vector<std::string> Engine::available_decoders() const {
 
 int64_t Engine::decoder_max_frames(const std::string& decoder) const {
     auto found = decoder_graphs_.find(decoder);
-    return found == decoder_graphs_.end() || found->second.empty() ? 0 : found->second.back().first;
+    if (found == decoder_graphs_.end() || found->second.empty()) return 0;
+    // A windowed decoder decodes any length through its window's graph, so a bundle may carry only that bucket.
+    auto spec = decoders_.find(decoder);
+    if (spec != decoders_.end() && spec->second.window_frames > 0) return std::max(found->second.back().first, buckets_.back().frames);
+    return found->second.back().first;
 }
 
 std::pair<int64_t, std::string> Engine::decoder_bucket(const std::string& decoder, int64_t frames) const {

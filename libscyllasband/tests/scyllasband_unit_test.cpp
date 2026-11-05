@@ -949,6 +949,31 @@ void singing_suite(const Json& fixture) {
         expect(windowed->decode(short_latents, 5, decode) == plain->decode(short_latents, 5, decode) &&
                    windowed_calls == std::vector<std::string>{"vocoder_bigvgan_8"},
                "a short decode in the window's bucket");
+        // A bundle carrying BigVGAN only at the window's bucket: windowed, it decodes any length, so its limit is the flow's.
+        {
+            Json files = with_window(R"({"frames": 8, "context": 2})");
+            Json manifest = files.get("manifest.json"), controls = manifest.get("controls"), targets = controls.get("target_buckets");
+            Json buckets = targets.get("buckets");
+            for (Json& bucket : buckets.elements()) {
+                if (bucket.get("latent_frames").integer() <= 8) continue;
+                Json kept{Json::Object{}};
+                for (const auto& [key, value] : bucket.items()) {
+                    if (key != "vocoder_bigvgan") kept.set(key, value);
+                }
+                bucket = kept;
+            }
+            targets.set("buckets", buckets);
+            controls.set("target_buckets", targets);
+            manifest.set("controls", controls);
+            files.set("manifest.json", manifest);
+            const FakeBundle bundle(files);
+            std::vector<std::string> calls;
+            auto engine = open_engine(bundle, files, &calls);
+            EngineSongFrontend frontend(*engine);
+            expect(engine->decoder_max_frames("bigvgan") == 16 && frontend.max_phrase_frames() == 16 &&
+                       engine->decode(long_latents, 13, decode) == whole,
+                   "a windowed decoder with one bucket decodes past it: limit " + std::to_string(engine->decoder_max_frames("bigvgan")));
+        }
         // A context that leaves nothing to keep is refused, and Vocos (frames * 512 - 256 samples) cannot window.
         for (const char* bad : {R"({"frames": 8, "context": 4})"}) {
             const Json files = with_window(bad);
