@@ -115,6 +115,61 @@ int32_t forward_event(const ScyllasBandEvent* event, void* user_data) {
     return environment->ExceptionCheck() || keep_going != JNI_TRUE ? 1 : 0;
 }
 
+struct JavaSingContext {
+    JNIEnv* environment = nullptr;
+    jobject listener = nullptr;
+    jmethodID phrase_started = nullptr;
+    jmethodID phrase_audio = nullptr;
+};
+
+// Singing events: a phrase about to be sung, and its audio with its metadata (offset_samples places it on the song's
+// timeline). Returns nonzero to stop; a listener that returns false, or throws, stops singing.
+int32_t forward_sing_event(const ScyllasBandEvent* event, void* user_data) {
+    auto* context = static_cast<JavaSingContext*>(user_data);
+    if (event == nullptr || context == nullptr || context->environment == nullptr) {
+        return 1;
+    }
+    if (event->type != SCYLLASBAND_EVENT_CHUNK_STARTED && event->type != SCYLLASBAND_EVENT_AUDIO) {
+        return 0;
+    }
+    JNIEnv* environment = context->environment;
+    jstring metadata = event->metadata_json == nullptr ? nullptr : environment->NewStringUTF(event->metadata_json);
+    if (event->metadata_json != nullptr && metadata == nullptr) {
+        return 1;
+    }
+    jboolean keep_going = JNI_FALSE;
+    if (event->type == SCYLLASBAND_EVENT_CHUNK_STARTED) {
+        keep_going = environment->CallBooleanMethod(
+            context->listener, context->phrase_started, static_cast<jint>(event->chunk_index),
+            static_cast<jint>(event->chunk_count), metadata
+        );
+    } else {
+        if (event->sample_count < 0 || (event->sample_count > 0 && event->samples == nullptr)) {
+            if (metadata != nullptr) environment->DeleteLocalRef(metadata);
+            return 1;
+        }
+        jfloatArray samples = environment->NewFloatArray(static_cast<jsize>(event->sample_count));
+        if (samples == nullptr) {
+            if (metadata != nullptr) environment->DeleteLocalRef(metadata);
+            return 1;
+        }
+        if (event->sample_count > 0) {
+            environment->SetFloatArrayRegion(samples, 0, static_cast<jsize>(event->sample_count), event->samples);
+        }
+        if (!environment->ExceptionCheck()) {
+            keep_going = environment->CallBooleanMethod(
+                context->listener, context->phrase_audio, samples, static_cast<jint>(event->chunk_index),
+                static_cast<jint>(event->chunk_count), metadata
+            );
+        }
+        environment->DeleteLocalRef(samples);
+    }
+    if (metadata != nullptr) {
+        environment->DeleteLocalRef(metadata);
+    }
+    return environment->ExceptionCheck() || keep_going != JNI_TRUE ? 1 : 0;
+}
+
 }  // namespace
 
 extern "C" JNIEXPORT jlong JNICALL
@@ -260,6 +315,121 @@ Java_org_scyllasband_android_ScyllasBandNative_synthesizeStreaming(
     }
     if (status != SCYLLASBAND_ERROR_CANCELLED && !environment->ExceptionCheck()) {
         throw_java(environment, last_error_or("Scylla's Band streaming synthesis failed"));
+    }
+    return JNI_FALSE;
+}
+
+namespace {
+
+// decoder: null or "" for the bundle's singing decoder, "bigvgan" or "vocos". guidance <= 0: the bundle's setting.
+ScyllasBandSingRequest sing_request(const UtfChars& score, const UtfChars& voice, const UtfChars& language, const UtfChars& decoder,
+                                    jint steps, jfloat guidance, jint transpose, jboolean use_register, jlong seed, jboolean has_seed) {
+    ScyllasBandSingRequest request;
+    scyllasband_sing_request_init(&request);
+    request.score_json = score.get();
+    request.voice_id = voice.get();
+    request.language = language.get();
+    request.decoder = decoder.get();
+    request.steps = steps;
+    request.guidance = guidance;
+    request.transpose = transpose;
+    request.use_register = use_register == JNI_TRUE ? 1 : 0;
+    request.seed = static_cast<uint64_t>(seed);
+    request.has_seed = has_seed == JNI_TRUE ? 1 : 0;
+    return request;
+}
+
+}  // namespace
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_org_scyllasband_android_ScyllasBandNative_singPlanJson(
+    JNIEnv* environment,
+    jobject,
+    jlong handle,
+    jstring score_json,
+    jstring voice_id,
+    jstring language,
+    jint transpose,
+    jboolean use_register
+) {
+    ScyllasBandRuntime* runtime = runtime_from_handle(handle);
+    if (runtime == nullptr) {
+        throw_java(environment, "Scylla's Band runtime is closed");
+        return nullptr;
+    }
+    UtfChars score(environment, score_json), voice(environment, voice_id), language_chars(environment, language), no_decoder(environment, nullptr);
+    if (score.get() == nullptr || voice.get() == nullptr) {
+        throw_java(environment, "A score and a voice are required");
+        return nullptr;
+    }
+    const ScyllasBandSingRequest request =
+        sing_request(score, voice, language_chars, no_decoder, 0, 0.0f, transpose, use_register, 0, JNI_FALSE);
+    char* plan = nullptr;
+    if (scyllasband_sing_plan_json(runtime, &request, &plan) != SCYLLASBAND_OK) {
+        throw_java(environment, last_error_or("Scylla's Band could not plan the score"));
+        return nullptr;
+    }
+    jstring out = environment->NewStringUTF(plan);
+    scyllasband_string_free(plan);
+    return out;
+}
+
+// Returns true when the whole score was sung, false when the listener or cancel() stopped it.
+extern "C" JNIEXPORT jboolean JNICALL
+Java_org_scyllasband_android_ScyllasBandNative_singStreaming(
+    JNIEnv* environment,
+    jobject,
+    jlong handle,
+    jstring score_json,
+    jstring voice_id,
+    jstring language,
+    jstring decoder,
+    jint steps,
+    jfloat guidance,
+    jint transpose,
+    jboolean use_register,
+    jlong seed,
+    jboolean has_seed,
+    jobject listener
+) {
+    ScyllasBandRuntime* runtime = runtime_from_handle(handle);
+    if (runtime == nullptr) {
+        throw_java(environment, "Scylla's Band runtime is closed");
+        return JNI_FALSE;
+    }
+    if (listener == nullptr) {
+        throw_java(environment, "Scylla's Band singing listener is required");
+        return JNI_FALSE;
+    }
+    UtfChars score(environment, score_json), voice(environment, voice_id), language_chars(environment, language), decoder_chars(environment, decoder);
+    if (score.get() == nullptr || voice.get() == nullptr) {
+        throw_java(environment, "A score and a voice are required");
+        return JNI_FALSE;
+    }
+    jclass listener_class = environment->GetObjectClass(listener);
+    if (listener_class == nullptr) {
+        return JNI_FALSE;
+    }
+    JavaSingContext context;
+    context.environment = environment;
+    context.listener = listener;
+    context.phrase_started = environment->GetMethodID(listener_class, "onPhraseStarted", "(IILjava/lang/String;)Z");
+    context.phrase_audio = environment->GetMethodID(listener_class, "onPhraseAudio", "([FIILjava/lang/String;)Z");
+    environment->DeleteLocalRef(listener_class);
+    if (context.phrase_started == nullptr || context.phrase_audio == nullptr) {
+        if (!environment->ExceptionCheck()) {
+            throw_java(environment, "Scylla's Band singing listener has an incompatible shape");
+        }
+        return JNI_FALSE;
+    }
+    const ScyllasBandSingRequest request =
+        sing_request(score, voice, language_chars, decoder_chars, steps, guidance, transpose, use_register, seed, has_seed);
+    const ScyllasBandStatus status = scyllasband_sing_stream(runtime, &request, forward_sing_event, &context);
+    if (status == SCYLLASBAND_OK) {
+        return JNI_TRUE;
+    }
+    if (status != SCYLLASBAND_ERROR_CANCELLED && !environment->ExceptionCheck()) {
+        throw_java(environment, last_error_or("Scylla's Band singing failed"));
     }
     return JNI_FALSE;
 }

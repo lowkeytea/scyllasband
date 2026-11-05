@@ -159,6 +159,40 @@ NSNumber *_Nullable json_number(id value) {
 }
 @end
 
+@interface SBScyllasBandSingingInfo ()
+- (instancetype)initWithJSON:(nullable NSDictionary *)json;
+@end
+
+@implementation SBScyllasBandSingingInfo
+- (instancetype)initWithJSON:(nullable NSDictionary *)json {
+    if ((self = [super init])) {
+        NSDictionary *info = [json isKindOfClass:NSDictionary.class] ? json : @{};
+        auto strings = [](id value) {
+            NSMutableArray<NSString *> *out = [NSMutableArray array];
+            for (id item in [value isKindOfClass:NSArray.class] ? value : @[]) {
+                if ([item isKindOfClass:NSString.class]) [out addObject:item];
+            }
+            return out.copy;
+        };
+        _supported = [info[@"supported"] isKindOfClass:NSNumber.class] && [info[@"supported"] boolValue];
+        _styles = strings(info[@"styles"]);
+        _decoders = strings(info[@"decoders"]);
+        _defaultDecoder = [info[@"default_decoder"] isKindOfClass:NSString.class] ? info[@"default_decoder"] : @"vocos";
+        _hasBigVGAN = [_decoders containsObject:@"bigvgan"];
+        _steps = json_number(info[@"steps"]).integerValue;
+        _sampler = [info[@"sampler"] isKindOfClass:NSString.class] ? info[@"sampler"] : @"";
+        _guidance = json_number(info[@"guidance"]) ? json_number(info[@"guidance"]).floatValue : 1.0f;
+        NSMutableDictionary<NSString *, NSNumber *> *centers = [NSMutableDictionary dictionary];
+        NSDictionary *source = [info[@"voice_midi_center"] isKindOfClass:NSDictionary.class] ? info[@"voice_midi_center"] : @{};
+        for (NSString *voice in source) {
+            if ([voice isKindOfClass:NSString.class] && json_number(source[voice])) centers[voice] = json_number(source[voice]);
+        }
+        _voiceMidiCenters = centers.copy;
+    }
+    return self;
+}
+@end
+
 @interface SBScyllasBandBundleInfo ()
 - (nullable instancetype)initWithVoicesJSON:(NSDictionary *)json;
 @end
@@ -206,6 +240,8 @@ NSNumber *_Nullable json_number(id value) {
         }
         _voices = voices.copy;
         _defaultVoice = [json[@"default_voice"] isKindOfClass:NSString.class] ? json[@"default_voice"] : (voices.firstObject.identifier ?: @"");
+        _graphContract = [json[@"graph_contract"] isKindOfClass:NSString.class] ? json[@"graph_contract"] : @"";
+        _singing = [[SBScyllasBandSingingInfo alloc] initWithJSON:json[@"singing"]];
         if (_sampleRate <= 0 || _voices.count == 0) return nil;
     }
     return self;
@@ -243,6 +279,55 @@ NSNumber *_Nullable json_number(id value) {
     return copy;
 }
 
+@end
+
+@implementation SBScyllasBandSingRequest
+
+- (instancetype)initWithScoreJSON:(NSString *)scoreJSON voiceIdentifier:(NSString *)voiceIdentifier {
+    if ((self = [super init])) {
+        _scoreJSON = scoreJSON.copy;
+        _voiceIdentifier = voiceIdentifier.copy;
+        _decoder = SBScyllasBandSingingDecoderDefault;
+        _usesRegister = YES;
+    }
+    return self;
+}
+
+- (id)copyWithZone:(NSZone *)zone {
+    SBScyllasBandSingRequest *copy = [[SBScyllasBandSingRequest alloc] initWithScoreJSON:self.scoreJSON voiceIdentifier:self.voiceIdentifier];
+    copy.language = self.language;
+    copy.seed = self.seed;
+    copy.steps = self.steps;
+    copy.guidance = self.guidance;
+    copy.decoder = self.decoder;
+    copy.transpose = self.transpose;
+    copy.usesRegister = self.usesRegister;
+    return copy;
+}
+
+@end
+
+@interface SBScyllasBandSungPhrase ()
+- (instancetype)initWithSamples:(const float *)samples count:(NSInteger)count sampleRate:(NSInteger)sampleRate index:(NSInteger)index
+                         phrases:(NSInteger)phrases metadata:(nullable NSDictionary *)metadata;
+@end
+
+@implementation SBScyllasBandSungPhrase
+- (instancetype)initWithSamples:(const float *)samples count:(NSInteger)count sampleRate:(NSInteger)sampleRate index:(NSInteger)index
+                         phrases:(NSInteger)phrases metadata:(nullable NSDictionary *)metadata {
+    if ((self = [super init])) {
+        _pcmFloat32Data = [NSData dataWithBytes:samples length:(NSUInteger)count * sizeof(float)];
+        _sampleCount = count;
+        _sampleRate = sampleRate;
+        _phraseIndex = index;
+        _phraseCount = phrases;
+        NSDictionary *meta = [metadata isKindOfClass:NSDictionary.class] ? metadata : @{};
+        _offsetSamples = json_number(meta[@"offset_samples"]).integerValue;
+        _songSampleCount = json_number(meta[@"song_samples"]).integerValue;
+        _text = [meta[@"text"] isKindOfClass:NSString.class] ? meta[@"text"] : @"";
+    }
+    return self;
+}
 @end
 
 @interface SBScyllasBandAudioChunk ()
@@ -290,6 +375,66 @@ int32_t forward_event(const ScyllasBandEvent *event, void *user_data) {
         }
     }
     return 0;
+}
+
+struct SingContext {
+    __unsafe_unretained SBScyllasBandPhraseStartedBlock phraseStarted;
+    __unsafe_unretained SBScyllasBandSungPhraseBlock phraseAudio;
+};
+
+int32_t forward_sing_event(const ScyllasBandEvent *event, void *user_data) {
+    auto *context = static_cast<SingContext *>(user_data);
+    @autoreleasepool {
+        if (event->type == SCYLLASBAND_EVENT_CHUNK_STARTED && context->phraseStarted) {
+            NSDictionary *metadata = json_object(event->metadata_json);
+            NSString *text = [metadata isKindOfClass:NSDictionary.class] && [metadata[@"text"] isKindOfClass:NSString.class] ? metadata[@"text"] : nil;
+            return context->phraseStarted(event->chunk_index, event->chunk_count, text) ? 0 : 1;
+        }
+        if (event->type == SCYLLASBAND_EVENT_AUDIO) {
+            if (event->sample_count < 0 || (event->sample_count > 0 && event->samples == nullptr)) return 1;
+            SBScyllasBandSungPhrase *phrase = [[SBScyllasBandSungPhrase alloc] initWithSamples:event->samples
+                                                                                         count:(NSInteger)event->sample_count
+                                                                                    sampleRate:event->sample_rate
+                                                                                         index:event->chunk_index
+                                                                                       phrases:event->chunk_count
+                                                                                      metadata:json_object(event->metadata_json)];
+            return context->phraseAudio(phrase) ? 0 : 1;
+        }
+    }
+    return 0;
+}
+
+// The C request for `request`; `holder` keeps its strings alive while the request is in use.
+ScyllasBandSingRequest native_sing_request(SBScyllasBandSingRequest *request, NSMutableArray *holder) {
+    ScyllasBandSingRequest native;
+    scyllasband_sing_request_init(&native);
+    NSString *score = request.scoreJSON.copy, *voice = request.voiceIdentifier.copy, *language = request.language.copy;
+    [holder addObjectsFromArray:@[score ?: @"", voice ?: @"", language ?: @""]];
+    native.score_json = score.UTF8String;
+    native.voice_id = voice.UTF8String;
+    native.language = language.length ? language.UTF8String : nullptr;
+    native.steps = static_cast<int32_t>(request.steps);
+    if (request.seed != nil) {
+        native.seed = request.seed.unsignedLongLongValue;
+        native.has_seed = 1;
+    }
+    if (request.guidance != nil && std::isfinite(request.guidance.floatValue) && request.guidance.floatValue > 0) native.guidance = request.guidance.floatValue;
+    switch (request.decoder) {
+        case SBScyllasBandSingingDecoderBigVGAN: native.decoder = "bigvgan"; break;
+        case SBScyllasBandSingingDecoderVocos: native.decoder = "vocos"; break;
+        default: native.decoder = nullptr; break;
+    }
+    native.transpose = static_cast<int32_t>(request.transpose);
+    native.use_register = request.usesRegister ? 1 : 0;
+    return native;
+}
+
+BOOL valid_sing_request(SBScyllasBandSingRequest *request, NSError **error) {
+    if (request.scoreJSON.length == 0 || request.voiceIdentifier.length == 0) {
+        return fail(error, SBScyllasBandErrorInvalidArgument, @"A score and a voice are required.");
+    }
+    if (request.steps < 0) return fail(error, SBScyllasBandErrorInvalidArgument, @"Steps must be zero or positive.");
+    return YES;
 }
 
 }  // namespace
@@ -375,6 +520,50 @@ int32_t forward_event(const ScyllasBandEvent *event, void *user_data) {
     const ScyllasBandStatus status = scyllasband_synthesize_stream(_runtime, &native, forward_event, &context);
     if (status == SCYLLASBAND_OK) return YES;
     return fail(error, error_code(status), status == SCYLLASBAND_ERROR_CANCELLED ? @"Synthesis was cancelled." : last_error_or(@"Synthesis failed."));
+}
+
+- (nullable NSDictionary *)singPlanForRequest:(SBScyllasBandSingRequest *)request error:(NSError **)error {
+    if (!valid_sing_request(request, error)) return nil;
+    NSMutableArray *holder = [NSMutableArray array];
+    const ScyllasBandSingRequest native = native_sing_request(request, holder);
+    char *plan = nullptr;
+    const ScyllasBandStatus status = scyllasband_sing_plan_json(_runtime, &native, &plan);
+    if (status != SCYLLASBAND_OK) {
+        fail(error, error_code(status), last_error_or(@"The score could not be planned."));
+        return nil;
+    }
+    NSDictionary *out = json_object(plan);
+    scyllasband_string_free(plan);
+    return [out isKindOfClass:NSDictionary.class] ? out : @{};
+}
+
+- (BOOL)singRequest:(SBScyllasBandSingRequest *)request
+      phraseStarted:(nullable SBScyllasBandPhraseStartedBlock)phraseStarted
+        phraseAudio:(SBScyllasBandSungPhraseBlock)phraseAudio
+              error:(NSError **)error {
+    if (!valid_sing_request(request, error)) return NO;
+    NSMutableArray *holder = [NSMutableArray array];
+    const ScyllasBandSingRequest native = native_sing_request(request, holder);
+    SingContext context{phraseStarted, phraseAudio};
+    const ScyllasBandStatus status = scyllasband_sing_stream(_runtime, &native, forward_sing_event, &context);
+    if (status == SCYLLASBAND_OK) return YES;
+    return fail(error, error_code(status), status == SCYLLASBAND_ERROR_CANCELLED ? @"Singing was cancelled." : last_error_or(@"Singing failed."));
+}
+
+- (nullable SBScyllasBandAudioChunk *)singRequest:(SBScyllasBandSingRequest *)request error:(NSError **)error {
+    if (!valid_sing_request(request, error)) return nil;
+    NSMutableArray *holder = [NSMutableArray array];
+    const ScyllasBandSingRequest native = native_sing_request(request, holder);
+    ScyllasBandAudio audio{};
+    const ScyllasBandStatus status = scyllasband_sing(_runtime, &native, &audio);
+    if (status != SCYLLASBAND_OK) {
+        fail(error, error_code(status), status == SCYLLASBAND_ERROR_CANCELLED ? @"Singing was cancelled." : last_error_or(@"Singing failed."));
+        return nil;
+    }
+    SBScyllasBandAudioChunk *song = [[SBScyllasBandAudioChunk alloc] initWithSamples:audio.samples count:(NSInteger)audio.sample_count
+                                                                          sampleRate:audio.sample_rate index:0 chunks:1];
+    scyllasband_audio_free(&audio);
+    return song;
 }
 
 - (void)requestCancellation {

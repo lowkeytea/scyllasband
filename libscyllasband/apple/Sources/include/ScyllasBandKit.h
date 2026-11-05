@@ -83,6 +83,35 @@ FOUNDATION_EXPORT SBScyllasBandDeliveryControl const SBScyllasBandDeliveryContro
 - (instancetype)init NS_UNAVAILABLE;
 @end
 
+/** The waveform decoder a sung score renders through. */
+typedef NS_ENUM(NSInteger, SBScyllasBandSingingDecoder) {
+    /** The bundle's singing decoder: BigVGAN where the bundle carries it, else Vocos. */
+    SBScyllasBandSingingDecoderDefault = 0,
+    /** BigVGAN v2, fine-tuned on the voices: the singing decoder, cleanest on sustained notes, and the slowest. */
+    SBScyllasBandSingingDecoderBigVGAN = 1,
+    /** Vocos, the speech decoder ("turbo"): much faster, with some harmonic artefacts on sustained notes in some voices. */
+    SBScyllasBandSingingDecoderVocos = 2,
+};
+
+/** What a bundle can sing (v4 bundles, graph contract scyllasband_measured_controls_v4); `supported` is NO otherwise. */
+@interface SBScyllasBandSingingInfo : NSObject
+@property(nonatomic, readonly, getter=isSupported) BOOL supported;
+/** Score styles the bundle sings: "pop" (also "sung") and "ballad". */
+@property(nonatomic, copy, readonly) NSArray<NSString *> *styles;
+/** Decoders with graphs in this bundle: "bigvgan", "vocos". */
+@property(nonatomic, copy, readonly) NSArray<NSString *> *decoders;
+/** What SBScyllasBandSingingDecoderDefault uses. */
+@property(nonatomic, copy, readonly) NSString *defaultDecoder;
+@property(nonatomic, readonly) BOOL hasBigVGAN;
+/** The bundle's singing flow steps (8), sampler ("heun") and guidance (2). */
+@property(nonatomic, readonly) NSInteger steps;
+@property(nonatomic, copy, readonly) NSString *sampler;
+@property(nonatomic, readonly) float guidance;
+/** The MIDI pitch each voice sings around; a score is moved by octaves next to it. */
+@property(nonatomic, copy, readonly) NSDictionary<NSString *, NSNumber *> *voiceMidiCenters;
+- (instancetype)init NS_UNAVAILABLE;
+@end
+
 @interface SBScyllasBandBundleInfo : NSObject
 /** "coreml" or "coreai". */
 @property(nonatomic, copy, readonly) NSString *backend;
@@ -95,6 +124,9 @@ FOUNDATION_EXPORT SBScyllasBandDeliveryControl const SBScyllasBandDeliveryContro
  semitones; -2 to 2 for each in the released model). Holds all three controls.
  */
 @property(nonatomic, copy, readonly) NSDictionary<SBScyllasBandDeliveryControl, SBScyllasBandDeliveryRange *> *deliveryRanges;
+/** "scyllasband_measured_controls_v3" (speech) or "_v4" (speech and singing). */
+@property(nonatomic, copy, readonly) NSString *graphContract;
+@property(nonatomic, strong, readonly) SBScyllasBandSingingInfo *singing;
 - (nullable SBScyllasBandVoice *)voiceWithIdentifier:(NSString *)identifier;
 - (instancetype)init NS_UNAVAILABLE;
 @end
@@ -117,6 +149,32 @@ FOUNDATION_EXPORT SBScyllasBandDeliveryControl const SBScyllasBandDeliveryContro
 - (instancetype)init NS_UNAVAILABLE;
 @end
 
+/**
+ A melody score to sing. `scoreJSON` is {"text", "bpm", "style": "pop" | "ballad", "notes": [[label, note, beats], ...]}:
+ note a pitch name with octave ("C4", "F#3", "Bb3") or "rest" (label "-"), beats in quarter notes at bpm, and a word
+ over several notes numbered ("baby~1", "baby~2"). Phrases split at rests of 0.25 s or more.
+ */
+@interface SBScyllasBandSingRequest : NSObject <NSCopying>
+@property(nonatomic, copy) NSString *scoreJSON;
+@property(nonatomic, copy) NSString *voiceIdentifier;
+/** nil: the voice's default language. */
+@property(nonatomic, copy, nullable) NSString *language;
+/** nil: fresh noise for every request. Phrase i uses seed + i. */
+@property(nonatomic, copy, nullable) NSNumber *seed;
+/** Flow steps; 0 uses the bundle's singing setting (8). */
+@property(nonatomic) NSInteger steps;
+/** Classifier-free guidance on the melody; nil uses the bundle's setting (2); 1 turns it off. */
+@property(nonatomic, copy, nullable) NSNumber *guidance;
+/** Initially SBScyllasBandSingingDecoderDefault (BigVGAN where the bundle carries it). Vocos is the fast ("turbo") option. */
+@property(nonatomic) SBScyllasBandSingingDecoder decoder;
+/** Semitones added to the whole score, before the octave register, to put a song in the voice's key. */
+@property(nonatomic) NSInteger transpose;
+/** YES (initially): move the song by octaves into the voice's sung range. */
+@property(nonatomic) BOOL usesRegister;
+- (instancetype)initWithScoreJSON:(NSString *)scoreJSON voiceIdentifier:(NSString *)voiceIdentifier NS_DESIGNATED_INITIALIZER;
+- (instancetype)init NS_UNAVAILABLE;
+@end
+
 /** A copy of one sentence's mono Float32 PCM; it stays valid after the callback returns. */
 @interface SBScyllasBandAudioChunk : NSObject
 @property(nonatomic, copy, readonly) NSData *pcmFloat32Data;
@@ -127,9 +185,29 @@ FOUNDATION_EXPORT SBScyllasBandDeliveryControl const SBScyllasBandDeliveryContro
 - (instancetype)init NS_UNAVAILABLE;
 @end
 
+/**
+ One sung phrase of mono Float32 PCM and its place on the song's timeline: it starts `offsetSamples` into the song (the
+ gap after the previous phrase is silence; a phrase can also overlap the previous one's release, in which case add
+ them). The song is `songSampleCount` samples long.
+ */
+@interface SBScyllasBandSungPhrase : NSObject
+@property(nonatomic, copy, readonly) NSData *pcmFloat32Data;
+@property(nonatomic, readonly) NSInteger sampleCount;
+@property(nonatomic, readonly) NSInteger sampleRate;
+@property(nonatomic, readonly) NSInteger phraseIndex;
+@property(nonatomic, readonly) NSInteger phraseCount;
+@property(nonatomic, readonly) NSInteger offsetSamples;
+@property(nonatomic, readonly) NSInteger songSampleCount;
+@property(nonatomic, copy, readonly) NSString *text;
+- (instancetype)init NS_UNAVAILABLE;
+@end
+
 /** Return NO to stop the request. `text` is the sentence about to be spoken. */
 typedef BOOL (^SBScyllasBandChunkStartedBlock)(NSInteger chunkIndex, NSInteger chunkCount, NSString *_Nullable text);
 typedef BOOL (^SBScyllasBandAudioChunkBlock)(SBScyllasBandAudioChunk *chunk);
+/** Return NO to stop the request. `text` is the phrase about to be sung. */
+typedef BOOL (^SBScyllasBandPhraseStartedBlock)(NSInteger phraseIndex, NSInteger phraseCount, NSString *_Nullable text);
+typedef BOOL (^SBScyllasBandSungPhraseBlock)(SBScyllasBandSungPhrase *phrase);
 
 /**
  One libscyllasband runtime over a Core ML (iOS 18+) or Core AI (iOS 27+) bundle.
@@ -167,6 +245,24 @@ typedef BOOL (^SBScyllasBandAudioChunkBlock)(SBScyllasBandAudioChunk *chunk);
              chunkStarted:(nullable SBScyllasBandChunkStartedBlock)chunkStarted
                audioChunk:(SBScyllasBandAudioChunkBlock)audioChunk
                     error:(NSError **)error;
+
+/**
+ The phrase plan of a score without singing it: {"seconds", "samples", "register_shift", "phrases": [{"text", "start",
+ "end", "frames", ...}], ...}. nil with an error for an invalid score or a bundle that cannot sing.
+ */
+- (nullable NSDictionary *)singPlanForRequest:(SBScyllasBandSingRequest *)request error:(NSError **)error;
+
+/**
+ Sings the score phrase by phrase (bundleInfo.singing.supported must be YES). Callbacks run on the calling thread. Returns
+ NO with SBScyllasBandErrorCancelled when a callback returned NO or `requestCancellation` was called.
+ */
+- (BOOL)singRequest:(SBScyllasBandSingRequest *)request
+      phraseStarted:(nullable SBScyllasBandPhraseStartedBlock)phraseStarted
+        phraseAudio:(SBScyllasBandSungPhraseBlock)phraseAudio
+              error:(NSError **)error;
+
+/** Sings the whole score into one waveform (phrases on the song's timeline, silence in the rests). */
+- (nullable SBScyllasBandAudioChunk *)singRequest:(SBScyllasBandSingRequest *)request error:(NSError **)error;
 
 /** Stops requests already issued (running or waiting) at their next graph call; later requests are unaffected. */
 - (void)requestCancellation;

@@ -45,7 +45,13 @@ verify_bundle() {
         exit 1
     fi
     # v3 bundles (scyllasband_measured_controls_v3) add the pitch predictor: pitch_context_encoder, then pitch_estimator.
-    for asset in g2p duration_predictor pitch_context_encoder pitch_estimator vector_context_encoder vector_estimator vocoder; do
+    typeset -a assets
+    assets=(g2p duration_predictor pitch_context_encoder pitch_estimator vector_context_encoder vector_estimator vocoder)
+    # v4 bundles (scyllasband_measured_controls_v4) that sing through BigVGAN add its decoder beside Vocos.
+    if /usr/bin/grep -q "\"${flavor}/vocoder_bigvgan.${extension}\"" "${bundle}/manifest.json"; then
+        assets+=(vocoder_bigvgan)
+    fi
+    for asset in "${assets[@]}"; do
         if [[ ! -d "${bundle}/${flavor}/${asset}.${extension}" ]]; then
             echo "error: the ${flavor} bundle at ${bundle} is missing ${flavor}/${asset}.${extension}" >&2
             exit 1

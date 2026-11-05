@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(libscyllasband VERSION 3.0.0 LANGUAGES CXX)
+project(libscyllasband VERSION 3.1.0 LANGUAGES CXX)
 
 set(SCYLLASBAND_BACKEND "litert" CACHE STRING "Graph runtime linked into libscyllasband: litert, onnx or apple (Core ML and Core AI)")
 set_property(CACHE SCYLLASBAND_BACKEND PROPERTY STRINGS litert onnx apple)
@@ -85,17 +85,44 @@ else()
 endif()
 message(STATUS "libscyllasband backend: ${SCYLLASBAND_BACKEND} (${_scyllasband_sdk_library})")
 
-# The engine and text frontend; the shared library and the unit tests both link it.
-add_library(scyllasband_core STATIC
-    src/scyllasband_engine.cpp
+option(SCYLLASBAND_SANITIZE "Build everything with AddressSanitizer and UndefinedBehaviorSanitizer (test builds)" OFF)
+if(SCYLLASBAND_SANITIZE)
+    add_compile_options($<$<COMPILE_LANGUAGE:C,CXX,OBJCXX>:-fsanitize=address,undefined> $<$<COMPILE_LANGUAGE:C,CXX,OBJCXX>:-fno-omit-frame-pointer>)
+    add_link_options(-fsanitize=address,undefined)
+endif()
+
+# The frontend: text, events, JSON and noise. No graph runtime, so it builds and is tested without any SDK.
+add_library(scyllasband_frontend STATIC
     src/scyllasband_events.cpp
-    src/scyllasband_g2p.cpp
     src/scyllasband_json.cpp
+    src/scyllasband_noise.cpp
     src/scyllasband_text.cpp
     src/scyllasband_unicode.cpp
+)
+target_compile_features(scyllasband_frontend PUBLIC cxx_std_17)
+target_include_directories(scyllasband_frontend PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include" "${CMAKE_CURRENT_SOURCE_DIR}/src")
+set_target_properties(scyllasband_frontend PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    # Keep float arithmetic in source order (no fused multiply-add) so results match across platforms.
+    target_compile_options(scyllasband_frontend PUBLIC $<$<COMPILE_LANGUAGE:C,CXX,OBJCXX>:-ffp-contract=off>)
+endif()
+
+# The engine (graphs through the linked backend), G2P, and the speech and singing orchestration over it; the shared
+# library and the engine tests link it.
+add_library(scyllasband_core STATIC
+    src/scyllasband_engine.cpp
+    src/scyllasband_g2p.cpp
+    src/scyllasband_singing.cpp
+    src/scyllasband_speech_plan.cpp
+    src/scyllasband_speech_stream.cpp
     ${_scyllasband_backend_source}
 )
 target_compile_features(scyllasband_core PUBLIC cxx_std_17)
+target_link_libraries(scyllasband_core PUBLIC scyllasband_frontend)
 target_include_directories(scyllasband_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include" "${CMAKE_CURRENT_SOURCE_DIR}/src")
 if(SCYLLASBAND_BACKEND STREQUAL "apple")
     target_compile_options(scyllasband_core PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
@@ -151,9 +178,17 @@ if(SCYLLASBAND_BUILD_TESTS)
         add_executable(scyllasband_unit_test tests/scyllasband_unit_test.cpp)
         target_link_libraries(scyllasband_unit_test PRIVATE scyllasband_core)
         set_target_properties(scyllasband_unit_test PROPERTIES BUILD_RPATH "${_scyllasband_sdk_library_dir}")
-        foreach(_scyllasband_suite events durations context delivery sentences segments normalizer unicode targets)
+        foreach(_scyllasband_suite events durations context delivery sentences segments normalizer unicode targets singing)
             add_test(NAME scyllasband_${_scyllasband_suite}
                      COMMAND scyllasband_unit_test ${_scyllasband_suite} "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
+        endforeach()
+
+        # Frontend modules alone (no SDK): configure with -DSCYLLASBAND_SANITIZE=ON to run them under ASan and UBSan.
+        add_executable(scyllasband_frontend_test tests/scyllasband_frontend_test.cpp)
+        target_link_libraries(scyllasband_frontend_test PRIVATE scyllasband_frontend)
+        foreach(_scyllasband_suite noise)
+            add_test(NAME scyllasband_frontend_${_scyllasband_suite}
+                     COMMAND scyllasband_frontend_test ${_scyllasband_suite} "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
         endforeach()
 
         # Native vs Python reference on a real bundle: configure with SCYLLASBAND_PARITY_BUNDLE (a bundle of this

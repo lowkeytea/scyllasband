@@ -2,10 +2,14 @@
 #include "scyllasband.h"
 
 #include "scyllasband_engine.h"
+#include "scyllasband_singing.h"
+#include "scyllasband_speech_stream.h"
 #include "scyllasband_test_api.h"
 #include "scyllasband_text.h"
 
 #include <algorithm>
+#include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
@@ -110,6 +114,64 @@ Json annotate(Engine& engine, Json metadata, const SynthesisOptions& options, co
     return metadata;
 }
 
+SingOptions sing_options_from(const ScyllasBandSingRequest* request) {
+    require(request != nullptr, "request is required");
+    require(request->voice_id != nullptr && request->voice_id[0] != '\0', "request.voice_id is required");
+    require(request->score_json != nullptr && request->score_json[0] != '\0', "request.score_json is required");
+    SingOptions options;
+    options.voice = request->voice_id;
+    options.language = request->language ? request->language : "";
+    if (request->has_seed) options.seed = request->seed;
+    options.steps = request->steps;
+    switch (request->sampler) {
+        case SCYLLASBAND_SAMPLER_DEFAULT: break;
+        case SCYLLASBAND_SAMPLER_HEUN: options.sampler = "heun"; break;
+        case SCYLLASBAND_SAMPLER_EULER: options.sampler = "euler"; break;
+        default: throw std::invalid_argument("Unsupported sampler");
+    }
+    if (request->guidance > 0.0f) options.guidance = static_cast<double>(request->guidance);
+    options.decoder = request->decoder ? request->decoder : "";
+    options.plan.transpose = request->transpose;
+    options.plan.use_register = request->use_register != 0;
+    return options;
+}
+
+Json parse_score_json(const char* text) {
+    try {
+        return Json::parse(text);
+    } catch (const std::exception& error) {
+        throw ScoreError(std::string("The score is not valid JSON: ") + error.what());
+    }
+}
+
+PhraseNoiseFn sing_test_noise(ScyllasBandRuntime* runtime) {
+    if (runtime->test_noise == nullptr) return nullptr;
+    const int dim = 2 + runtime->engine->latent_dim();
+    return [runtime, dim](int index, uint64_t seed, bool has_seed, int64_t frames, float* out) {
+        runtime->test_noise(index, seed, has_seed ? 1 : 0, dim, frames, out, runtime->test_noise_user);
+    };
+}
+
+Json sing_annotate(Engine& engine, Json metadata, const SingOptions& options) {
+    metadata.set("backend", Json(engine.backend_name()));
+    metadata.set("accelerator", Json(engine.accelerator()));
+    metadata.set("bundle_dir", Json(engine.bundle_dir()));
+    metadata.set("voice_id", Json(options.voice));
+    return metadata;
+}
+
+Json sing_plan(Engine& engine, const ScyllasBandSingRequest* request, bool with_melody) {
+    const SingOptions options = sing_options_from(request);
+    if (!engine.supports_singing()) {
+        throw std::invalid_argument("Singing needs a v4 bundle with delivery modes; this bundle is spoken only. Download a current model.");
+    }
+    const std::string language = engine.resolve_language(options.voice, options.language);
+    const SongPlan plan = plan_song(parse_score(parse_score_json(request->score_json)), engine, options.voice, language, options.plan);
+    Json out = plan.to_json(with_melody);
+    out.set("samples", Json(static_cast<int64_t>(std::ceil(plan.seconds() * engine.sample_rate()))));
+    return out;
+}
+
 std::vector<int64_t> int_list(const Json& value) {
     std::vector<int64_t> out;
     for (const Json& item : value.elements()) out.push_back(item.integer());
@@ -167,6 +229,8 @@ ScyllasBandStatus scyllasband_runtime_create(const ScyllasBandRuntimeOptions* op
         }
         info.set("voices", Json(std::move(voices)));
         info.set("delivery", engine.delivery_info());
+        info.set("graph_contract", Json(engine.graph_contract()));
+        info.set("singing", singing_info(engine));
         runtime->voices_json = info.dump();
         *out_runtime = runtime.release();
     });
@@ -255,6 +319,69 @@ ScyllasBandStatus scyllasband_synthesize_stream(ScyllasBandRuntime* runtime, con
     });
 }
 
+void scyllasband_sing_request_init(ScyllasBandSingRequest* request) {
+    if (request == nullptr) return;
+    std::memset(request, 0, sizeof(*request));
+    request->use_register = 1;
+}
+
+ScyllasBandStatus scyllasband_sing_plan_json(ScyllasBandRuntime* runtime, const ScyllasBandSingRequest* request, char** out_json) {
+    return guarded([&] {
+        require(runtime != nullptr && out_json != nullptr, "runtime and out_json are required");
+        *out_json = nullptr;
+        std::lock_guard<std::mutex> lock(runtime->mutex);
+        *out_json = copy_string(sing_plan(*runtime->engine, request, false).dump());
+    });
+}
+
+ScyllasBandStatus scyllasband_sing(ScyllasBandRuntime* runtime, const ScyllasBandSingRequest* request, ScyllasBandAudio* out_audio) {
+    return guarded([&] {
+        require(runtime != nullptr && out_audio != nullptr, "runtime and out_audio are required");
+        *out_audio = ScyllasBandAudio{};
+        const SingOptions options = sing_options_from(request);
+        const Json score = parse_score_json(request->score_json);
+        const uint64_t generation = runtime->engine->cancel_generation();
+        std::lock_guard<std::mutex> lock(runtime->mutex);
+        Engine& engine = *runtime->engine;
+        engine.begin_request(generation);
+        Json metadata;
+        std::vector<float> samples = sing(engine, score, options, &metadata, sing_test_noise(runtime));
+        metadata = sing_annotate(engine, std::move(metadata), options);
+        out_audio->samples = copy_floats(samples);
+        out_audio->sample_count = static_cast<int64_t>(samples.size());
+        out_audio->sample_rate = engine.sample_rate();
+        out_audio->metadata_json = copy_string(metadata.dump());
+    });
+}
+
+ScyllasBandStatus scyllasband_sing_stream(ScyllasBandRuntime* runtime, const ScyllasBandSingRequest* request, ScyllasBandEventCallback callback,
+                                          void* user_data) {
+    return guarded([&] {
+        require(runtime != nullptr && callback != nullptr, "runtime and callback are required");
+        const SingOptions options = sing_options_from(request);
+        const Json score = parse_score_json(request->score_json);
+        const uint64_t generation = runtime->engine->cancel_generation();
+        std::lock_guard<std::mutex> lock(runtime->mutex);
+        Engine& engine = *runtime->engine;
+        engine.begin_request(generation);
+        sing_stream(engine, score, options, [&](const SingEvent& event) {
+            const std::string metadata = event.metadata.dump();
+            char chunk_id[32] = {0};
+            if (event.phrase) std::snprintf(chunk_id, sizeof(chunk_id), "phrase_%04d", event.phrase->index + 1);
+            ScyllasBandEvent out{};
+            out.type = static_cast<ScyllasBandEventType>(event.type);
+            out.chunk_index = event.phrase ? event.phrase->index : -1;
+            out.chunk_count = event.phrase_count;
+            out.chunk_id = event.phrase ? chunk_id : nullptr;
+            out.metadata_json = metadata.c_str();
+            out.samples = event.audio ? event.audio->data() : nullptr;
+            out.sample_count = event.audio ? static_cast<int64_t>(event.audio->size()) : 0;
+            out.sample_rate = engine.sample_rate();
+            return callback(&out, user_data) == 0;
+        }, sing_test_noise(runtime));
+    });
+}
+
 void scyllasband_cancel(ScyllasBandRuntime* runtime) {
     if (runtime != nullptr) runtime->engine->request_cancel();
 }
@@ -335,8 +462,10 @@ int32_t scyllasband_test_synthesize_sentence(ScyllasBandRuntime* runtime, const 
         sentence.after_ids = int_list(request.get("after_ids"));
         const std::string voice = request.get("voice").str(), language = request.get("language").str();
         const std::string delivery_spec = request.get("delivery").str();
-        const DeliveryTensors delivery =
-            engine.delivery_tensors(voice, Delivery::parse(request.get("delivery").is_null() ? nullptr : delivery_spec.c_str()));
+        // A sung target (a melody given) has no delivery request: sung clips were trained without intensity or pace.
+        const DeliveryTensors delivery = request.get("melody").is_array()
+            ? DeliveryTensors{}
+            : engine.delivery_tensors(voice, Delivery::parse(request.get("delivery").is_null() ? nullptr : delivery_spec.c_str()));
         const double speed = request.get("speed").num(1.0);
         Json out{Json::Object{}};
         std::vector<int> forced;
@@ -353,17 +482,35 @@ int32_t scyllasband_test_synthesize_sentence(ScyllasBandRuntime* runtime, const 
         }
         const std::size_t dim = static_cast<std::size_t>(engine.latent_dim());
         std::vector<float> prefix_values(prefix ? prefix : nullptr, prefix ? prefix + dim * static_cast<std::size_t>(prefix_frames) : nullptr);
-        SentenceResult result = engine.synthesize_sentence(
-            sentence, voice, language, delivery, prefix_values, prefix ? prefix_frames : 0, static_cast<int>(request.get("steps").integer(8)),
-            request.get("sampler").str("heun"), speed,
-            [&](int64_t frames, float* pitch, float* flow) {   // noise: [2 + latent_dim, frames], the pitch rows first
-                if (frames != noise_frames) throw std::invalid_argument("noise has " + std::to_string(noise_frames) + " frames; the sentence needs " + std::to_string(frames));
-                const std::size_t T = static_cast<std::size_t>(frames);
-                std::copy_n(noise, 2 * T, pitch);
-                std::copy_n(noise + 2 * T, dim * T, flow);
-            },
-            forced.empty() ? nullptr : &forced);
-        std::vector<float> audio = engine.decode(result.latents, result.frames, voice, language, prefix_values, prefix ? prefix_frames : 0);
+        std::vector<float> melody;
+        for (const Json& value : request.get("melody").elements()) melody.push_back(static_cast<float>(value.num()));
+        const SungConditioning sung{request.get("melody").is_array() ? &melody : nullptr, request.get("delivery_mode").integer(0),
+                                    request.get("guidance").num(1.0)};
+        SentenceRequest sentence_request;
+        sentence_request.voice = voice;
+        sentence_request.language = language;
+        sentence_request.delivery = delivery;
+        sentence_request.prefix = &prefix_values;
+        sentence_request.prefix_frames = prefix ? prefix_frames : 0;
+        sentence_request.steps = static_cast<int>(request.get("steps").integer(8));
+        sentence_request.sampler = request.get("sampler").str("heun");
+        sentence_request.speed = speed;
+        sentence_request.noise = [&](int64_t frames, float* pitch, float* flow) {   // noise: [2 + latent_dim, frames], the pitch rows first
+            if (frames != noise_frames) throw std::invalid_argument("noise has " + std::to_string(noise_frames) + " frames; the sentence needs " + std::to_string(frames));
+            const std::size_t T = static_cast<std::size_t>(frames);
+            std::copy_n(noise, 2 * T, pitch);
+            std::copy_n(noise + 2 * T, dim * T, flow);
+        };
+        sentence_request.durations = forced.empty() ? nullptr : &forced;
+        sentence_request.sung = &sung;
+        SentenceResult result = engine.synthesize_sentence(sentence, sentence_request);
+        DecodeRequest decode;
+        decode.voice = voice;
+        decode.language = language;
+        decode.left = &prefix_values;
+        decode.left_frames = prefix ? prefix_frames : 0;
+        decode.decoder = request.get("decoder").str("vocos");
+        std::vector<float> audio = engine.decode(result.latents, result.frames, decode);
         out = result.metadata;
         *out_json = copy_string(out.dump());
         if (out_latents) *out_latents = copy_floats(result.latents);
@@ -378,6 +525,14 @@ void scyllasband_test_set_noise(ScyllasBandRuntime* runtime, ScyllasBandTestNois
     std::lock_guard<std::mutex> lock(runtime->mutex);
     runtime->test_noise = noise;
     runtime->test_noise_user = user_data;
+}
+
+int32_t scyllasband_test_sing_plan(ScyllasBandRuntime* runtime, const ScyllasBandSingRequest* request, char** out_json) {
+    return guarded([&] {
+        require(runtime != nullptr && out_json != nullptr, "runtime and out_json are required");
+        std::lock_guard<std::mutex> lock(runtime->mutex);
+        *out_json = copy_string(sing_plan(*runtime->engine, request, true).dump());
+    });
 }
 
 }  // extern "C"
