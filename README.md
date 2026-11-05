@@ -304,7 +304,7 @@ Latent-length buckets are 128, 256, 384, 512, 768 and 1024 frames (about 2.7 to 
 
 ## Native and mobile integration
 
-`libscyllasband/` is the C++ runtime for the same bundles, built against LiteRT, ONNX Runtime, or Core ML and Core AI on Apple platforms; see [its README](libscyllasband/README.md). The [Android](examples/android/README.md) example runs the LiteRT bundle; the [iOS](examples/ios/README.md) example runs Core AI on iOS 27 and Core ML on iOS 18–26 through the `ScyllasBandKit` pod.
+`libscyllasband/` is the C++ runtime for the same bundles, built against LiteRT, ONNX Runtime, or Core ML and Core AI on Apple platforms; see [its README](libscyllasband/README.md). The [Android](examples/android/README.md) example runs the LiteRT bundle; the [iOS](examples/ios/README.md) example runs Core AI on iOS 27 and Core ML on iOS 18–26 through the `ScyllasBandKit` pod. Two singing tutorials sit beside them: [Ghost in the Machine](examples/ghost_in_the_machine/README.md) (a spoken-and-sung piece built step by step, with the melody format and how speech and song are merged) and [Kitchen Patter](examples/kitchen_patter/README.md) (fast talk-singing from one score).
 
 ## Validation and limitations
 
@@ -319,7 +319,7 @@ See [the model card](MODEL_CARD.md) for the model contract.
 ```text
 scyllasband/          Python API, CLI, first-run setup, download, bundle contract and execution
 libscyllasband/       C++ runtime with a C API, for LiteRT and ONNX Runtime
-examples/             Android and iOS applications
+examples/             Android and iOS applications; the singing tutorials (ghost_in_the_machine, kitchen_patter)
 samples/              gallery script and generator, sample index
 docs/                 voice gallery (GitHub Pages)
 data/                 example texts and a dialogue script

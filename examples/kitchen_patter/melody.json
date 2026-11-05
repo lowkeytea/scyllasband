@@ -1,0 +1,19 @@
+{
+  "text": "I am sitting in the kitchen and I am trying not to listen but the toaster keeps on talking like it knows what I am missing and the kettle is a critic and the fridge is in the business of reminding me of everything I said I would be finishing",
+  "bpm": 112,
+  "style": "pop",
+  "notes": [
+    ["I", "E4", 0.25], ["am", "E4", 0.25], ["sitting~1", "E4", 0.25], ["sitting~2", "D4", 0.25], ["in", "E4", 0.25], ["the", "E4", 0.25], ["kitchen~1", "G4", 0.5], ["kitchen~2", "E4", 0.25],
+    ["and", "D4", 0.25], ["I", "E4", 0.25], ["am", "E4", 0.25], ["trying~1", "E4", 0.25], ["trying~2", "D4", 0.25], ["not", "E4", 0.25], ["to", "D4", 0.25], ["listen~1", "C4", 0.5], ["listen~2", "D4", 0.5],
+    ["-", "rest", 0.25],
+    ["but", "D4", 0.25], ["the", "E4", 0.25], ["toaster~1", "G4", 0.25], ["toaster~2", "E4", 0.25], ["keeps", "E4", 0.25], ["on", "D4", 0.25], ["talking~1", "E4", 0.5], ["talking~2", "D4", 0.25],
+    ["like", "C4", 0.25], ["it", "D4", 0.25], ["knows", "E4", 0.5], ["what", "D4", 0.25], ["I", "C4", 0.25], ["am", "D4", 0.25], ["missing~1", "E4", 0.5], ["missing~2", "C4", 0.75],
+    ["-", "rest", 1.0],
+    ["and", "C4", 0.25], ["the", "D4", 0.25], ["kettle~1", "E4", 0.25], ["kettle~2", "E4", 0.25], ["is", "D4", 0.25], ["a", "E4", 0.25], ["critic~1", "G4", 0.5], ["critic~2", "E4", 0.25],
+    ["and", "D4", 0.25], ["the", "E4", 0.25], ["fridge", "E4", 0.5], ["is", "D4", 0.25], ["in", "E4", 0.25], ["the", "D4", 0.25], ["business~1", "C4", 0.25], ["business~2", "D4", 0.25], ["business~3", "D4", 0.5],
+    ["-", "rest", 0.25],
+    ["of", "D4", 0.25], ["reminding~1", "E4", 0.25], ["reminding~2", "G4", 0.25], ["reminding~3", "E4", 0.25], ["me", "D4", 0.25], ["of", "E4", 0.25], ["everything~1", "E4", 0.25], ["everything~2", "D4", 0.25], ["everything~3", "E4", 0.25],
+    ["I", "D4", 0.25], ["said", "C4", 0.25], ["I", "D4", 0.25], ["would", "E4", 0.25], ["be", "D4", 0.25], ["finishing~1", "C4", 0.5], ["finishing~2", "D4", 0.25], ["finishing~3", "C4", 1.0],
+    ["-", "rest", 2.0]
+  ]
+}
