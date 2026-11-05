@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import io
 import json
 from pathlib import Path
 import tempfile
@@ -10,7 +9,7 @@ import unittest
 from unittest import mock
 
 from scyllasband import download
-from scyllasband.download import RELEASE, REPO_ID, SING_RELEASE, SING_REPO_ID, download_bundle, download_candidates, inaccessible
+from scyllasband.download import RELEASE, REPO_ID, default_revision, download_bundle
 
 
 class _FakeHub:
@@ -34,114 +33,63 @@ class _FakeHub:
                 (bundle / "manifest.json").write_text(json.dumps(dict(controls=dict(graph_input_contract=f"{repo_id}:{revision}"))))
 
 
-def _hub_error(cls, status=None):
-    # huggingface_hub 1.0 and later require the HTTP response; earlier releases accept it as a keyword too.
-    exc = cls("denied", response=mock.Mock(status_code=status, headers={}))
-    if status is not None:
-        exc.response = mock.Mock(status_code=status)
-    return exc
-
-
-class CandidateTest(unittest.TestCase):
-    def test_order(self):
-        self.assertEqual(download_candidates(), [(SING_REPO_ID, SING_RELEASE), (REPO_ID, RELEASE)])
-        self.assertEqual(download_candidates(revision="main"), [(SING_REPO_ID, "main"), (REPO_ID, RELEASE)])
-        self.assertEqual(download_candidates(public=True), [(REPO_ID, RELEASE)])
-        self.assertEqual(download_candidates(public=True, revision="v3-x"), [(REPO_ID, "v3-x")])
-        self.assertEqual(download_candidates(repo_id="me/fork"), [("me/fork", None)])
-        self.assertEqual(download_candidates(repo_id="me/fork", revision="dev"), [("me/fork", "dev")])
-        self.assertEqual(download_candidates(repo_id=SING_REPO_ID, public=True), [(SING_REPO_ID, SING_RELEASE)])
-
-    def test_inaccessible_errors(self):
-        from huggingface_hub.utils import GatedRepoError, HfHubHTTPError, RepositoryNotFoundError, RevisionNotFoundError
-        for cls in (RepositoryNotFoundError, GatedRepoError, RevisionNotFoundError):
-            self.assertTrue(inaccessible(_hub_error(cls)))
-        for status in (401, 403, 404):
-            self.assertTrue(inaccessible(_hub_error(HfHubHTTPError, status)))
-        self.assertFalse(inaccessible(_hub_error(HfHubHTTPError, 500)))
-        self.assertFalse(inaccessible(OSError("disk full")))
-        self.assertFalse(inaccessible(ValueError("bad")))
-
-
-class FallbackTest(unittest.TestCase):
+class DownloadTest(unittest.TestCase):
     def run_download(self, repos, **kwargs):
         hub = _FakeHub(repos)
-        log = io.StringIO()
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(download, "_require_snapshot_download", return_value=hub):
-            path = download_bundle(flavor="litert", models_dir=tmp, validate=False, log=log, **kwargs)
+            path = download_bundle(flavor="litert", models_dir=tmp, validate=False, **kwargs)
             provenance = json.loads((path / "download_provenance.json").read_text())
             manifest = json.loads((path / "manifest.json").read_text())
-        return hub.calls, provenance, manifest["controls"]["graph_input_contract"], log.getvalue()
+        return hub.calls, provenance, manifest["controls"]["graph_input_contract"]
 
-    def test_accessible_sing_repository_is_used_first(self):
-        calls, provenance, origin, log = self.run_download({SING_REPO_ID: ["litert", "onnx"], REPO_ID: ["litert"]}, token="hf_x")
-        self.assertEqual(calls, [(SING_REPO_ID, SING_RELEASE, "litert", "hf_x")])
-        self.assertEqual(origin, f"{SING_REPO_ID}:{SING_RELEASE}")
-        self.assertEqual((provenance["repo_id"], provenance["revision"], provenance["flavor"]), (SING_REPO_ID, SING_RELEASE, "litert"))
+    def test_the_release_repository_at_its_release_tag(self):
+        calls, provenance, origin = self.run_download({REPO_ID: ["litert", "onnx"]}, token="hf_x")
+        self.assertEqual(calls, [(REPO_ID, RELEASE, "litert", "hf_x")])
+        self.assertEqual(origin, f"{REPO_ID}:{RELEASE}")
+        self.assertEqual((provenance["repo_id"], provenance["revision"], provenance["flavor"]), (REPO_ID, RELEASE, "litert"))
         self.assertEqual(provenance["graph_contract"], origin)
-        self.assertEqual(log, "")
 
-    def test_inaccessible_sing_repository_falls_back_to_the_public_one(self):
-        from huggingface_hub.utils import GatedRepoError, HfHubHTTPError, RepositoryNotFoundError
-        for error in (_hub_error(RepositoryNotFoundError), _hub_error(GatedRepoError), _hub_error(HfHubHTTPError, 401),
-                      _hub_error(HfHubHTTPError, 403)):
-            calls, provenance, origin, log = self.run_download({SING_REPO_ID: error, REPO_ID: ["litert"]})
-            self.assertEqual(calls, [(SING_REPO_ID, SING_RELEASE, "litert", None), (REPO_ID, RELEASE, "litert", None)])
-            self.assertEqual((provenance["repo_id"], provenance["revision"]), (REPO_ID, RELEASE))
-            self.assertEqual(origin, f"{REPO_ID}:{RELEASE}")
-            self.assertEqual(log.count("\n"), 1)
-            self.assertIn("not accessible", log)
+    def test_default_revisions(self):
+        self.assertEqual(default_revision(REPO_ID), RELEASE)
+        self.assertIsNone(default_revision("me/fork"))
 
-    def test_the_sing_repository_melodies_are_installed_beside_the_bundles(self):
-        hub = _FakeHub({SING_REPO_ID: ["litert", "melodies"], REPO_ID: ["litert"]})
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(download, "_require_snapshot_download", return_value=hub):
-            download_bundle(flavor="litert", models_dir=tmp, validate=False, log=io.StringIO())
-            song = Path(tmp) / "melodies" / "song.json"
-            self.assertEqual(json.loads(song.read_text())["source"], SING_REPO_ID)
-            download_bundle(flavor="litert", models_dir=tmp, validate=False, public=True, log=io.StringIO())
-            self.assertTrue(song.is_file())                      # a repository without melodies keeps the installed copy
-
-    def test_a_flavour_the_sing_repository_lacks_falls_back(self):
-        calls, provenance, _, log = self.run_download({SING_REPO_ID: ["litert", "onnx"], REPO_ID: ["litert", "coreml"]})
-        self.assertEqual(provenance["repo_id"], SING_REPO_ID)
-        hub = _FakeHub({SING_REPO_ID: ["onnx"], REPO_ID: ["litert"]})
-        log = io.StringIO()
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(download, "_require_snapshot_download", return_value=hub):
-            path = download_bundle(flavor="litert", models_dir=tmp, validate=False, log=log)
-            self.assertEqual(json.loads((path / "download_provenance.json").read_text())["repo_id"], REPO_ID)
-        self.assertEqual([c[0] for c in hub.calls], [SING_REPO_ID, REPO_ID])
-        self.assertIn("has no 'litert' bundle", log.getvalue())
-
-    def test_public_flag_skips_the_sing_repository(self):
-        calls, provenance, _, log = self.run_download({SING_REPO_ID: ["litert"], REPO_ID: ["litert"]}, public=True)
-        self.assertEqual(calls, [(REPO_ID, RELEASE, "litert", None)])
-        self.assertEqual(provenance["repo_id"], REPO_ID)
+    def test_an_earlier_release_by_tag(self):
+        calls, provenance, _ = self.run_download({REPO_ID: ["litert"]}, revision="v3-20261104-apple")
+        self.assertEqual(calls, [(REPO_ID, "v3-20261104-apple", "litert", None)])
+        self.assertEqual(provenance["revision"], "v3-20261104-apple")
 
     def test_explicit_repository_is_used_as_given(self):
-        calls, provenance, _, _ = self.run_download({"me/fork": ["litert"], SING_REPO_ID: ["litert"]}, repo_id="me/fork", revision="dev")
+        calls, provenance, _ = self.run_download({"me/fork": ["litert"]}, repo_id="me/fork", revision="dev")
         self.assertEqual(calls, [("me/fork", "dev", "litert", None)])
         self.assertEqual((provenance["repo_id"], provenance["revision"]), ("me/fork", "dev"))
-        calls, _, _, _ = self.run_download({"me/fork": ["litert"]}, repo_id="me/fork")
+        calls, _, _ = self.run_download({"me/fork": ["litert"]}, repo_id="me/fork")
         self.assertEqual(calls, [("me/fork", None, "litert", None)])
 
-    def test_other_errors_and_a_missing_public_flavour_are_raised(self):
-        from huggingface_hub.utils import HfHubHTTPError
-        with self.assertRaises(HfHubHTTPError):
-            self.run_download({SING_REPO_ID: _hub_error(HfHubHTTPError, 500), REPO_ID: ["litert"]})
+    def test_melodies_are_installed_beside_the_bundles(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            hub = _FakeHub({REPO_ID: ["litert", "melodies"], "me/fork": ["litert"]})
+            with mock.patch.object(download, "_require_snapshot_download", return_value=hub):
+                download_bundle(flavor="litert", models_dir=tmp, validate=False)
+                song = Path(tmp) / "melodies" / "song.json"
+                self.assertEqual(json.loads(song.read_text())["source"], REPO_ID)
+                download_bundle(flavor="litert", models_dir=tmp, validate=False, repo_id="me/fork")
+                self.assertTrue(song.is_file())                      # a repository without melodies keeps the installed copy
+
+    def test_errors_and_a_missing_flavour_are_raised(self):
         with self.assertRaises(OSError):
-            self.run_download({SING_REPO_ID: OSError("network"), REPO_ID: ["litert"]})
+            self.run_download({REPO_ID: OSError("network")})
         with self.assertRaisesRegex(FileNotFoundError, "no 'litert' bundle"):
-            self.run_download({SING_REPO_ID: ["onnx"], REPO_ID: ["onnx"]})
-        with self.assertRaises(FileNotFoundError):
-            self.run_download({SING_REPO_ID: ["litert"], REPO_ID: ["onnx"]}, public=True)
+            self.run_download({REPO_ID: ["onnx"]})
 
     def test_cli_download_options(self):
         from scyllasband.cli import build_parser
-        args = build_parser().parse_args(["download", "--flavor", "onnx", "--public", "--revision", "v3-x"])
-        self.assertEqual((args.repo_id, args.revision, args.public), (None, "v3-x", True))
+        args = build_parser().parse_args(["download", "--flavor", "onnx", "--revision", "v3-x"])
+        self.assertEqual((args.repo_id, args.revision), (None, "v3-x"))
         args = build_parser().parse_args(["download", "--repo", "me/fork"])
-        self.assertEqual((args.repo_id, args.revision, args.public), ("me/fork", None, False))
+        self.assertEqual((args.repo_id, args.revision), ("me/fork", None))
         self.assertEqual(build_parser().parse_args(["download", "--repo-id", "me/fork"]).repo_id, "me/fork")
+        with self.assertRaises(SystemExit), mock.patch("sys.stderr"):
+            build_parser().parse_args(["download", "--public"])
 
 
 if __name__ == "__main__":

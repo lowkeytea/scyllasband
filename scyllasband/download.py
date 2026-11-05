@@ -1,10 +1,8 @@
 """Download model bundles from Hugging Face, and pick the bundle that suits this machine.
 
-Two repositories are known: the singing release (``SING_REPO_ID``, a v4 bundle that speaks and sings) and the public
-release (``REPO_ID``). ``download_bundle`` tries the singing repository first when the user's Hugging Face login can
-reach it (the token from the environment or ``huggingface-cli login``) and the bundle flavour is published there, and
-otherwise falls back to the public repository at its own release tag. Where a bundle came from is recorded in
-``download_provenance.json`` beside its manifest.
+Bundles come from the release repository (``REPO_ID``) at its release tag (``RELEASE``), together with the example
+scores the release publishes (``melodies/``). ``repo_id`` and ``revision`` name another repository or tag. Where a bundle
+came from is recorded in ``download_provenance.json`` beside its manifest.
 
 This module imports only the standard library at import time, so first-run setup can ask it which bundle (and so
 which runtime package) a command will use.
@@ -25,10 +23,8 @@ import uuid
 from .contract import validate_bundle_layout
 
 REPO_ID = "spybyscript/scyllasband"
-RELEASE = "v3-20261104-apple"   # v3-20261104 with its Core ML and Core AI bundles
-SING_REPO_ID = "spybyscript/scyllasband_sing"
-SING_RELEASE = "v4-20261106-apple"   # the singing release candidate (LiteRT, ONNX, PyTorch, Core ML, Core AI); the official release is RELEASE in REPO_ID
-MELODIES = "melodies"           # example scores the singing repository publishes; installed as <models dir>/melodies
+RELEASE = "v4-20261106-apple"   # v4-20261106 (speech and singing) with its Core ML and Core AI bundles
+MELODIES = "melodies"           # example scores the release publishes; installed as <models dir>/melodies
 PROVENANCE_FILE = "download_provenance.json"
 DEFAULT_MODELS_DIR = Path("scyllasband/models")
 DEFAULT_FLAVOR = "litert"
@@ -122,55 +118,28 @@ def default_installed_flavor(models_dir: str | Path = DEFAULT_MODELS_DIR) -> str
 
 
 def default_revision(repo_id: str) -> str | None:
-    """The release tag a known repository is pinned to; None (the default branch) for any other repository."""
-    return {SING_REPO_ID: SING_RELEASE, REPO_ID: RELEASE}.get(repo_id)
-
-
-def download_candidates(*, repo_id: str | None = None, revision: str | None = None, public: bool = False) -> list[tuple[str, str | None]]:
-    """The (repository, revision) pairs ``download_bundle`` tries in order: an explicit repository alone (at ``revision``,
-    else its known release tag); with ``public`` the public repository alone; otherwise the singing repository (at
-    ``revision``, else ``SING_RELEASE``) and then the public repository at ``RELEASE``."""
-    if repo_id:
-        return [(repo_id, revision or default_revision(repo_id))]
-    if public:
-        return [(REPO_ID, revision or RELEASE)]
-    return [(SING_REPO_ID, revision or SING_RELEASE), (REPO_ID, RELEASE)]
+    """The release tag of the release repository; None (the default branch) for any other repository."""
+    return RELEASE if repo_id == REPO_ID else None
 
 
 def download_bundle(*, flavor: str = DEFAULT_FLAVOR, models_dir: str | Path = DEFAULT_MODELS_DIR, repo_id: str | None = None,
-                    revision: str | None = None, token: str | None = None, force: bool = False, validate: bool = True,
-                    public: bool = False, log=sys.stderr) -> Path:
-    """Download one bundle flavour, validate it, then swap it into place (an installed bundle survives a failed download).
-
-    Without ``repo_id`` the singing repository is tried first; when it is not accessible to this user (no or wrong token:
-    401/403/404, a gated, missing or private repository, a missing revision) or does not publish ``flavor``, one line is
-    logged and the public repository is used at ``RELEASE``. ``public`` skips the singing repository; ``repo_id`` names a
-    repository explicitly (``revision`` its tag, else the repository's known release tag or its default branch).
-    """
+                    revision: str | None = None, token: str | None = None, force: bool = False, validate: bool = True) -> Path:
+    """Download one bundle flavour and the release's example scores, validate the bundle, then swap it into place (an
+    installed bundle survives a failed download). ``repo_id`` defaults to the release repository, ``revision`` to its
+    release tag (another repository's default branch)."""
     flavor = _flavor(flavor)
     snapshot_download = _require_snapshot_download()
+    repo = repo_id or REPO_ID
+    rev = revision or default_revision(repo)
     target = bundle_dir(models_dir, flavor)
     target.parent.mkdir(parents=True, exist_ok=True)
-    candidates = download_candidates(repo_id=repo_id, revision=revision, public=public)
     with tempfile.TemporaryDirectory(prefix=".scyllasband_bundle_", dir=target.parent) as tmp:
-        for index, (repo, rev) in enumerate(candidates):
-            last = index == len(candidates) - 1
-            local = Path(tmp) / f"try{index}"
-            try:
-                snapshot_download(repo_id=repo, repo_type="model", allow_patterns=[f"{flavor}/**", f"{MELODIES}/**"],
-                                  local_dir=str(local), force_download=force, token=token, revision=rev)
-            except Exception as exc:   # noqa: BLE001 - only the Hub's "not accessible" errors fall through to the next repository
-                if last or not inaccessible(exc):
-                    raise
-                _log(log, f"{repo}@{rev} is not accessible with the current Hugging Face login ({type(exc).__name__}); "
-                          f"using {candidates[index + 1][0]}@{candidates[index + 1][1]}")
-                continue
-            source = local / flavor
-            if source.is_dir():
-                break
-            if last:
-                raise FileNotFoundError(f"{repo}@{rev} has no {flavor!r} bundle")
-            _log(log, f"{repo}@{rev} has no {flavor!r} bundle; using {candidates[index + 1][0]}@{candidates[index + 1][1]}")
+        local = Path(tmp) / "download"
+        snapshot_download(repo_id=repo, repo_type="model", allow_patterns=[f"{flavor}/**", f"{MELODIES}/**"],
+                          local_dir=str(local), force_download=force, token=token, revision=rev)
+        source = local / flavor
+        if not source.is_dir():
+            raise FileNotFoundError(f"{repo}@{rev} has no {flavor!r} bundle")
         if validate:
             validate_bundle_layout(source)
         _write_provenance(source, repo_id=repo, revision=rev, flavor=flavor)
@@ -191,28 +160,13 @@ def download_bundle(*, flavor: str = DEFAULT_FLAVOR, models_dir: str | Path = DE
 
 
 def _install_melodies(source: Path, target: Path) -> None:
-    """The singing repository's example scores (``melodies/``) beside the bundles, replacing an earlier copy; the sample apps
-    embed them from there. Repositories without them leave an installed copy alone."""
+    """The release's example scores (``melodies/``) beside the bundles, replacing an earlier copy; the sample apps embed
+    them from there. A repository or tag without them leaves an installed copy alone."""
     if not source.is_dir():
         return
     if target.exists():
         shutil.rmtree(target)
     shutil.copytree(source, target)
-
-
-def inaccessible(exc: BaseException) -> bool:
-    """True for the Hub errors that mean this user cannot read the repository or revision (401, 403, 404; a repository
-    that is private, gated or missing; a missing revision), as opposed to a network or disk failure."""
-    try:
-        from huggingface_hub.utils import GatedRepoError, HfHubHTTPError, RepositoryNotFoundError, RevisionNotFoundError
-    except ImportError:   # pragma: no cover - depends on the environment
-        return False
-    if isinstance(exc, (RepositoryNotFoundError, GatedRepoError, RevisionNotFoundError)):
-        return True
-    if isinstance(exc, HfHubHTTPError):
-        response = getattr(exc, "response", None)
-        return getattr(response, "status_code", None) in (401, 403, 404)
-    return False
 
 
 def read_provenance(bundle: str | Path) -> dict | None:
@@ -236,11 +190,6 @@ def _write_provenance(source: Path, *, repo_id: str, revision: str | None, flavo
     record = dict(repo_id=repo_id, revision=revision, flavor=flavor, graph_contract=contract,
                   downloaded_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
     (source / PROVENANCE_FILE).write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
-
-
-def _log(stream, message: str) -> None:
-    if stream is not None:
-        print(message, file=stream, flush=True)
 
 
 def _flavor(value: str) -> str:

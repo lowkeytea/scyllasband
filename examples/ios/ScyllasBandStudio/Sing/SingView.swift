@@ -23,7 +23,7 @@ struct SingView: View {
                             .foregroundStyle(Color(uiColor: .secondaryLabel))
                     }
                     if model.bundleInfo != nil, !model.canSing {
-                        notice("This bundle speaks only. Download the singing release (a v4 bundle) and rebuild to sing.")
+                        notice("This bundle speaks only. Download the current release (python -m scyllasband download) and rebuild to sing.")
                     }
                     songCard
                     ForEach(Array(model.song.lines.enumerated()), id: \.element.id) { index, line in

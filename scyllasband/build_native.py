@@ -2,7 +2,8 @@
 
 Runs CMake on libscyllasband/ with one graph backend (litert, apple or onnx), then copies the shared library and the SDK
 libraries it loads (staged under libscyllasband/third_party/<sdk>/lib/<platform>/) into scyllasband/_native/<backend>/,
-where scyllasband.native finds it. The copied library looks for the SDK libraries beside itself.
+where scyllasband.native finds it. The copied library looks for the SDK libraries beside itself. The first LiteRT build
+stages LiteRT's prebuilt runtime for this machine (libscyllasband/scripts/stage_litert_sdk.py downloads it).
 """
 
 from __future__ import annotations
@@ -34,6 +35,18 @@ def sdk_platform() -> str:
     return "linux-arm64" if machine in ("aarch64", "arm64") else "linux-x86_64"
 
 
+def stage_sdk(backend: str, *, log: TextIO = sys.stderr) -> None:
+    """Stage LiteRT's prebuilt runtime for this machine when it is not staged yet; other SDKs are staged by hand."""
+    if backend != "litert":
+        return
+    staged = CHECKOUT_DIR / "third_party" / "litert" / "lib" / sdk_platform()
+    if any(staged.glob("libLiteRt.*")):
+        return
+    print(f"[scyllasband] staging LiteRT for {sdk_platform()} (scripts/stage_litert_sdk.py)", file=log, flush=True)
+    subprocess.run([sys.executable, str(CHECKOUT_DIR / "scripts" / "stage_litert_sdk.py"), "--platform", sdk_platform(),
+                    "--download-runtime"], check=True)
+
+
 def build_native(backend: str = "litert", *, jobs: int | None = None, log: TextIO = sys.stderr) -> Path:
     if backend not in BACKENDS:
         raise ValueError(f"Unknown native backend {backend!r}; choose one of {', '.join(BACKENDS)}")
@@ -44,6 +57,7 @@ def build_native(backend: str = "litert", *, jobs: int | None = None, log: TextI
     cmake = shutil.which("cmake")
     if cmake is None:
         raise FileNotFoundError("build-native needs CMake 3.20 or later on PATH")
+    stage_sdk(backend, log=log)
     build = CHECKOUT_DIR / "build" / f"python-{backend}"
     configure = [cmake, "-S", str(CHECKOUT_DIR), "-B", str(build), f"-DSCYLLASBAND_BACKEND={backend}", "-DSCYLLASBAND_BUILD_TOOLS=OFF",
                  "-DSCYLLASBAND_BUILD_TESTS=OFF", "-DCMAKE_BUILD_TYPE=Release"]

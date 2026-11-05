@@ -11,7 +11,7 @@ import wave
 import numpy as np
 
 from .contract import validate_bundle_layout
-from .download import (DEFAULT_MODELS_DIR, FLAVORS, RELEASE, REPO_ID, SING_RELEASE, SING_REPO_ID, bundle_dir, choose_flavors,
+from .download import (DEFAULT_MODELS_DIR, FLAVORS, RELEASE, REPO_ID, bundle_dir, choose_flavors,
                        default_installed_flavor, download_bundle, read_provenance, supported_flavors)
 from .planner import parse_group_lines, records_from_text
 from .runtime import SUPPORTED_BACKENDS, SUPPORTED_SAMPLERS, ScyllasBandRuntime
@@ -28,12 +28,9 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
                           help="bundle to download (default: Core ML on Apple silicon Macs, which are offered Core AI too when they "
                                "can build iOS/iPadOS/visionOS 27 apps; LiteRT elsewhere)")
     download.add_argument("--models-dir", type=Path, default=DEFAULT_MODELS_DIR)
-    download.add_argument("--repo", "--repo-id", dest="repo_id",
-                          help=f"download from this Hugging Face repository only (default: {SING_REPO_ID} when your login can reach it, "
-                               f"else {REPO_ID})")
-    download.add_argument("--revision", help=f"tag or branch (default: {SING_RELEASE} for the singing release, {RELEASE} for the "
-                                             "public one, the default branch elsewhere)")
-    download.add_argument("--public", action="store_true", help=f"skip the singing repository and download from {REPO_ID}")
+    download.add_argument("--repo", "--repo-id", dest="repo_id", help=f"Hugging Face repository (default: {REPO_ID})")
+    download.add_argument("--revision", help=f"tag or branch (default: {RELEASE} for {REPO_ID}, the default branch for another "
+                                             "repository)")
     download.add_argument("--token", help="Hugging Face token (default: the environment's or the saved login)")
     download.add_argument("--force", action="store_true")
     download.add_argument("-y", "--yes", action="store_true", help="download the default bundle without asking")
@@ -147,7 +144,7 @@ def _download(args: argparse.Namespace) -> int:
         flavors = [args.flavor] if args.flavor else choose_flavors(interactive=not args.yes and sys.stdin.isatty())
     for flavor in flavors:
         path = download_bundle(flavor=flavor, models_dir=args.models_dir, repo_id=args.repo_id, revision=args.revision,
-                               token=args.token, force=args.force, validate=not args.no_validate_bundle, public=args.public)
+                               token=args.token, force=args.force, validate=not args.no_validate_bundle)
         origin = read_provenance(path) or {}
         source = f" from {origin['repo_id']}@{origin.get('revision')}" if origin.get("repo_id") else ""
         print(f"Installed {flavor} bundle{source}: {path}")

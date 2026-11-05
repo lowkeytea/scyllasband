@@ -20,8 +20,6 @@ _EXPORTS = {
     "FLAVORS": "download",
     "RELEASE": "download",
     "REPO_ID": "download",
-    "SING_RELEASE": "download",
-    "SING_REPO_ID": "download",
     "download_bundle": "download",
     "Engine": "engine",
     "OverlongError": "engine",

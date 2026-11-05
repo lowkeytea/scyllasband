@@ -1,7 +1,7 @@
 # Scylla's Band iOS sample
 
-This SwiftUI sample speaks multi-voice, multilingual documents on iPhone,
-iPad and Apple Vision Pro with Scylla's Band v3 (release `v3-20261104`). It
+This SwiftUI sample speaks multi-voice, multilingual documents and sings on
+iPhone, iPad and Apple Vision Pro with Scylla's Band (release `v4-20261106`). It
 uses Apple's Core ML runtime on iOS 18–26 and visionOS 2–26, and Core AI on
 iOS and visionOS 27 and later. It keeps one warmed
 `SBScyllasBand` runtime, reads voices, languages and delivery ranges from the
@@ -57,7 +57,7 @@ Engine. Changing the compute unit reloads the voices.
   or later, or the iOS or visionOS Simulator. Core AI needs a device with iOS
   or visionOS 27 or later. Earlier systems and the Simulators run the Core ML
   bundle.
-- At least one v3 model bundle in `scyllasband/models`, downloaded at the
+- At least one model bundle in `scyllasband/models`, downloaded at the
   repository root:
 
   ```bash
@@ -65,8 +65,9 @@ Engine. Changing the compute unit reloads the voices.
   python -m scyllasband download --flavor coreai --yes   # iOS and visionOS 27 and later devices
   ```
 
-  The Core ML and Core AI bundles of `v3-20261104` are published under the
-  tag `v3-20261104-apple`, which these commands fetch. On a Mac,
+  The Core ML and Core AI bundles of `v4-20261106` are published under the
+  tag `v4-20261106-apple`, which these commands fetch with the example
+  scores. A `v3-20261104` bundle still speaks; the Sing tab needs `v4`. On a Mac,
   `python -m scyllasband download` without flags asks which bundle to
   download. Bundles from the v2 model don't work with this version of the
   app.
@@ -113,7 +114,7 @@ predictor (`pitch_context_encoder` and `pitch_estimator`),
 on a v2 bundle, which has no pitch predictor. A v4 bundle that sings through
 BigVGAN must also contain `vocoder_bigvgan`. The example scores in
 `scyllasband/models/melodies` (installed by `python -m scyllasband download`
-from the singing release) are embedded as `scyllasband/melodies` for the Sing
+with the bundles) are embedded as `scyllasband/melodies` for the Sing
 tab. Simulator
 builds embed only Core ML. Set `SCYLLASBAND_IOS_BUNDLE_DIR` to embed one
 specific bundle directory instead. At launch, the app runs Core AI on iOS and
@@ -143,8 +144,8 @@ pod install
 
 ## Sing
 
-The Sing tab builds a melody line by line and sings it with a v4 bundle (the
-singing release). Type a line's lyrics (`ba-by` splits a word into syllables,
+The Sing tab builds a melody line by line and sings it with a v4 bundle
+(release `v4-20261106`). Type a line's lyrics (`ba-by` splits a word into syllables,
 `_` holds the previous syllable over another note); each syllable becomes a
 note chip under a sketch of the line's melody. Tap a chip to set its pitch on a
 one-octave keyboard, its length (a sixteenth to a whole note), or to turn it

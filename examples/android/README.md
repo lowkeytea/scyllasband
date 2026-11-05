@@ -1,6 +1,6 @@
 # Scylla's Band Android sample
 
-An on-device speech and singing studio for Scylla's Band (v3 bundles speak; v4 bundles, from the singing release, also sing). It runs the native `libscyllasband` runtime through LiteRT by default; nothing leaves the phone. Two tabs: **Speak** (a script with speaker points) and **Sing** (a melody built line by line).
+An on-device speech and singing studio for Scylla's Band (release `v4-20261106`, which speaks and sings). It runs the native `libscyllasband` runtime through LiteRT by default; nothing leaves the phone. Two tabs: **Speak** (a script with speaker points) and **Sing** (a melody built line by line).
 
 ## What it demonstrates
 
@@ -18,7 +18,7 @@ The Sing tab builds a song as lines of notes and sings it with the runtime (ABI 
 - The song card opens the settings: title, voice, style (pop or ballad), tempo, sound (**Quality**, the BigVGAN decoder, or **Turbo**, Vocos) and key (transpose, with how the melody sits in the voice's range and a suggested transpose).
 - Every change is checked by the runtime (`ScyllasBand.parseScore`, `singFit`; the note it objects to is outlined) without waiting for a song in progress. **Preview** plays the melody as tones (`preview`, no model runs).
 - **Sing** streams the song while it renders when rendering keeps ahead of playback, else renders it, then plays; the take is kept until the song changes, and **Another take** sings it with a new seed.
-- **Examples** loads the singing release's twenty example scores (`melodies/`, embedded from `scyllasband/models/melodies`); **Songs** starts a new song or opens one saved with **Save** (JSON in the app's files); **Share** sends the score (the runtime's format, which `python -m scyllasband sing --score` reads) and the last take as a WAV.
+- **Examples** loads the release's twenty example scores (`melodies/`, embedded from `scyllasband/models/melodies`); **Songs** starts a new song or opens one saved with **Save** (JSON in the app's files); **Share** sends the score (the runtime's format, which `python -m scyllasband sing --score` reads) and the last take as a WAV.
 
 The song model (`app/.../sing/SongDocument.kt`, `SongEditing.kt`) is plain Kotlin with JVM tests against the runtime's own parse of every example (`./gradlew :app:testDebugUnitTest`). Debug builds take launch options for testing: `adb shell am start -n org.scyllasband.demo/.MainActivity --es sing_example song_pop_gwen [--ez sing_turbo true] --ez autosing true` opens the Sing tab, loads the example, sings it and logs `SBSING <status>` (tag `ScyllasBandSing`).
 
@@ -35,7 +35,7 @@ Imported text uses the same format as `python -m scyllasband group-speak`:
 
 ## Build
 
-1. Download the LiteRT bundle from the repository root (the singing release's v4 bundle, 470 MB, when your Hugging Face login can reach it; else the public v3 bundle, about 229 MB, which only speaks):
+1. Download the LiteRT bundle (about 471 MB) and the example scores from the repository root:
 
    ```bash
    python -m scyllasband download --yes

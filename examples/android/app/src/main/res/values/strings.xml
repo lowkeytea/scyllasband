@@ -65,7 +65,7 @@
     <string name="sing_new_song">New song</string>
     <string name="sing_saved_songs">Saved</string>
     <string name="sing_delete_saved">Delete a saved song…</string>
-    <string name="sing_speech_only">This bundle speaks only. Install the singing release (a v4 bundle) and rebuild to sing.</string>
+    <string name="sing_speech_only">This bundle speaks only. Download the current release (python -m scyllasband download) and rebuild to sing.</string>
     <string name="sing_song_card_description">Song settings: title, voice, style, tempo, sound and key</string>
     <string name="sing_add_line">Add a line</string>
     <string name="sing_preview">Preview</string>

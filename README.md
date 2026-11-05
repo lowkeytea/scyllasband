@@ -44,7 +44,7 @@ source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -e .                   # ".[onnx]", ".[cuda]", ".[coreml]" or ".[coreai]" for the other backends
 ```
 
-The model is downloaded from [`spybyscript/scyllasband`](https://huggingface.co/spybyscript/scyllasband), pinned to the tag `v3-20261104-apple` (release `v3-20261104` with its Core ML and Core AI bundles), into `scyllasband/models/<bundle>` (`litert`, `coreai`, `coreml` or `onnx`). When your Hugging Face login (`HF_TOKEN` or `huggingface-cli login`) can reach the singing release candidate `spybyscript/scyllasband_sing` (tag `v4-20261106-apple`, a v4 bundle that speaks as before and also [sings](#singing); the official release stays the public one until the candidate is validated), `download` fetches that instead and falls back to the public repository otherwise; `--public` skips it, `--repo` and `--revision` name a repository and tag outright, and `download_provenance.json` in the installed bundle records where it came from. Voice conditioning is embedded in the graphs; no separate voice files are needed.
+The model is downloaded from [`spybyscript/scyllasband`](https://huggingface.co/spybyscript/scyllasband), pinned to the tag `v4-20261106-apple` (release `v4-20261106`, which speaks and [sings](#singing), with its Core ML and Core AI bundles), into `scyllasband/models/<bundle>` (`litert`, `coreai`, `coreml`, `onnx` or `webgpu`), with the release's example scores in `scyllasband/models/melodies`. `--repo` and `--revision` name another repository or tag (the previous release, `v3-20261104-apple`, speaks only and needs a runtime from before this one's singing support), and `download_provenance.json` in the installed bundle records where it came from. Voice conditioning is embedded in the graphs; no separate voice files are needed.
 
 ## Delivery controls
 
@@ -156,7 +156,7 @@ Commands run one of two engines over the same bundles:
   python -m scyllasband build-native --backend apple    # Core ML and Core AI bundles (macOS)
   ```
 
-  The library and the SDK libraries it loads go to `scyllasband/_native/<backend>/` (not tracked by git). `SCYLLASBAND_NATIVE_LIB` names another build of ABI 3.1 or later.
+  The first LiteRT build downloads LiteRT's prebuilt runtime for this machine (`libscyllasband/scripts/stage_litert_sdk.py`). The library and the SDK libraries it loads go to `scyllasband/_native/<backend>/` (not tracked by git). `SCYLLASBAND_NATIVE_LIB` names another build of ABI 3.1 or later.
 - `python`: this package's engine, over ONNX Runtime, LiteRT, Core ML or Core AI sessions from Python.
 
 By default a command runs the native engine when a library for the bundle's backend is built and the Python engine otherwise, printing one line that says so. ONNX Runtime bundles, including CUDA through the WebGPU bundle, stay on the Python engine. `--engine native` or `--engine python` (or `SCYLLASBAND_ENGINE`) chooses explicitly. The engines plan and speak the same way: `libscyllasband/tests/parity_harness.py` checks plans, passages, dialogue and songs with the same noise fed to both. Each engine draws its own noise, so a `--seed` gives a different take on each; `--metadata` records the engine and its noise.
