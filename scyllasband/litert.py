@@ -6,6 +6,7 @@ once; a bucket's runner (and its tensor arena) is created the first time that bu
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import threading
 from typing import Any, Callable, Mapping
@@ -37,17 +38,28 @@ class LiteRTSession:
         return next(iter(self.runner(**args).values()))
 
 
+def default_threads() -> int:
+    """CPU threads per graph when none are requested: the CPUs this process may use, at most four, as in the native
+    runtime. LiteRT left to choose runs one thread."""
+    try:
+        available = len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        available = os.cpu_count() or 1
+    return max(1, min(4, available))
+
+
 def litert_session_factory(bundle_dir: Path, *, threads: int | None = None) -> Callable[[str, Mapping[str, Any]], LiteRTSession]:
     interpreters: dict[str, Any] = {}
     lock = threading.Lock()
     Interpreter = _interpreter_class()
+    threads = threads or default_threads()
 
     def factory(name: str, spec: Mapping[str, Any]) -> LiteRTSession:
         artifact = spec["artifacts"]["litert"]
         path = str(Path(bundle_dir) / artifact["path"])
         with lock:
             if path not in interpreters:
-                interpreters[path] = Interpreter(model_path=path, num_threads=threads or None)
+                interpreters[path] = Interpreter(model_path=path, num_threads=threads)
         return LiteRTSession(interpreters[path], str(artifact.get("signature") or "serving_default"), list(spec["inputs"]))
 
     return factory

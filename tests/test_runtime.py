@@ -240,6 +240,32 @@ class ContractTest(unittest.TestCase):
                 validate_bundle_layout(bundle)
 
 
+class LiteRTThreadsTest(unittest.TestCase):
+    def test_default_threads_follow_the_native_runtime(self):
+        from unittest import mock
+        from scyllasband import litert
+        with mock.patch.object(litert.os, "sched_getaffinity", return_value=set(range(16)), create=True):
+            self.assertEqual(litert.default_threads(), 4)
+        with mock.patch.object(litert.os, "sched_getaffinity", return_value={0, 1}, create=True):
+            self.assertEqual(litert.default_threads(), 2)
+
+    def test_interpreters_get_the_default_unless_threads_are_given(self):
+        from unittest import mock
+        from scyllasband import litert
+        made = []
+
+        class Interpreter:
+            def __init__(self, model_path, num_threads):
+                made.append(num_threads)
+
+        spec = {"artifacts": {"litert": {"path": "g2p.tflite"}}, "inputs": []}
+        with mock.patch.object(litert, "_interpreter_class", return_value=Interpreter), \
+                mock.patch.object(litert, "LiteRTSession"), mock.patch.object(litert, "default_threads", return_value=3):
+            litert.litert_session_factory(Path("."))("g2p", spec)
+            litert.litert_session_factory(Path("."), threads=8)("g2p", spec)
+        self.assertEqual(made, [3, 8])
+
+
 class OnnxProvidersTest(unittest.TestCase):
     def test_compute_units_pick_execution_providers(self):
         from scyllasband.engine import onnx_providers
