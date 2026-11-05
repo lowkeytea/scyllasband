@@ -165,7 +165,8 @@ scyllasband_sing_stream(runtime, &request, on_event, user_data);
 A score is `{"text", "bpm", "style": "pop" | "ballad", "notes": [[label, note, beats], ...]}`: a note is a pitch name with
 octave (`C4`, `F#3`, `Bb3`) or `rest` (label `-`), and a word over several notes is numbered (`ba~1`, `by~2`). The song is
 split into phrases at rests of 0.25 s or more, moved by octaves into the voice's sung range (`use_register`) after
-`transpose`, and each phrase is sung with the bundle's singing settings (8 Heun steps, guidance 2) through BigVGAN, or
+`transpose`, and each phrase is sung with the bundle's singing settings (`v4-20261106`: 4 Euler steps without guidance;
+`v4-20261105`: 8 Heun steps, guidance 2) through BigVGAN, or
 Vocos with `decoder = "vocos"`. Phrase *i* draws its noise from `seed + i`. Score parse, fit and preview don't wait for a
 request in progress, so an editor can call them while a song renders.
 

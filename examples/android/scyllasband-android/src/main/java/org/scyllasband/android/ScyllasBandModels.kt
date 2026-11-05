@@ -60,7 +60,7 @@ data class ScyllasBandSingingInfo(
 }
 
 /**
- * How to sing a score. [steps] 0 uses the bundle's singing steps (8); [guidance] null uses the bundle's (2), 1 turns it off;
+ * How to sing a score. [steps] 0 uses the bundle's singing steps (v4-20261106: 4); [guidance] null uses the bundle's (v4-20261106: 1, off), 1 turns it off;
  * [transpose] adds semitones to the whole score before [useRegister] moves it by octaves into the voice's sung range; phrase i
  * draws its noise from [seed] + i.
  */

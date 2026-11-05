@@ -68,7 +68,7 @@ class ScyllasBand private constructor(
     /**
      * Speaks [text] one sentence at a time. [onChunkStarted] reports the sentence about to be spoken and
      * [onAudioChunk] receives its mono float PCM at [ScyllasBandBundleInfo.sampleRate]; consecutive chunks
-     * join directly. A callback returns false to stop. [steps] 0 uses the bundle default (8 Heun steps).
+     * join directly. A callback returns false to stop. [steps] 0 uses the bundle default (v4-20261106: 4 Euler steps).
      * Returns false when the request was stopped by a callback or [cancel].
      */
     @Synchronized

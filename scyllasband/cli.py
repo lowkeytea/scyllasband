@@ -76,14 +76,14 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     sing.add_argument("--voice", default="scylla")
     sing.add_argument("--language")
     sing.add_argument("--seed", type=int)
-    sing.add_argument("--steps", type=int, help="flow steps (default: the bundle's singing setting, 8)")
-    sing.add_argument("--sampler", choices=SUPPORTED_SAMPLERS, help="default: the bundle's singing setting, heun")
+    sing.add_argument("--steps", type=int, help="flow steps (default: the bundle's singing setting; v4-20261106: 4)")
+    sing.add_argument("--sampler", choices=SUPPORTED_SAMPLERS, help="default: the bundle's singing setting (v4-20261106: euler)")
     sing.add_argument("--decoder", help="vocos or bigvgan (default: the bundle's singing setting where exported, else vocos)")
     sing.add_argument("--turboSing", "--turbo-sing", dest="turbo_sing", action="store_true",
                       help="decode with Vocos, the speech decoder, instead of BigVGAN: much faster, with some harmonic artefacts on "
                            "sustained notes in some voices (same as --decoder vocos)")
     sing.add_argument("--guidance", type=float, help="classifier-free guidance on the melody and mode; 1 is off (default: the bundle's "
-                                                     "singing setting, else 1)")
+                                                     "singing setting, else 1; v4-20261106 is distilled to run without it)")
     sing.add_argument("--transpose", type=int, default=0, help="semitones added to the whole score (to put it in the voice's key) "
                                                                 "before the octave register")
     sing.add_argument("--no-register", action="store_true", help="sing the score in the octave it is written in")

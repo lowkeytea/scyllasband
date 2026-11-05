@@ -133,7 +133,8 @@ BigVGAN runs on the GPU with `Automatic` and on the Neural Engine with
 songs can render in the background too. On iOS and visionOS a Core ML bundle
 runs it on the CPU with `Automatic` (`controls.coreml.compute_units_ios`):
 Core ML's GPU path for its largest bucket runs out of an iPhone's GPU memory,
-which aborts the app. On an iPhone that sings a 71 s song in 29 s.
+which aborts the app. On an iPhone 17 Pro Max with `v4-20261106` (4 Euler steps without guidance) a 71 s song sings in
+31 s that way, in 12.5 s with Core AI on the GPU and in 14 s on the Neural Engine; Turbo (Vocos) takes about 1 s on each.
 
 ## macOS library and CLI
 

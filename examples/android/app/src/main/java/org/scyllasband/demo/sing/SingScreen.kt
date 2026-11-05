@@ -180,13 +180,14 @@ class SingScreen(
 
     private var autosing = false
 
-    /** The tab became visible: load the singing graphs once (the GPU program compiles on the first launch). */
+    /** The tab became visible: load the song's singing graphs once (BigVGAN's GPU program compiles on the first launch). */
     fun onShown() {
         if (warmedUp || !canSing) return
         warmedUp = true
         val voice = song.voice
+        val decoder = options().decoder   // the song's sound: Turbo loads only Vocos
         host.worker.execute {
-            runCatching { host.runtime.warmUpSinging(voice, ScyllasBandSingingDecoder.DEFAULT) }
+            runCatching { host.runtime.warmUpSinging(voice, decoder) }
                 .onFailure { Log.w(TAG, "Singing warm-up failed: ${it.message}") }
         }
     }

@@ -50,7 +50,7 @@ typedef enum {
 } ScyllasBandAccelerator;
 
 typedef enum {
-    SCYLLASBAND_SAMPLER_DEFAULT = 0,  /* the bundle default: for speech Euler in the released bundles, for singing the bundle's singing sampler (Heun) */
+    SCYLLASBAND_SAMPLER_DEFAULT = 0,  /* the bundle default: for speech Euler in the released bundles, for singing the bundle's singing sampler */
     SCYLLASBAND_SAMPLER_HEUN = 1,
     SCYLLASBAND_SAMPLER_EULER = 2
 } ScyllasBandSampler;
@@ -189,11 +189,11 @@ typedef struct {
     int32_t transpose;         /* semitones added to the whole score before the octave register */
     int32_t use_register;      /* nonzero (default): move the song by octaves into the voice's sung range */
     int32_t steps;             /* flow steps; 0: the bundle's singing setting (8) */
-    ScyllasBandSampler sampler;/* DEFAULT: the bundle's singing sampler (Heun; speech's default sampler is Euler) */
+    ScyllasBandSampler sampler;/* DEFAULT: the bundle's singing sampler (v4-20261106: Euler) */
     uint64_t seed;             /* phrase i draws its noise from seed + i */
     int32_t has_seed;          /* 0: fresh random noise */
     float guidance;            /* classifier-free guidance on the melody and mode when has_guidance is set; 1 turns it off */
-    int32_t has_guidance;      /* 0: the bundle's setting (2 for the released model) */
+    int32_t has_guidance;      /* 0: the bundle's setting (1, off, for v4-20261106) */
     /* NULL or "": the bundle's singing decoder ("bigvgan" where this backend has it, else "vocos"); "bigvgan"; or "vocos", the
        speech decoder: much faster ("turbo"), with some harmonic artefacts on sustained notes in some voices. */
     const char* decoder;

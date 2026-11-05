@@ -105,7 +105,7 @@ typedef NS_ENUM(NSInteger, SBScyllasBandSingingDecoder) {
 /** What SBScyllasBandSingingDecoderDefault uses. */
 @property(nonatomic, copy, readonly) NSString *defaultDecoder;
 @property(nonatomic, readonly) BOOL hasBigVGAN;
-/** The bundle's singing flow steps (8), sampler ("heun") and guidance (2). */
+/** The bundle's singing flow steps, sampler and guidance (v4-20261106: 4, "euler", 1). */
 @property(nonatomic, readonly) NSInteger steps;
 @property(nonatomic, copy, readonly) NSString *sampler;
 @property(nonatomic, readonly) float guidance;
@@ -147,7 +147,7 @@ typedef NS_ENUM(NSInteger, SBScyllasBandSingingDecoder) {
 @property(nonatomic, copy) SBScyllasBandDelivery *delivery;
 /** nil: fresh noise for every request. Sentence i of the plan uses seed + i. */
 @property(nonatomic, copy, nullable) NSNumber *seed;
-/** Flow steps; 0 uses the bundle default (8). */
+/** Flow steps; 0 uses the bundle default (4 Euler steps in the released bundles). */
 @property(nonatomic) NSInteger steps;
 /** A plain time stretch on top of the delivery's pace; 1 is none. Must be positive. */
 @property(nonatomic) float speed;
@@ -168,9 +168,9 @@ typedef NS_ENUM(NSInteger, SBScyllasBandSingingDecoder) {
 @property(nonatomic, copy, nullable) NSString *language;
 /** nil: fresh noise for every request. Phrase i uses seed + i. */
 @property(nonatomic, copy, nullable) NSNumber *seed;
-/** Flow steps; 0 uses the bundle's singing setting (8). */
+/** Flow steps; 0 uses the bundle's singing setting (v4-20261106: 4). */
 @property(nonatomic) NSInteger steps;
-/** Classifier-free guidance on the melody and mode; nil uses the bundle's setting (2); 1 turns it off. */
+/** Classifier-free guidance on the melody and mode; nil uses the bundle's setting (1 for v4-20261106); 1 turns it off. */
 @property(nonatomic, copy, nullable) NSNumber *guidance;
 /** Initially SBScyllasBandSingingDecoderDefault (BigVGAN where the bundle carries it). Vocos is the fast ("turbo") option. */
 @property(nonatomic) SBScyllasBandSingingDecoder decoder;
