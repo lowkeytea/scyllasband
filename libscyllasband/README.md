@@ -107,6 +107,38 @@ A runtime serializes its requests; use separate runtimes for concurrent synthesi
 the calling thread and audio pointers are valid only during the callback; returning nonzero stops the
 request. Errors return a status and set the thread-local `scyllasband_last_error()`.
 
+### Records (ABI 3.1)
+
+A records request speaks several voices, languages and deliveries in one go, as `group-speak` does:
+
+```c
+ScyllasBandRecordsRequest request;
+scyllasband_records_request_init(&request);   /* sets struct_size, which every call checks */
+request.records_json = "[{\"text\": \"Hello there.\", \"voice\": \"scylla\"},"
+                       " {\"text\": \"It has been a while.\", \"voice\": \"ink\", \"language\": \"en_gb\", \"pace\": -0.5}]";
+request.pause_ms = 250;
+request.seed = 2027;
+request.has_seed = 1;
+scyllasband_synthesize_records_stream(runtime, &request, on_event, user_data);
+```
+
+| Function | Purpose |
+| --- | --- |
+| `scyllasband_records_request_init` | Defaults and `struct_size` for a `ScyllasBandRecordsRequest`. |
+| `scyllasband_plan_records_json` | The sentence plan for the records, without synthesizing. |
+| `scyllasband_synthesize_records_stream` | The records spoken target by target, with the same events as `scyllasband_synthesize_stream`. |
+
+Each record is `{"text", "voice", "language"?, "delivery"?, "intensity"?, "pace"?, "pitch"?}`: the delivery as a
+`control=value` string or a `{"intensity", "pace", "pitch"}` object, or the controls as fields, not both. Consecutive
+records with the same voice, language and delivery form one chain, spoken continuously with the previous target's
+acoustics as context; a record that changes any of the three starts a new chain, even when it has no text, and
+`pause_ms` of silence opens every chain after the first (at the start of that target's audio). Chunk *i* of the
+whole plan, counted across records, draws its noise from `seed + i`. The rules and messages are the Python runtime's (`planner.plan_records`).
+
+`ScyllasBandRecordsRequest`, like `ScyllasBandSingRequest`, starts with `struct_size`; initialize requests with their
+init function so a caller built against another layout gets an error instead of misread fields. Every 3.0.0 type and
+function is unchanged in 3.1 (`scyllasband_abi` checks it).
+
 ## Build
 
 The LiteRT C headers (2.2.0) and ONNX Runtime headers (1.30.0) are staged under `third_party/`. Shared
@@ -173,8 +205,10 @@ build/litert/scyllasband_speak --bundle ../scyllasband/models/litert --voice ink
 ## Tests
 
 `ctest` runs the unit suites (`events`, `durations`, `context`, `delivery`, `sentences`, `segments`,
-`normalizer`, `unicode`, `targets`) against fixtures produced by the Python runtime; `targets` also runs the
-streaming loop on fake graphs. Regenerate them after a reference
+`normalizer`, `unicode`, `targets`, `singing`, `records`) against fixtures produced by the Python runtime; `targets` also runs the
+streaming loop on fake graphs, and `records` plans records (delivery forms, chains, errors) and streams them with
+`pause_ms`. `scyllasband_abi` checks that the 3.0.0 types keep their layout and every 3.0.0 symbol is still exported
+(`fixtures/abi_3_0_layout.txt`, `fixtures/abi_3_0_symbols.txt`). Regenerate the fixtures after a reference
 change:
 
 ```bash
@@ -191,7 +225,9 @@ python tools/generate_lexicon.py
 `tests/parity_harness.py` compares the built library with the Python runtime on a bundle of the build's
 flavor: text normalization, sentence splitting, punctuation segments and Unicode handling; G2P phones and word
 starts; per-target durations, latents (given the same noise) and decoded audio with passage context and
-prefix; the long-form plan, targets and whole-passage audio. It needs numpy and `onnxruntime` or `ai-edge-litert`:
+prefix; the long-form plan, targets and whole-passage audio; records plans, error messages and the records stream with
+`pause_ms`. It loads the library through `scyllasband.native`, the Python binding, and needs numpy and `onnxruntime` or
+`ai-edge-litert`:
 
 ```bash
 PYTHONPATH=.. python tests/parity_harness.py --library build/litert/libscyllasband_native.so \

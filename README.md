@@ -97,6 +97,7 @@ python -m scyllasband plan --voice scylla "Print the sentence plan as JSON."
 | `--threads` | LiteRT: the CPUs available, up to 4 | CPU threads per graph |
 | `--backend`, `--bundle` | the installed bundle for this machine (Core ML on a Mac, LiteRT elsewhere) | Choose another installed bundle |
 | `--compute-units` | `auto` | Core ML / Core AI: `auto` (the bundle's recommendation), `gpu`, `cpu` or `ane`. ONNX Runtime: `cpu`, or `gpu` for NVIDIA GPUs. See [Backends](#backends) |
+| `--engine` | `native` where built, else `python` | The runtime that runs the bundle; see [Engines](#engines) |
 | `--pause-ms` | 0 | Extra silence where the voice, language or delivery changes |
 | `--metadata` | none | Write phones, durations and timings as JSON |
 | `--no-normalize-text` | off | Skip spoken-text normalization for text that is already normalized |
@@ -144,6 +145,22 @@ Measured with the native runtime on a three-sentence passage (10.3 s of speech) 
 | Galaxy Z Fold 8, Snapdragon SM8850 (Android 17) | LiteRT | CPU | 0.81 s | 0.52 s | 120 ms | ~27× |
 |  | ONNX Runtime | CPU | 1.85 s | 1.89 s | 461 ms | ~9.2× |
 
+## Engines
+
+Commands run one of two engines over the same bundles:
+
+- `native`: `libscyllasband`, the C++ runtime the iOS and Android apps use, through `scyllasband.native` (ctypes over its C API). Build it once from this checkout; CMake 3.20 and a compiler are needed, and the Core ML / Core AI build also needs Ninja:
+
+  ```bash
+  python -m scyllasband build-native                    # LiteRT bundles
+  python -m scyllasband build-native --backend apple    # Core ML and Core AI bundles (macOS)
+  ```
+
+  The library and the SDK libraries it loads go to `scyllasband/_native/<backend>/` (not tracked by git). `SCYLLASBAND_NATIVE_LIB` names another build of ABI 3.1 or later.
+- `python`: this package's engine, over ONNX Runtime, LiteRT, Core ML or Core AI sessions from Python.
+
+By default a command runs the native engine when a library for the bundle's backend is built and the Python engine otherwise, printing one line that says so. ONNX Runtime bundles, including CUDA through the WebGPU bundle, stay on the Python engine. `--engine native` or `--engine python` (or `SCYLLASBAND_ENGINE`) chooses explicitly. The engines plan and speak the same way: `libscyllasband/tests/parity_harness.py` checks plans, passages, dialogue and songs with the same noise fed to both. Each engine draws its own noise, so a `--seed` gives a different take on each; `--metadata` records the engine and its noise.
+
 ## Python API
 
 ```python
@@ -161,6 +178,8 @@ result = runtime.synthesize(SynthesisRequest(
 ))
 # result.audio (float32 numpy array), result.sample_rate, result.metadata
 ```
+
+`ScyllasBandRuntime.from_bundle` always runs the Python engine. `scyllasband.native.open_runtime(bundle, engine=None)` chooses the engine as the CLI does and returns a runtime with the same methods for speech, dialogue and singing; a `NativeRuntime` also has `score_parse`, `sing_fit` and `sing_preview`, the calls the apps' melody editors use.
 
 Reuse the runtime across requests; `runtime.warmup()` creates the sessions before interactive use. `runtime.delivery_ranges()` and `runtime.voice_delivery_defaults(voice)` give the supported ranges and a voice's defaults. `runtime.synthesize_stream(records)` yields each passage's audio as it is ready, and `runtime.plan_records(records)` returns the sentence plan the passages are cut from.
 

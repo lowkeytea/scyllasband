@@ -25,6 +25,7 @@ import numpy as np
 
 from scyllasband.cli import write_wav
 from scyllasband.download import DEFAULT_MODELS_DIR, bundle_dir, default_installed_flavor
+from scyllasband.native import open_runtime
 from scyllasband.runtime import ScyllasBandRuntime, SynthesisRequest
 
 HERE = Path(__file__).resolve().parent
@@ -97,7 +98,7 @@ def load_runtime(args: argparse.Namespace) -> ScyllasBandRuntime:
         if flavor is None:
             sys.exit("No bundle installed: run `python -m scyllasband download` first, or pass --bundle")
         bundle = bundle_dir(args.models_dir, flavor)
-    return ScyllasBandRuntime.from_bundle(bundle, backend=args.backend, threads=args.threads)
+    return open_runtime(bundle, engine=args.engine, backend=args.backend, threads=args.threads)   # the CLI's engine choice
 
 
 def render_cue(runtime: ScyllasBandRuntime, cue: dict, cache: Path, *, force: bool) -> tuple[np.ndarray, int, dict]:
@@ -171,6 +172,7 @@ def main() -> None:
     parser.add_argument("--backend", help="litert, onnx, coreml or coreai (default: the bundle's)")
     parser.add_argument("--models-dir", type=Path, default=DEFAULT_MODELS_DIR)
     parser.add_argument("--threads", type=int)
+    parser.add_argument("--engine", choices=("native", "python"), help="as the CLI's --engine (default: native where it is built)")
     args = parser.parse_args()
     script = json.loads(args.script.read_text(encoding="utf-8"))
     out = args.out; out.parent.mkdir(parents=True, exist_ok=True)
