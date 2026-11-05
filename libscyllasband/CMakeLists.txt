@@ -187,6 +187,16 @@ if(SCYLLASBAND_BUILD_TESTS)
                      COMMAND scyllasband_unit_test ${_scyllasband_suite} "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
         endforeach()
 
+        # ABI compatibility with 3.0.0: layouts of the 3.0.0 types and every 3.0.0 symbol exported (POSIX: dlopen).
+        if(NOT WIN32)
+            enable_language(C)
+            add_executable(scyllasband_abi_test tests/scyllasband_abi_test.c)
+            target_include_directories(scyllasband_abi_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+            target_link_libraries(scyllasband_abi_test PRIVATE ${CMAKE_DL_LIBS})
+            add_test(NAME scyllasband_abi
+                     COMMAND scyllasband_abi_test "$<TARGET_FILE:scyllasband_native>" "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
+        endif()
+
         # Frontend modules alone (no SDK): configure with -DSCYLLASBAND_SANITIZE=ON to run them under ASan and UBSan.
         add_executable(scyllasband_frontend_test tests/scyllasband_frontend_test.cpp)
         target_link_libraries(scyllasband_frontend_test PRIVATE scyllasband_frontend)
