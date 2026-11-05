@@ -363,8 +363,65 @@ void targets_suite(const Json& fixture) {
     }
 }
 
+bool same_json(const Json& a, const Json& b, double tolerance = 1e-9);
+
+// Records planning (voices, languages, delivery forms, chains, errors) and pause_ms between chains, against the Python runtime.
+void records_suite(const Json& fixture) {
+    const FakeBundle bundle(fixture.get("bundle"));
+    const Json& tokenizer = fixture.get("bundle").get("assets/g2p/tokenizer.json");
+    BackendOptions backend;
+    backend.bundle_dir = bundle.dir.string();
+    Engine engine(backend, std::make_unique<FakeBackend>(1.0f, tokenizer));
+    for (const Json& c : fixture.get("cases").elements()) {
+        const std::string name = "records '" + c.get("name").str() + "'";
+        Json got;
+        std::string error;
+        try {
+            got = plan_records(engine, c.get("records"), c.get("normalize").boolean()).to_json();
+        } catch (const std::invalid_argument& failure) {
+            error = failure.what();
+        }
+        if (c.has("error")) {
+            expect(error == c.get("error").str(), name + ": error '" + error + "', expected '" + c.get("error").str() + "'");
+        } else {
+            expect(error.empty() && same_json(got, c.get("plan")), name + ": " + (error.empty() ? got.dump().substr(0, 400) : error));
+        }
+    }
+    bool refused = false;
+    try {
+        plan_records(engine, Json(Json::Object{}));
+    } catch (const std::invalid_argument&) {
+        refused = true;
+    }
+    expect(refused, "records must be an array");
+    const Json& pause = fixture.get("pause");
+    SynthesisOptions options;
+    options.steps = 1;
+    options.sampler = "heun";
+    options.seed = 0;
+    options.pause_ms = pause.get("pause_ms").num();
+    std::vector<std::pair<Json, std::vector<float>>> spoken;
+    synthesize_plan_stream(engine, plan_records(engine, pause.get("records")), options, [&](const StreamEvent& event) {
+        if (event.type == StreamEvent::kAudio) spoken.emplace_back(event.metadata, *event.audio);
+        return true;
+    });
+    const auto& want = pause.get("targets").elements();
+    expect(spoken.size() == want.size(), "pause: " + std::to_string(spoken.size()) + " targets, expected " + std::to_string(want.size()));
+    for (std::size_t i = 0; i < std::min(spoken.size(), want.size()); ++i) {
+        const Json& chunk = spoken[i].first.get("chunk");
+        const std::vector<float>& audio = spoken[i].second;
+        int64_t zeros = 0;
+        while (zeros < static_cast<int64_t>(audio.size()) && audio[static_cast<std::size_t>(zeros)] == 0.0f) ++zeros;
+        expect(chunk.get("chunk_id").str() == want[i].get("chunk_id").str() && chunk.get("chain_id").str() == want[i].get("chain_id").str() &&
+                   static_cast<int64_t>(audio.size()) == want[i].get("samples").integer() && zeros == want[i].get("leading_zeros").integer() &&
+                   spoken[i].first.get("seed").integer() == want[i].get("seed").integer(),
+               "pause target " + std::to_string(i) + ": " + chunk.get("chunk_id").str() + " " + chunk.get("chain_id").str() + " " +
+                   std::to_string(audio.size()) + " samples, " + std::to_string(zeros) + " leading zeros");
+    }
+}
+
 // Structural JSON equality with numbers within `tolerance` (the two sides format floats differently).
-bool same_json(const Json& a, const Json& b, double tolerance = 1e-9) {
+bool same_json(const Json& a, const Json& b, double tolerance) {
     if (a.is_number() && b.is_number()) return std::fabs(a.num() - b.num()) <= tolerance;
     if (a.type() != b.type()) return false;
     if (a.is_array()) {
@@ -830,7 +887,8 @@ int main(int argc, char** argv) {
         {"context", {"context.json", context_suite}},    {"delivery", {"delivery.json", delivery_suite}},
         {"sentences", {"text.json", sentences_suite}},   {"segments", {"text.json", segments_suite}},
         {"normalizer", {"normalizer.json", normalizer_suite}}, {"unicode", {"unicode.json", unicode_suite}},
-        {"targets", {"targets.json", targets_suite}}, {"singing", {"singing.json", singing_suite}}};
+        {"targets", {"targets.json", targets_suite}}, {"singing", {"singing.json", singing_suite}},
+        {"records", {"records.json", records_suite}}};
     auto it = suites.find(suite);
     if (it == suites.end()) {
         std::fprintf(stderr, "unknown suite %s\n", suite.c_str());

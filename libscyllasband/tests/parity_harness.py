@@ -288,6 +288,59 @@ class Native:
             self.lib.scyllasband_test_set_noise(self.runtime, self.noise_type(), None)
         return samples, meta
 
+    class RecordsRequest(ctypes.Structure):
+        _fields_ = [("struct_size", ctypes.c_uint32), ("records_json", ctypes.c_char_p), ("speed", ctypes.c_float), ("steps", ctypes.c_int32),
+                    ("sampler", ctypes.c_int), ("seed", ctypes.c_uint64), ("has_seed", ctypes.c_int32), ("temperature", ctypes.c_float),
+                    ("normalize_text", ctypes.c_int32), ("pause_ms", ctypes.c_float)]
+
+    class Event(ctypes.Structure):
+        _fields_ = [("type", ctypes.c_int), ("chunk_index", ctypes.c_int32), ("chunk_count", ctypes.c_int32), ("chunk_id", ctypes.c_char_p),
+                    ("metadata_json", ctypes.c_char_p), ("samples", ctypes.POINTER(ctypes.c_float)), ("sample_count", ctypes.c_int64),
+                    ("sample_rate", ctypes.c_int32)]
+
+    def _records_request(self, records: list, *, seed: int | None = None, steps: int = 0, sampler: str | None = None, pause_ms: float = 0.0,
+                         normalize: bool = True):
+        request = self.RecordsRequest()
+        self.lib.scyllasband_records_request_init(ctypes.byref(request))
+        if request.struct_size != ctypes.sizeof(self.RecordsRequest):
+            raise RuntimeError(f"ScyllasBandRecordsRequest is {request.struct_size} bytes in the library, {ctypes.sizeof(self.RecordsRequest)} here")
+        request._records = json.dumps(records).encode()
+        request.records_json = request._records
+        request.steps, request.sampler, request.pause_ms, request.normalize_text = steps, {None: 0, "heun": 1, "euler": 2}[sampler], pause_ms, int(normalize)
+        if seed is not None:
+            request.seed, request.has_seed = seed, 1
+        return request
+
+    def records_plan(self, records: list, normalize: bool = True) -> dict:
+        out = ctypes.c_void_p()
+        request = self._records_request(records, normalize=normalize)
+        self.lib.scyllasband_plan_records_json.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
+        self._check(self.lib.scyllasband_plan_records_json(self.runtime, ctypes.byref(request), ctypes.byref(out)), "plan_records_json")
+        return json.loads(self._take_text(out))
+
+    def records_stream(self, records: list, seed: int, noise=None, **kwargs):
+        """The whole stream's audio and the AUDIO events' metadata."""
+        callback_type = ctypes.CFUNCTYPE(ctypes.c_int32, ctypes.POINTER(self.Event), ctypes.c_void_p)
+        pieces, metas = [], []
+
+        def on_event(event, _user):
+            e = event.contents
+            if e.type == 3:
+                pieces.append(np.ctypeslib.as_array(e.samples, shape=(e.sample_count,)).copy() if e.sample_count else np.zeros(0, np.float32))
+                metas.append(json.loads(e.metadata_json.decode()))
+            return 0
+
+        callback = callback_type(on_event)
+        noise_callback = self.noise_type(noise) if noise is not None else self.noise_type()
+        self.lib.scyllasband_test_set_noise(self.runtime, noise_callback, None)
+        request = self._records_request(records, seed=seed, **kwargs)
+        self.lib.scyllasband_synthesize_records_stream.argtypes = [ctypes.c_void_p, ctypes.c_void_p, callback_type, ctypes.c_void_p]
+        try:
+            self._check(self.lib.scyllasband_synthesize_records_stream(self.runtime, ctypes.byref(request), callback, None), "records_stream")
+        finally:
+            self.lib.scyllasband_test_set_noise(self.runtime, self.noise_type(), None)
+        return (np.concatenate(pieces) if pieces else np.zeros(0, np.float32)), metas
+
     def voices(self) -> dict:
         return json.loads(self.lib.scyllasband_voices_json(self.runtime).decode())
 
@@ -521,6 +574,71 @@ def check_long_form(native: Native, runtime, report: dict, failures: list[str], 
     report["long_form"] = out
 
 
+# Records (group-speak): several voices, languages and delivery forms, an empty record that still starts a chain, and errors.
+RECORDS = (
+    dict(text="Hello there. It has been a while.", voice="scylla"),
+    dict(text="It has, and the weather has not improved.", voice="ink", language="en_gb", delivery="intensity=-1,pace=-0.5"),
+    dict(text="", voice="scylla", delivery={"pace": 1}),
+    dict(text="Nobody asked about the weather!", voice="max", intensity=1.5, pitch=1),
+    dict(text="Then let us talk about the bridge instead.\n\nIt is still standing.", voice="scylla", delivery={"pace": "0.5", "pitch": None}),
+    dict(text="Hola, ¿qué tal? Todo bien por aquí.", voice="scylla", language="es"),
+)
+BAD_RECORDS = (
+    [dict(text="Hi.", voice=" ")], [dict(text="Hi.", voice="nobody")], [dict(text="Hi.", voice="scylla", language="xx")],
+    [dict(text="Hi.", voice="scylla", emotion="happy")], [dict(text="Hi.", voice="scylla", pace=1, delivery="pace=1")],
+    [dict(text="Hi.", voice="scylla", delivery={"energy": 1})], [dict(text="Hi.", voice="scylla", delivery={"speed": 1, "tempo": 2})],
+    [dict(text="Hi.", voice="scylla", delivery={"pace": "fast"})], [dict(text="Hi.", voice="scylla", delivery={"pitch": True})],
+    [dict(text="Hi.", voice="scylla", delivery=3)],
+)
+
+
+def check_records(native: Native, runtime, report: dict, failures: list[str], args) -> None:
+    """Records plans, errors and the records stream with pause_ms against the Python runtime."""
+    out = dict()
+    records = [r for r in RECORDS if r.get("language") is None or r["language"] in runtime.voice_for_id(r["voice"]).languages]
+    python_plan = json.loads(json.dumps(runtime.plan_records(records).to_dict()))
+    native_plan = native.records_plan(records)
+    out["plan_identical"] = python_plan == native_plan
+    out["chains"] = python_plan["chains"]
+    if not out["plan_identical"]:
+        failures.append("records plan differs from the reference")
+    errors = []
+    for bad in BAD_RECORDS:
+        try:
+            runtime.plan_records(bad)
+            python_error = None
+        except ValueError as exc:
+            python_error = str(exc)
+        try:
+            native.records_plan(bad)
+            native_error = None
+        except RuntimeError as exc:
+            native_error = str(exc).split(": ", 1)[1] if ": " in str(exc) else str(exc)
+        errors.append(dict(python=python_error, native=native_error))
+        if python_error is None or python_error != native_error:
+            failures.append(f"records error differs: {python_error!r} vs {native_error!r}")
+    out["errors"] = errors
+    # The stream with pause_ms, with the reference's noise injected.
+    pause_ms = 250.0
+    reference = runtime.render_records(records, seed=SEED, steps=args.steps, sampler=args.sampler, pause_ms=pause_ms)
+
+    def noise(index, seed, has_seed, dim, frames, pointer, _user):
+        values = np.random.default_rng(int(seed) if has_seed else None).standard_normal((dim, frames)).astype(np.float32)
+        ctypes.memmove(pointer, values.ctypes.data, values.nbytes)
+
+    injected, metas = native.records_stream(records, SEED, noise=noise, steps=args.steps, sampler=args.sampler, pause_ms=pause_ms)
+    python_chunks = [(c["chunk"]["chunk_id"], c["chunk"]["chain_id"]) for c in reference.metadata["chunks"]]
+    native_chunks = [(m["chunk"]["chunk_id"], m["chunk"]["chain_id"]) for m in metas]
+    out["targets_identical"] = python_chunks == native_chunks
+    out["samples"] = [int(reference.audio.size), int(injected.size)]
+    out["snr_db"] = snr_db(reference.audio, injected)
+    if not out["targets_identical"]:
+        failures.append("records stream targets differ from the reference")
+    if out["snr_db"] < args.min_snr:
+        failures.append(f"records stream SNR {out['snr_db']:.1f} dB")
+    report["records"] = out
+
+
 def check_singing(native: Native, runtime, report: dict, failures: list[str], args) -> None:
     """Sing plans, per-phrase graphs and whole songs against the Python runtime (v4 bundles)."""
     from scyllasband.singing import plan_song
@@ -654,6 +772,7 @@ def main() -> int:
         if not args.skip_speech:
             check_sentences(native, runtime, report, failures, args)
             check_long_form(native, runtime, report, failures, args)
+            check_records(native, runtime, report, failures, args)
         check_singing(native, runtime, report, failures, args)
     finally:
         native.close()
@@ -663,7 +782,8 @@ def main() -> int:
     if not args.skip_speech:
         summary.update(sentences=report["sentences"]["count"], g2p_identical=report["sentences"]["g2p_identical"],
                        durations_identical=report["sentences"]["durations_identical"], worst=report["sentences"]["worst"],
-                       long_form={k: v for k, v in report["long_form"].items() if k != "chunks"})
+                       long_form={k: v for k, v in report["long_form"].items() if k != "chunks"},
+                       records={k: v for k, v in report["records"].items() if k != "errors"})
     singing = report.get("singing", {})
     summary["singing"] = {k: (v if k != "phrases" else {kk: vv for kk, vv in v.items() if kk != "rows"}) for k, v in singing.items() if k != "native_info"}
     print(json.dumps(summary, indent=2))

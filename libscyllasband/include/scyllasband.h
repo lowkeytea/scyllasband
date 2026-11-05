@@ -141,6 +141,39 @@ SCYLLASBAND_API ScyllasBandStatus scyllasband_synthesize_stream(ScyllasBandRunti
    requests are unaffected. Safe to call from any thread. */
 SCYLLASBAND_API void scyllasband_cancel(ScyllasBandRuntime* runtime);
 
+/* --- records (ABI 3.1.0): several voices, languages and deliveries in one request, as group-speak --------------------------
+
+   records_json is a JSON array of {"text", "voice", "language"?, "delivery"?, "intensity"?, "pace"?, "pitch"?} objects: the
+   delivery as a control=value string or a {"intensity", "pace", "pitch"} mapping, or the controls as fields (not both);
+   omitted controls take the voice's default. Consecutive records with the same voice, language and delivery are spoken as one
+   continuous chain; a change of any starts a new chain (with pause_ms of silence before it). Sentence i of the plan draws its
+   noise from seed + i, across records. */
+typedef struct {
+    uint32_t struct_size;      /* sizeof(ScyllasBandRecordsRequest): set by scyllasband_records_request_init, checked by every call */
+    const char* records_json;
+    float speed;               /* a plain time stretch on top of pace; 1.0 = none */
+    int32_t steps;             /* flow steps; 0 = bundle default */
+    ScyllasBandSampler sampler;
+    uint64_t seed;
+    int32_t has_seed;          /* 0: fresh random noise */
+    float temperature;         /* noise scale; 1.0 = default */
+    int32_t normalize_text;    /* nonzero: expand numbers, dates, symbols and abbreviations before G2P */
+    float pause_ms;            /* silence before each chain after the first */
+} ScyllasBandRecordsRequest;
+
+/* Fills the defaults and struct_size: speed 1, steps 0, default sampler, no seed, temperature 1, normalize_text 1, pause 0. */
+SCYLLASBAND_API void scyllasband_records_request_init(ScyllasBandRecordsRequest* request);
+
+/* The sentence plan for the records (as scyllasband_plan_json: {"source_kind", "chunks": [...], "chains"}), without
+   synthesizing. Free *out_json with scyllasband_string_free. */
+SCYLLASBAND_API ScyllasBandStatus scyllasband_plan_records_json(ScyllasBandRuntime* runtime, const ScyllasBandRecordsRequest* request,
+                                                                char** out_json);
+
+/* Speaks the records target by target, as scyllasband_synthesize_stream; the AUDIO event of a chain's first target starts
+   with the pause. */
+SCYLLASBAND_API ScyllasBandStatus scyllasband_synthesize_records_stream(ScyllasBandRuntime* runtime, const ScyllasBandRecordsRequest* request,
+                                                                        ScyllasBandEventCallback callback, void* user_data);
+
 /* --- singing (ABI 3.1.0; v4 bundles whose voices_json "singing.supported" is true) ---------------------------------------
 
    A score is JSON: {"text", "bpm", "style": "pop" | "ballad", "notes": [[label, note, beats], ...]}; note a pitch name with

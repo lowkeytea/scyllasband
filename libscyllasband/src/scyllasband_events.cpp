@@ -288,6 +288,56 @@ Delivery Delivery::parse(const char* spec) {
     return out;
 }
 
+Delivery Delivery::from_json(const Json& value) {
+    if (value.is_null()) return Delivery{};
+    if (value.is_string()) return parse(value.str().c_str());
+    if (!value.is_object()) throw std::invalid_argument("Delivery must be a mapping, a control=value string or None");
+    static const std::set<std::string> old_keys = {"energy", "tension", "valence", "assertiveness", "whisper", "emotion", "kind"};
+    std::vector<std::string> extra;
+    for (const auto& [key, raw] : value.items()) {
+        if (old_keys.count(key)) {
+            throw std::invalid_argument("This model takes intensity, pace and pitch (energy, tension, valence, assertiveness and emotion "
+                                        "styles belonged to the v2 models)");
+        }
+    }
+    for (const auto& item : value.items()) {
+        const std::string& key = item.first;
+        if (std::none_of(std::begin(kDeliveryControls), std::end(kDeliveryControls), [&](const char* name) { return key == name; })) {
+            extra.push_back(key);
+        }
+    }
+    if (!extra.empty()) {
+        std::sort(extra.begin(), extra.end());
+        std::string list;
+        for (const std::string& key : extra) list += (list.empty() ? "" : ", ") + key;
+        throw std::invalid_argument("Delivery accepts only intensity, pace, pitch; got " + list);
+    }
+    Delivery out;
+    for (std::size_t index = 0; index < 3; ++index) {
+        const std::string key = kDeliveryControls[index];
+        const Json& raw = value.get(key);
+        if (raw.is_null()) continue;
+        double number = 0.0;
+        if (raw.is_string()) {
+            const std::string text = unicode::encode(unicode::strip(unicode::decode(raw.str())));
+            const std::string folded = unicode::encode(unicode::lower(unicode::decode(text)));
+            if (folded.empty() || folded == "default" || folded == "auto") continue;
+            if (folded == "inf" || folded == "+inf" || folded == "-inf" || folded == "infinity" || folded == "+infinity" ||
+                folded == "-infinity" || folded == "nan" || folded == "+nan" || folded == "-nan") {
+                throw std::invalid_argument("Delivery " + key + " must be finite");
+            }
+            if (!python_float(text, number)) throw std::invalid_argument("Delivery " + key + " must be a number");
+        } else if (raw.is_number()) {
+            number = raw.num();
+        } else {
+            throw std::invalid_argument("Delivery " + key + " must be a number");   // booleans, lists and mappings
+        }
+        if (!std::isfinite(number)) throw std::invalid_argument("Delivery " + key + " must be finite");
+        out.controls[index] = std::min(std::max(number, kDeliveryRanges[index][0]), kDeliveryRanges[index][1]);
+    }
+    return out;
+}
+
 Json Delivery::to_json() const {
     Json out{Json::Object{}};
     for (std::size_t i = 0; i < 3; ++i) out.set(kDeliveryControls[i], controls[i] ? Json(*controls[i]) : Json());

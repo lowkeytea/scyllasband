@@ -40,6 +40,48 @@ SynthesisOptions options_from(const ScyllasBandRequest* request) {
     return options;
 }
 
+// A records request's settings (its text fields stay empty) and its records.
+SynthesisOptions records_options_from(const ScyllasBandRecordsRequest* request, Json* records) {
+    require(request != nullptr, "request is required");
+    require(request->struct_size == sizeof(ScyllasBandRecordsRequest),
+            "request.struct_size does not match this library's ScyllasBandRecordsRequest: initialize requests with scyllasband_records_request_init");
+    require(request->records_json != nullptr && request->records_json[0] != '\0', "request.records_json is required");
+    try {
+        *records = Json::parse(request->records_json);
+    } catch (const std::exception& error) {
+        throw std::invalid_argument(std::string("request.records_json is not valid JSON: ") + error.what());
+    }
+    SynthesisOptions options;
+    options.speed = request->speed;
+    options.steps = request->steps;
+    switch (request->sampler) {
+        case SCYLLASBAND_SAMPLER_DEFAULT: break;
+        case SCYLLASBAND_SAMPLER_HEUN: options.sampler = "heun"; break;
+        case SCYLLASBAND_SAMPLER_EULER: options.sampler = "euler"; break;
+        default: throw std::invalid_argument("Unsupported sampler");
+    }
+    if (request->has_seed) options.seed = request->seed;
+    options.temperature = request->temperature;
+    options.normalize = request->normalize_text != 0;
+    options.pause_ms = request->pause_ms;
+    return options;
+}
+
+// A speech stream event as the C API passes it (valid during the callback); false stops the stream.
+bool forward_event(const StreamEvent& event, int sample_rate, ScyllasBandEventCallback callback, void* user_data) {
+    const std::string metadata = event.metadata.dump();
+    ScyllasBandEvent out{};
+    out.type = static_cast<ScyllasBandEventType>(event.type);
+    out.chunk_index = event.chunk ? event.chunk->index : -1;
+    out.chunk_count = event.chunk_count;
+    out.chunk_id = event.chunk ? event.chunk->chunk_id.c_str() : nullptr;
+    out.metadata_json = metadata.c_str();
+    out.samples = event.audio ? event.audio->data() : nullptr;
+    out.sample_count = event.audio ? static_cast<int64_t>(event.audio->size()) : 0;
+    out.sample_rate = sample_rate;
+    return callback(&out, user_data) == 0;
+}
+
 ChunkNoiseFn test_noise(ScyllasBandRuntime* runtime) {
     if (runtime->test_noise == nullptr) return nullptr;
     const int dim = 2 + runtime->engine->latent_dim();   // the pitch predictor's two rows, then the flow's
@@ -195,17 +237,44 @@ ScyllasBandStatus scyllasband_synthesize_stream(ScyllasBandRuntime* runtime, con
         Engine& engine = *runtime->engine;
         engine.begin_request(generation);
         synthesize_stream(engine, options, [&](const StreamEvent& event) {
-            const std::string metadata = event.metadata.dump();
-            ScyllasBandEvent out{};
-            out.type = static_cast<ScyllasBandEventType>(event.type);
-            out.chunk_index = event.chunk ? event.chunk->index : -1;
-            out.chunk_count = event.chunk_count;
-            out.chunk_id = event.chunk ? event.chunk->chunk_id.c_str() : nullptr;
-            out.metadata_json = metadata.c_str();
-            out.samples = event.audio ? event.audio->data() : nullptr;
-            out.sample_count = event.audio ? static_cast<int64_t>(event.audio->size()) : 0;
-            out.sample_rate = engine.sample_rate();
-            return callback(&out, user_data) == 0;
+            return forward_event(event, engine.sample_rate(), callback, user_data);
+        }, test_noise(runtime));
+    });
+}
+
+void scyllasband_records_request_init(ScyllasBandRecordsRequest* request) {
+    if (request == nullptr) return;
+    std::memset(request, 0, sizeof(*request));
+    request->struct_size = sizeof(ScyllasBandRecordsRequest);
+    request->speed = 1.0f;
+    request->temperature = 1.0f;
+    request->normalize_text = 1;
+}
+
+ScyllasBandStatus scyllasband_plan_records_json(ScyllasBandRuntime* runtime, const ScyllasBandRecordsRequest* request, char** out_json) {
+    return guarded([&] {
+        require(runtime != nullptr && out_json != nullptr, "runtime and out_json are required");
+        *out_json = nullptr;
+        Json records;
+        const SynthesisOptions options = records_options_from(request, &records);
+        std::lock_guard<std::mutex> lock(runtime->mutex);
+        *out_json = copy_string(plan_records(*runtime->engine, records, options.normalize).to_json().dump());
+    });
+}
+
+ScyllasBandStatus scyllasband_synthesize_records_stream(ScyllasBandRuntime* runtime, const ScyllasBandRecordsRequest* request,
+                                                        ScyllasBandEventCallback callback, void* user_data) {
+    return guarded([&] {
+        require(runtime != nullptr && callback != nullptr, "runtime and callback are required");
+        Json records;
+        const SynthesisOptions options = records_options_from(request, &records);
+        const uint64_t generation = runtime->engine->cancel_generation();
+        std::lock_guard<std::mutex> lock(runtime->mutex);
+        Engine& engine = *runtime->engine;
+        engine.begin_request(generation);
+        const Plan plan = plan_records(engine, records, options.normalize);
+        synthesize_plan_stream(engine, plan, options, [&](const StreamEvent& event) {
+            return forward_event(event, engine.sample_rate(), callback, user_data);
         }, test_noise(runtime));
     });
 }

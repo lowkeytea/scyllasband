@@ -263,6 +263,7 @@ StreamSettings stream_settings(const Engine& engine, const SynthesisOptions& opt
     if (!(options.speed > 0.0) || !std::isfinite(options.speed)) throw std::invalid_argument("speed must be positive");
     if (options.steps < 0) throw std::invalid_argument("steps must be positive");
     if (!std::isfinite(options.temperature)) throw std::invalid_argument("temperature must be finite");
+    if (!std::isfinite(options.pause_ms)) throw std::invalid_argument("pause_ms must be finite");
     return StreamSettings{sampler, options.steps > 0 ? options.steps : engine.default_steps()};
 }
 
@@ -334,6 +335,7 @@ Json synthesize_plan_stream(Engine& engine, const Plan& plan, const SynthesisOpt
     const std::size_t D = static_cast<std::size_t>(engine.latent_dim());
     const int64_t keep = std::max(engine.prefix_frames(), engine.decode_context());
     int spoken = 0;
+    std::string previous_chain;   // the chain of the previous spoken target
     std::optional<double> first_audio_ms;
     Json chunk_metadata{Json::Array{}};
     std::random_device entropy;
@@ -388,6 +390,12 @@ Json synthesize_plan_stream(Engine& engine, const Plan& plan, const SynthesisOpt
             decode.left = &tail;
             decode.left_frames = tail_frames;
             std::vector<float> audio = engine.decode(result.latents, result.frames, decode);
+            // pause_ms of silence where the voice, language or delivery changes (a new chain), as streaming.py adds it.
+            if (!previous_chain.empty() && previous_chain != chunk.chain_id && options.pause_ms > 0.0) {
+                const std::size_t pause = static_cast<std::size_t>(static_cast<double>(engine.sample_rate()) * options.pause_ms / 1000.0);
+                audio.insert(audio.begin(), pause, 0.0f);
+            }
+            previous_chain = chunk.chain_id;
             const int64_t joined_frames = tail_frames + result.frames, kept = std::min(joined_frames, keep);
             std::vector<float> next_tail(D * static_cast<std::size_t>(kept));
             for (std::size_t d = 0; d < D; ++d) {

@@ -60,6 +60,9 @@ struct Delivery {
 
     // NULL, "", "default" or "neutral": every control at the voice's default; else "control=value,..." pairs.
     static Delivery parse(const char* spec);
+    // delivery.resolve_delivery: null, a control=value string (as parse), or a mapping {"intensity": 1, "pace": "-0.5"} whose
+    // null, "", "default" and "auto" values take the voice's default.
+    static Delivery from_json(const Json& value);
     Json to_json() const;
     std::string spec() const;  // canonical text, used to group sentences into chains
 };

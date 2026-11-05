@@ -1,4 +1,8 @@
-// Speech planning: text (paragraphs, normalized, split into sentences) into plan chunks of one chain (see planner.py).
+// Speech planning (see planner.py): records of text, each with a voice, language and delivery, into plan chunks.
+//
+// A record's text is split into paragraphs, normalized and split into sentences. Consecutive records with the same
+// voice, language and delivery form a chain, spoken continuously (the speech stream reads a chain as one stream of phones);
+// a record that changes any of the three starts a new chain, even when it has no text.
 #pragma once
 
 #include "scyllasband_engine.h"
@@ -22,6 +26,7 @@ struct PlanChunk {
 
 struct Plan {
     std::vector<PlanChunk> chunks;
+    std::string source_kind = "text";
     Json to_json() const;
 };
 
@@ -34,8 +39,14 @@ struct SynthesisOptions {
     std::optional<uint64_t> seed;
     double temperature = 1.0;
     bool normalize = true;
+    double pause_ms = 0.0;   // silence before the first target of every chain after the first
 };
 
+// planner.plan_records: `records` is a JSON array of {"text", "voice", "language"?, "delivery"?, "intensity"?, "pace"?,
+// "pitch"?} objects; delivery is a control=value string or a mapping, or the controls are given as fields (not both).
+Plan plan_records(Engine& engine, const Json& records, bool normalize = true, const std::string& source_kind = "text");
+
+// One record: options.text with its voice, language and delivery.
 Plan plan_text(Engine& engine, const SynthesisOptions& options);
 
 }  // namespace scyllasband

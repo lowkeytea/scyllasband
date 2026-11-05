@@ -207,6 +207,71 @@ def stream_cases() -> dict:
     return dict(bundle=files, cases=cases)
 
 
+def records_cases() -> dict:
+    """Plans of records (planner.plan_records through the runtime: voice and language checks, delivery forms, chains) and a
+    records stream with pause_ms, from the Python runtime on the fake bundle (one voice, scylla / en_us)."""
+    spec = importlib.util.spec_from_file_location("scyllasband_test_runtime", REPO / "tests" / "test_runtime.py")
+    fakes = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fakes)
+    from scyllasband.runtime import ScyllasBandRuntime
+    controls = dict(chunking=dict(min_target_frames=6, max_target_frames=12), span_conditioning=dict(context_max_phones=256, context_phones_each_side=8))
+    S = "scylla"
+    scenarios = [
+        ("one record", [dict(text="ab. ab ab.\n\nab.", voice=S)], True),
+        ("records join one chain", [dict(text="ab.", voice=S), dict(text="ab ab.", voice=S, language="en_us")], True),
+        ("language spellings", [dict(text="ab.", voice=S, language="EN-US"), dict(text="ab.", voice=S, language="english"),
+                                dict(text="ab.", voice=S, language="en"), dict(text="ab.", voice=S, language=" ")], True),
+        ("delivery string", [dict(text="ab.", voice=S, delivery="intensity=1,pace=-0.5"), dict(text="ab.", voice=S, delivery="pace=-0.5,intensity=1")], True),
+        ("delivery default", [dict(text="ab.", voice=S), dict(text="ab.", voice=S, delivery="default"), dict(text="ab.", voice=S, delivery={}),
+                              dict(text="ab.", voice=S, delivery=dict(intensity=None, pace="default", pitch=" Auto "))], True),
+        ("delivery mapping", [dict(text="ab.", voice=S, delivery=dict(intensity=1, pace="-0.5")), dict(text="ab.", voice=S, delivery=dict(pitch=5))], True),
+        ("delivery fields", [dict(text="ab.", voice=S, intensity=1, pace=-0.5), dict(text="ab.", voice=S, delivery="intensity=1,pace=-0.5"),
+                             dict(text="ab.", voice=S, pitch=-9)], True),
+        ("empty record between", [dict(text="ab.", voice=S), dict(text="", voice=S, delivery="intensity=2"), dict(text="ab.", voice=S)], True),
+        ("empty record same key", [dict(text="ab.", voice=S), dict(text=None, voice=S), dict(text="ab.", voice=S)], True),
+        ("voice padded", [dict(text="ab.", voice="  scylla ")], True),
+        ("no normalize", [dict(text="ab 12.", voice=S)], False),
+        ("normalize", [dict(text="ab 12.", voice=S)], True),
+        ("no voice", [dict(text="ab.", voice=S), dict(text="ab.", voice=" ")], True),
+        ("missing voice", [dict(text="ab.")], True),
+        ("unknown voice", [dict(text="ab.", voice="nobody")], True),
+        ("unsupported language", [dict(text="ab.", voice=S, language="fr")], True),
+        ("emotion", [dict(text="ab.", voice=S, emotion="happy")], True),
+        ("fields and delivery", [dict(text="ab.", voice=S, intensity=1, delivery="pace=1")], True),
+        ("old keys", [dict(text="ab.", voice=S, delivery=dict(energy=1))], True),
+        ("old keys string", [dict(text="ab.", voice=S, delivery="valence=1")], True),
+        ("extra keys", [dict(text="ab.", voice=S, delivery=dict(tempo=1, speed=2, intensity=1))], True),
+        ("boolean", [dict(text="ab.", voice=S, delivery=dict(intensity=True))], True),
+        ("not a number", [dict(text="ab.", voice=S, delivery=dict(pace="fast"))], True),
+        ("not finite", [dict(text="ab.", voice=S, delivery=dict(pitch="nan"))], True),
+        ("not finite field", [dict(text="ab.", voice=S, pace="-inf")], True),
+        ("delivery number", [dict(text="ab.", voice=S, delivery=5)], True),
+        ("duplicate string", [dict(text="ab.", voice=S, delivery="intensity=1,intensity=2")], True),
+    ]
+    with tempfile.TemporaryDirectory() as tmp:
+        bundle = fakes._fake_bundle(Path(tmp), controls=controls)
+        files = _bundle_files(bundle)
+        runtime = ScyllasBandRuntime(fakes._fake_engine(1.0, **controls), bundle_dir=bundle, backend="onnx")
+        cases = []
+        for name, records, normalize in scenarios:
+            try:
+                plan = runtime.plan_records(records, normalize=normalize).to_dict()
+                cases.append(dict(name=name, records=records, normalize=normalize, plan=plan))
+            except ValueError as exc:
+                cases.append(dict(name=name, records=records, normalize=normalize, error=str(exc)))
+        records = [dict(text="ab. ab.", voice=S), dict(text="ab.", voice=S, delivery="intensity=1"), dict(text="", voice=S, pace=1),
+                   dict(text="ab ab.", voice=S), dict(text="ab.", voice=S)]
+        targets = []
+        for event in runtime.synthesize_stream(records, pause_ms=100.0, steps=1, seed=0):
+            if event.type == "audio_chunk":
+                zeros = 0
+                while zeros < event.audio.size and event.audio[zeros] == 0.0:
+                    zeros += 1
+                targets.append(dict(chunk_id=event.chunk.chunk_id, chain_id=event.chunk.chain_id, samples=int(event.audio.size), leading_zeros=zeros,
+                                    seed=event.metadata["seed"]))
+    return dict(bundle=files, cases=cases, pause=dict(records=records, pause_ms=100.0, targets=targets))
+
+
 def _bundle_files(bundle: Path) -> dict:
     return {str(path.relative_to(bundle)): json.loads(path.read_text()) if path.suffix == ".json" else None
             for path in sorted(bundle.rglob("*")) if path.is_file()}
@@ -360,7 +425,7 @@ def main() -> None:
     fixtures = dict(events=dict(token_to_id=TOKEN_TO_ID, cases=events_cases(rng)), durations=dict(cases=durations_cases(rng)),
                     context=dict(cases=context_cases(rng)), delivery=dict(cases=delivery_cases()), text=text_cases(),
                     normalizer=dict(cases=normalizer_cases()), unicode=dict(cases=unicode_cases()),
-                    targets=dict(choose=choose_cases(rng), streams=stream_cases()), singing=singing_cases())
+                    targets=dict(choose=choose_cases(rng), streams=stream_cases()), singing=singing_cases(), records=records_cases())
     for name, data in fixtures.items():
         (OUT / f"{name}.json").write_text(json.dumps(data, ensure_ascii=False, indent=None, separators=(",", ":")) + "\n", encoding="utf-8")
         print(f"{OUT / name}.json")
