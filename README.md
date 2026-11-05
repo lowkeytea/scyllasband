@@ -94,7 +94,7 @@ python -m scyllasband plan --voice scylla "Print the sentence plan as JSON."
 | `--speed` | 1.0 | A plain time stretch on top of pace; 1.2 is 20% faster |
 | `--steps`, `--sampler` | 4, `euler` | Flow sampling. The flow is trained for few-step sampling, so Euler with 4 steps (four model evaluations) is the default. Heun evaluates the model twice per step: `--sampler heun --steps 8` costs four times as much and sounds slightly sharper. Fewer steps are faster still; listen when trading quality for speed |
 | `--seed`, `--temperature` | random, 1.0 | Repeatable output; scale of the sampling noise |
-| `--threads` | backend default | CPU threads per graph |
+| `--threads` | LiteRT: the CPUs available, up to 4 | CPU threads per graph |
 | `--backend`, `--bundle` | the installed bundle for this machine (Core ML on a Mac, LiteRT elsewhere) | Choose another installed bundle |
 | `--compute-units` | `auto` | Core ML / Core AI: `auto` (the bundle's recommendation), `gpu`, `cpu` or `ane`. ONNX Runtime: `cpu`, or `gpu` for NVIDIA GPUs. See [Backends](#backends) |
 | `--pause-ms` | 0 | Extra silence where the voice, language or delivery changes |
@@ -111,7 +111,7 @@ python -m scyllasband plan --voice scylla "Print the sentence plan as JSON."
 | ONNX Runtime | anywhere ONNX Runtime runs | 291 MB | `onnxruntime`, installed the first time you use `--backend onnx` (or `pip install -e ".[onnx]"`) |
 | WebGPU (ONNX) | browsers through ONNX Runtime Web; NVIDIA GPUs through ONNX Runtime with CUDA | 291 MB | `onnxruntime-gpu` for NVIDIA GPUs: `pip install -e ".[cuda]"` |
 
-`python -m scyllasband download` fetches the Core ML bundle on an Apple silicon Mac and the LiteRT bundle elsewhere. A Mac that can build apps for iOS, iPadOS or visionOS 27 (macOS 27, or an Xcode with those SDKs) is also offered the Core AI bundle those apps use; the Mac itself keeps running Core ML. `--flavor` downloads a particular bundle. Commands use the installed bundle for the machine; `--backend` and `--bundle` select another, for example `--backend coreai` on macOS 27. Every bundle holds INT8 weights for the transformers and the G2P; LiteRT, Core ML and Core AI also quantize the vocoder. `--threads` sets the CPU threads per graph. Sampling uses Euler with 4 steps by default (`--sampler`, `--steps`).
+`python -m scyllasband download` fetches the Core ML bundle on an Apple silicon Mac and the LiteRT bundle elsewhere. A Mac that can build apps for iOS, iPadOS or visionOS 27 (macOS 27, or an Xcode with those SDKs) is also offered the Core AI bundle those apps use; the Mac itself keeps running Core ML. `--flavor` downloads a particular bundle. Commands use the installed bundle for the machine; `--backend` and `--bundle` select another, for example `--backend coreai` on macOS 27. Every bundle holds INT8 weights for the transformers and the G2P; LiteRT, Core ML and Core AI also quantize the vocoder. `--threads` sets the CPU threads per graph; LiteRT uses the CPUs available, up to four, as the native runtime does. Sampling uses Euler with 4 steps by default (`--sampler`, `--steps`).
 
 On an NVIDIA GPU, ONNX Runtime runs the WebGPU bundle, whose 8-bit weights stay on the GPU (the ONNX bundle's dynamic INT8 falls back to the CPU there). Install ONNX Runtime for CUDA in an environment without the CPU-only `onnxruntime` package; the `cuda` extra brings the CUDA and cuDNN libraries it needs:
 
