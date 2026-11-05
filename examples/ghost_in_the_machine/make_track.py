@@ -3,7 +3,8 @@
 The script (``script.json``) is a list of cues. A ``speak`` cue is one voice saying a line with optional delivery controls;
 a ``sing`` cue is one or more voices singing a melody score (``melodies/*.json``, the ``sing`` command's format). Cues are
 rendered one by one with the runtime, placed on a timeline with a gap between them (a ``sing`` cue with several voices renders
-the same score once per voice and sums them, so the voices sing in unison, each in its own octave), normalized, and written
+the same score once per voice, aligns the other voices' notes onto the first voice's onsets and sums them, so the voices
+sing in unison, each in its own octave), normalized, and written
 as one WAV with a cue sheet (start and end of every cue, for a video or a mix). Rendered cues are cached, so editing one
 line re-renders only that line.
 
@@ -27,6 +28,66 @@ from scyllasband.download import DEFAULT_MODELS_DIR, bundle_dir, default_install
 from scyllasband.runtime import ScyllasBandRuntime, SynthesisRequest
 
 HERE = Path(__file__).resolve().parent
+
+ALIGN_SEARCH = 0.10      # seconds: how far a double's note may be shifted to meet the lead's
+ALIGN_ONSET = 0.08       # seconds before a note's start included in the match (the consonant lands there)
+ALIGN_MAX_STEP = 0.06    # seconds: the most the shift may change from one note to the next
+ALIGN_FADE = 0.012       # seconds of crossfade where shifted segments join
+
+
+def envelope(audio: np.ndarray, sample_rate: int, hop: float = 0.002, window: float = 0.01) -> np.ndarray:
+    """RMS envelope every ``hop`` seconds over ``window`` seconds."""
+    h, w = max(1, int(hop * sample_rate)), max(1, int(window * sample_rate))
+    squares = np.concatenate([[0.0], np.cumsum(audio.astype(np.float64) ** 2)])
+    starts = np.arange(0, max(1, audio.size - w), h)
+    return np.sqrt((squares[starts + w] - squares[starts]) / w)
+
+
+def align_to_lead(lead: np.ndarray, double: np.ndarray, notes: list[tuple[float, float]], sample_rate: int) -> tuple[np.ndarray, list[float]]:
+    """Shift each note of ``double`` so its onset lands where the lead's does, and return the shifted take plus the shift
+    (seconds, positive = the double was late) found per note.
+
+    The score gives both takes the same note boundaries, but the model decides for itself where inside a note the consonant
+    falls, and two voices differ by up to about 150 ms there; summed as they are, every consonant doubles ("ma-ma-chine").
+    For each note the lead's and the double's RMS envelopes are compared over the onset region (``ALIGN_ONSET`` before the
+    note to 400 ms into it) at shifts up to ``ALIGN_SEARCH``; the best-correlated shift is kept, limited to a step of
+    ``ALIGN_MAX_STEP`` from the previous note's so a weak match cannot throw a note out. The double is then rebuilt note by
+    note from its shifted segments, joined with short crossfades at the note boundaries (where the consonants are), so vowels
+    keep their pitch and the voice its timbre."""
+    hop = 0.002
+    env_lead, env_double = envelope(lead, sample_rate, hop), envelope(double, sample_rate, hop)
+    search = int(ALIGN_SEARCH / hop)
+    shifts, previous = [], 0.0
+    for start, end in notes:
+        a = max(0, int((start - ALIGN_ONSET) / hop)); b = min(len(env_lead), int(min(end, start + 0.4) / hop))
+        best, best_score = previous, -1.0
+        if b - a >= 10:
+            ref = env_lead[a:b] - env_lead[a:b].mean()
+            for k in range(-search, search + 1):
+                seg = env_double[a + k: b + k] if a + k >= 0 else None
+                if seg is None or len(seg) != len(ref):
+                    continue
+                seg = seg - seg.mean()
+                score = float(np.dot(ref, seg) / (np.linalg.norm(ref) * np.linalg.norm(seg) + 1e-9))
+                if score > best_score:
+                    best, best_score = k * hop, score
+            if best_score < 0.3:
+                best = previous
+        best = float(np.clip(best, previous - ALIGN_MAX_STEP, previous + ALIGN_MAX_STEP))
+        shifts.append(best); previous = best
+    out = np.zeros_like(double)
+    fade = max(1, int(ALIGN_FADE * sample_rate)); ramp = np.linspace(0.0, 1.0, 2 * fade, dtype=np.float32)
+    edges = [0] + [int((notes[i][1] + notes[i + 1][0]) / 2 * sample_rate) for i in range(len(notes) - 1)] + [double.size]
+    for (lo, hi), shift in zip(zip(edges, edges[1:]), shifts):   # segment k, shifted; linear crossfades centred on the edges
+        lo2, hi2 = max(0, lo - fade), min(double.size, hi + fade)
+        piece = double[np.clip(np.arange(lo2, hi2) + int(round(shift * sample_rate)), 0, double.size - 1)].copy()
+        if lo > 0:
+            piece[: 2 * fade] *= ramp[: min(2 * fade, piece.size)]
+        if hi < double.size:
+            piece[-2 * fade:] *= ramp[::-1][-min(2 * fade, piece.size):]
+        out[lo2:hi2] += piece
+    return out, shifts
+
 
 
 def load_runtime(args: argparse.Namespace) -> ScyllasBandRuntime:
@@ -55,17 +116,26 @@ def render_cue(runtime: ScyllasBandRuntime, cue: dict, cache: Path, *, force: bo
         score = json.loads((HERE / cue["score"]).read_text(encoding="utf-8"))
         voices, gains = list(cue["voices"]), list(cue.get("gains") or [1.0] * len(cue["voices"]))
         takes, plans = [], []
-        for voice, gain in zip(voices, gains):
+        for voice in voices:
             result = runtime.sing(score, voice, cue.get("language"), seed=cue.get("seed"), transpose=int(cue.get("transpose", 0)),
                                   steps=cue.get("steps"), decoder=cue.get("decoder"), progress=sys.stderr)
-            takes.append(result.audio.astype(np.float32) * float(gain)); plans.append(result.metadata); sample_rate = result.sample_rate
+            takes.append(result.audio.astype(np.float32)); plans.append(result.metadata); sample_rate = result.sample_rate
         length = max(len(t) for t in takes)     # the takes share the score's timeline; lengths differ by a few samples
+        takes = [np.pad(t, (0, length - len(t))) for t in takes]
+        notes = [(p["start"] + n["start"], p["start"] + n["end"]) for p in plans[0]["phrases"] for n in p["notes"] if n["note"] != "rest"]
+        alignment = {}
+        if len(takes) > 1 and cue.get("align", "lead") == "lead":   # the first voice leads; the others are shifted onto it, note by note
+            for voice, k in zip(voices[1:], range(1, len(takes))):
+                takes[k], shifts = align_to_lead(takes[0], takes[k], notes, sample_rate)
+                alignment[voice] = [round(x, 3) for x in shifts]
         audio = np.zeros(length, dtype=np.float32)
-        for take in takes:
-            audio[: len(take)] += take
+        for take, gain in zip(takes, gains):
+            audio += take * float(gain)
         audio /= max(1.0, float(np.abs(audio).max()) / 0.95)
-        meta = dict(type="sing", voices=voices, score=cue["score"], text=score["text"], transpose=cue.get("transpose", 0),
-                    phrases=[dict(start=p["start"], end=p["end"], text=p["text"]) for p in plans[0]["phrases"]])
+        meta = dict(type="sing", voices=voices, gains=gains, score=cue["score"], text=score["text"], transpose=cue.get("transpose", 0),
+                    phrases=[dict(start=p["start"], end=p["end"], text=p["text"]) for p in plans[0]["phrases"]],
+                    notes=[dict(label=n["label"], start=round(p["start"] + n["start"], 3), end=round(p["start"] + n["end"], 3))
+                           for p in plans[0]["phrases"] for n in p["notes"] if n["note"] != "rest"], alignment=alignment)
     else:
         raise ValueError(f"cue {cue['name']!r}: type must be speak or sing")
     cache.mkdir(parents=True, exist_ok=True)

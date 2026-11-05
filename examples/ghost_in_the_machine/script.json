@@ -51,23 +51,18 @@
       "name": "chorus",
       "type": "sing",
       "voices": [
-        "tuesday"
+        "tuesday",
+        "orpheus"
       ],
       "score": "melodies/chorus.json",
       "transpose": -4,
       "seed": 5,
-      "gap": 0.25
-    },
-    {
-      "name": "chorus_answer",
-      "type": "sing",
-      "voices": [
-        "orpheus"
+      "gap": 0.6,
+      "gains": [
+        1.0,
+        0.6
       ],
-      "score": "melodies/tag.json",
-      "transpose": -4,
-      "seed": 5,
-      "gap": 0.6
+      "align": "lead"
     },
     {
       "name": "scylla_1",
@@ -107,12 +102,20 @@
       "name": "tag",
       "type": "sing",
       "voices": [
-        "thistle"
+        "thistle",
+        "tuesday",
+        "orpheus"
       ],
       "score": "melodies/tag.json",
       "transpose": -4,
       "seed": 5,
-      "gap": 0.8
+      "gap": 0.8,
+      "gains": [
+        1.0,
+        0.5,
+        0.5
+      ],
+      "align": "lead"
     },
     {
       "name": "outro",
