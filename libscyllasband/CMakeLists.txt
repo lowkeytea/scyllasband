@@ -91,11 +91,12 @@ if(SCYLLASBAND_SANITIZE)
     add_link_options(-fsanitize=address,undefined)
 endif()
 
-# The frontend: text, events, JSON and noise. No graph runtime, so it builds and is tested without any SDK.
+# The frontend: text, events, JSON, noise and scores. No graph runtime, so it builds and is tested without any SDK.
 add_library(scyllasband_frontend STATIC
     src/scyllasband_events.cpp
     src/scyllasband_json.cpp
     src/scyllasband_noise.cpp
+    src/scyllasband_score.cpp
     src/scyllasband_text.cpp
     src/scyllasband_unicode.cpp
 )
@@ -116,7 +117,8 @@ endif()
 add_library(scyllasband_core STATIC
     src/scyllasband_engine.cpp
     src/scyllasband_g2p.cpp
-    src/scyllasband_singing.cpp
+    src/scyllasband_song_plan.cpp
+    src/scyllasband_song_render.cpp
     src/scyllasband_speech_plan.cpp
     src/scyllasband_speech_stream.cpp
     ${_scyllasband_backend_source}

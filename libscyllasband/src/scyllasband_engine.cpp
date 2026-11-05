@@ -83,7 +83,7 @@ Engine::Engine(const BackendOptions& options, std::unique_ptr<Backend> backend) 
     feeds_delivery_mode_ = graph_contract_ == kGraphContractV4;
     const Json& modes = controls.get("delivery_modes");
     if (feeds_delivery_mode_ && modes.get("enabled").boolean(false)) {
-        for (const auto& [mode, id] : modes.get("ids").items()) delivery_modes_[mode] = id.integer();
+        for (const auto& [mode, id] : modes.get("ids").items()) singing_.mode_ids[mode] = id.integer();
         const Json& singing = modes.get("singing");
         for (const Json& mode : singing.get("modes").elements()) singing_.modes.push_back(mode.str());
         singing_.sampler = unicode::encode(unicode::lower(unicode::decode(singing.get("sampler").str("heun"))));
@@ -92,7 +92,7 @@ Engine::Engine(const BackendOptions& options, std::unique_ptr<Backend> backend) 
         singing_.guidance = singing.get("guidance").num(1.0);
         singing_.midi_center = singing.get("melody").get("midi_center").num(60.0);
         singing_.midi_scale = singing.get("melody").get("midi_scale").num(24.0);
-        for (const auto& [voice_id, center] : singing.get("voice_midi_center").items()) singing_.voice_midi_center[voice_id] = center.num();
+        for (const auto& [voice_id, center] : singing.get("voice_midi_center").items()) singing_.voice_center[voice_id] = center.num();
     }
     auto asset = [&](const std::string& key) { return bundle_dir_ + "/" + assets.get(key).str(); };
 
@@ -173,6 +173,15 @@ Engine::Engine(const BackendOptions& options, std::unique_ptr<Backend> backend) 
         Voice voice{v.get("id").str(), {}, v.get("default_language").str()};
         for (const Json& language : v.get("languages").elements()) voice.languages.push_back(language.str());
         voices_.push_back(std::move(voice));
+    }
+    // Each voice's sung centre: the manifest's voice_midi_center, else the middle of its spoken pitch edges (semitones on the
+    // melody scale, whose melody_center is C4) moved onto the singing melody's MIDI scale.
+    if (singing_.enabled()) {
+        for (const Voice& voice : voices_) {
+            auto edges = pitch_edges_.find(voice.id);
+            if (singing_.voice_center.count(voice.id) || edges == pitch_edges_.end()) continue;
+            singing_.voice_center[voice.id] = (edges->second.first + edges->second.second) / 2 - melody_center_ + singing_.midi_center;
+        }
     }
     g2p_ = std::make_unique<G2P>(bundle_dir_, manifest_, phone_to_id_, [this](const std::vector<int64_t>& ids, int64_t& symbols) {
         // Padding is masked, so the narrowest G2P graph that holds the text gives the same logits.
@@ -324,6 +333,11 @@ std::vector<std::string> Engine::available_decoders() const {
         if (!graphs.empty()) out.push_back(name);
     }
     return out;
+}
+
+int64_t Engine::decoder_max_frames(const std::string& decoder) const {
+    auto found = decoder_graphs_.find(decoder);
+    return found == decoder_graphs_.end() || found->second.empty() ? 0 : found->second.back().first;
 }
 
 std::pair<int64_t, std::string> Engine::decoder_bucket(const std::string& decoder, int64_t frames) const {
@@ -776,6 +790,11 @@ std::vector<float> Engine::decode(const std::vector<float>& latents, int64_t fra
     const int per_frame = spec->second.samples_per_frame;
     auto graphs = decoder_graphs_.find(decoder);
     const int64_t max_frames = graphs->second.empty() ? buckets_.back().frames : graphs->second.back().first;
+    // A target longer than the decoder's largest bucket cannot be decoded (BigVGAN may stop below the flow's largest bucket).
+    if (frames > max_frames) {
+        throw OverlongError(std::to_string(frames) + " latent frames to decode, but the " + decoder + " decoder supports at most " +
+                            std::to_string(max_frames) + ".");
+    }
     // Up to decode_context frames of left context; left context gives way to the target when both do not fit the largest bucket.
     int64_t context = std::min<int64_t>(left_frames, decode_context_);
     context = std::max<int64_t>(0, std::min(context, max_frames - 1 - frames));

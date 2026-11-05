@@ -2,7 +2,7 @@
 #include "scyllasband.h"
 
 #include "scyllasband_engine.h"
-#include "scyllasband_singing.h"
+#include "scyllasband_song_render.h"
 #include "scyllasband_speech_stream.h"
 #include "scyllasband_test_api.h"
 #include "scyllasband_text.h"
@@ -114,11 +114,11 @@ Json annotate(Engine& engine, Json metadata, const SynthesisOptions& options, co
     return metadata;
 }
 
-SingOptions sing_options_from(const ScyllasBandSingRequest* request) {
+SingRequest sing_options_from(const ScyllasBandSingRequest* request) {
     require(request != nullptr, "request is required");
     require(request->voice_id != nullptr && request->voice_id[0] != '\0', "request.voice_id is required");
     require(request->score_json != nullptr && request->score_json[0] != '\0', "request.score_json is required");
-    SingOptions options;
+    SingRequest options;
     options.voice = request->voice_id;
     options.language = request->language ? request->language : "";
     if (request->has_seed) options.seed = request->seed;
@@ -136,14 +136,6 @@ SingOptions sing_options_from(const ScyllasBandSingRequest* request) {
     return options;
 }
 
-Json parse_score_json(const char* text) {
-    try {
-        return Json::parse(text);
-    } catch (const std::exception& error) {
-        throw ScoreError(std::string("The score is not valid JSON: ") + error.what());
-    }
-}
-
 PhraseNoiseFn sing_test_noise(ScyllasBandRuntime* runtime) {
     if (runtime->test_noise == nullptr) return nullptr;
     const int dim = 2 + runtime->engine->latent_dim();
@@ -152,7 +144,7 @@ PhraseNoiseFn sing_test_noise(ScyllasBandRuntime* runtime) {
     };
 }
 
-Json sing_annotate(Engine& engine, Json metadata, const SingOptions& options) {
+Json sing_annotate(Engine& engine, Json metadata, const SingRequest& options) {
     metadata.set("backend", Json(engine.backend_name()));
     metadata.set("accelerator", Json(engine.accelerator()));
     metadata.set("bundle_dir", Json(engine.bundle_dir()));
@@ -161,12 +153,10 @@ Json sing_annotate(Engine& engine, Json metadata, const SingOptions& options) {
 }
 
 Json sing_plan(Engine& engine, const ScyllasBandSingRequest* request, bool with_melody) {
-    const SingOptions options = sing_options_from(request);
-    if (!engine.supports_singing()) {
-        throw std::invalid_argument("Singing needs a v4 bundle with delivery modes; this bundle is spoken only. Download a current model.");
-    }
-    const std::string language = engine.resolve_language(options.voice, options.language);
-    const SongPlan plan = plan_song(parse_score(parse_score_json(request->score_json)), engine, options.voice, language, options.plan);
+    const SingRequest options = sing_options_from(request);
+    EngineSongFrontend frontend(engine);
+    const ResolvedSing resolved = resolve_sing_request(frontend, parse_score_text(request->score_json), options);
+    const SongPlan plan = plan_song(resolved.score, frontend, resolved.voice, resolved.language, options.plan);
     Json out = plan.to_json(with_melody);
     out.set("samples", Json(static_cast<int64_t>(std::ceil(plan.seconds() * engine.sample_rate()))));
     return out;
@@ -338,8 +328,8 @@ ScyllasBandStatus scyllasband_sing(ScyllasBandRuntime* runtime, const ScyllasBan
     return guarded([&] {
         require(runtime != nullptr && out_audio != nullptr, "runtime and out_audio are required");
         *out_audio = ScyllasBandAudio{};
-        const SingOptions options = sing_options_from(request);
-        const Json score = parse_score_json(request->score_json);
+        const SingRequest options = sing_options_from(request);
+        const Score score = parse_score_text(request->score_json);
         const uint64_t generation = runtime->engine->cancel_generation();
         std::lock_guard<std::mutex> lock(runtime->mutex);
         Engine& engine = *runtime->engine;
@@ -358,8 +348,8 @@ ScyllasBandStatus scyllasband_sing_stream(ScyllasBandRuntime* runtime, const Scy
                                           void* user_data) {
     return guarded([&] {
         require(runtime != nullptr && callback != nullptr, "runtime and callback are required");
-        const SingOptions options = sing_options_from(request);
-        const Json score = parse_score_json(request->score_json);
+        const SingRequest options = sing_options_from(request);
+        const Score score = parse_score_text(request->score_json);
         const uint64_t generation = runtime->engine->cancel_generation();
         std::lock_guard<std::mutex> lock(runtime->mutex);
         Engine& engine = *runtime->engine;

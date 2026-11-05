@@ -25,10 +25,12 @@
 // buckets, decoders, singing settings) from any thread once constructed, while graph calls are serialized by the caller.
 #pragma once
 
+#include "scyllasband_errors.h"
 #include "scyllasband_events.h"
 #include "scyllasband_g2p.h"
 #include "scyllasband_graph.h"
 #include "scyllasband_json.h"
+#include "scyllasband_singing_controls.h"
 
 #include <array>
 #include <atomic>
@@ -46,28 +48,10 @@ namespace scyllasband {
 extern const char* const kGraphContract;    // v3: speech
 extern const char* const kGraphContractV4;  // v4: speech and singing
 
-// The sentence needs more latent frames (or phones) than the largest bucket holds.
-class OverlongError : public std::runtime_error {
-public:
-    using std::runtime_error::runtime_error;
-};
-
-class CancelledError : public std::runtime_error {
-public:
-    CancelledError() : std::runtime_error("Synthesis was cancelled") {}
-};
-
 struct Voice {
     std::string id;
     std::vector<std::string> languages;
     std::string default_language;
-};
-
-struct Sentence {
-    std::vector<std::string> phones;
-    std::vector<int> word_starts;
-    std::vector<int64_t> before_ids;  // preceding passage phones, silences excluded
-    std::vector<int64_t> after_ids;   // following passage phones, silences excluded
 };
 
 struct DeliveryTensors {
@@ -90,17 +74,6 @@ struct DecoderSpec {
     std::string name, component;
     int samples_per_frame = 512;
     int short_samples = 0;  // samples the output falls short of frames * samples_per_frame
-};
-
-// controls.delivery_modes.singing of a v4 bundle.
-struct SingingSettings {
-    std::vector<std::string> modes;  // the delivery modes the bundle sings in (sung, ballad)
-    std::string sampler = "heun";
-    int steps = 8;
-    std::string decoder = "vocos";   // the preferred singing decoder
-    double guidance = 1.0;
-    double midi_center = 60.0, midi_scale = 24.0;  // melody layout note_phase_presence
-    std::map<std::string, double> voice_midi_center;
 };
 
 // A target sung from a score: its melody input [frames, 3] replaces the pitch predictor's contour, `mode` is fed to the
@@ -165,13 +138,15 @@ public:
     const std::string& graph_contract() const { return graph_contract_; }
     bool feeds_delivery_mode() const { return feeds_delivery_mode_; }
     // controls.delivery_modes.ids when enabled (empty on v3 bundles and v4 bundles without singing).
-    const std::map<std::string, int64_t>& delivery_modes() const { return delivery_modes_; }
-    const SingingSettings& singing() const { return singing_; }
-    bool supports_singing() const { return !delivery_modes_.empty(); }
+    const std::map<std::string, int64_t>& delivery_modes() const { return singing_.mode_ids; }
+    const SingingControls& singing() const { return singing_; }
+    bool supports_singing() const { return singing_.enabled(); }
     const std::map<std::string, DecoderSpec>& decoders() const { return decoders_; }
     // Whether the bundle has graphs for `decoder` (vocos always; bigvgan where exported for this backend).
     bool has_decoder(const std::string& decoder) const;
     std::vector<std::string> available_decoders() const;  // sorted
+    // The largest bucket with a graph for `decoder` (0 when this backend has none).
+    int64_t decoder_max_frames(const std::string& decoder) const;
     const std::map<std::string, std::pair<double, double>>& pitch_edges() const { return pitch_edges_; }
     double melody_center() const { return melody_center_; }
     // The graph inputs and pitch shift for a request: what it leaves out takes the voice's default; `resolved` (optional)
@@ -261,8 +236,7 @@ private:
     // v4: delivery modes, singing settings and decoders.
     std::string graph_contract_;
     bool feeds_delivery_mode_ = false;
-    std::map<std::string, int64_t> delivery_modes_;
-    SingingSettings singing_;
+    SingingControls singing_;
     std::map<std::string, DecoderSpec> decoders_;
     std::map<std::string, std::vector<std::pair<int64_t, std::string>>> decoder_graphs_;  // decoder -> (frames, component), smallest first
     std::unique_ptr<G2P> g2p_;

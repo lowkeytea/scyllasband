@@ -4,7 +4,7 @@
 #include "scyllasband_events.h"
 #include "scyllasband_graph.h"
 #include "scyllasband_json.h"
-#include "scyllasband_singing.h"
+#include "scyllasband_song_render.h"
 #include "scyllasband_speech_stream.h"
 #include "scyllasband_text.h"
 #include "scyllasband_unicode.h"
@@ -442,7 +442,8 @@ void singing_suite(const Json& fixture) {
         SongPlan plan;
         bool failed = false;
         try {
-            plan = plan_song(parse_score(c.get("score")), *engine, "scylla", "en_us", settings);
+            EngineSongFrontend frontend(*engine);
+            plan = plan_song(parse_score(c.get("score")), frontend, "scylla", "en_us", settings);
         } catch (const std::exception& error) {
             failed = true;
             expect(!c.get("error").is_null(), name + ": " + error.what());
@@ -474,7 +475,7 @@ void singing_suite(const Json& fixture) {
         std::vector<FakeCall> log;
         auto engine = fake_engine(bundle, bundles.get(bundle_name), &log);
         const Json& options = c.get("options");
-        SingOptions sing_options;
+        SingRequest sing_options;
         sing_options.voice = "scylla";
         sing_options.language = "en_us";
         sing_options.seed = 5;
@@ -488,7 +489,7 @@ void singing_suite(const Json& fixture) {
         Json metadata;
         std::vector<float> audio;
         try {
-            audio = sing(*engine, c.get("score"), sing_options, &metadata);
+            audio = sing(*engine, parse_score(c.get("score")), sing_options, &metadata);
         } catch (const std::exception& error) {
             expect(false, name + ": " + error.what());
             continue;
@@ -594,9 +595,9 @@ void singing_suite(const Json& fixture) {
                "v3 singing info");
         bool refused = false;
         try {
-            SingOptions options;
+            SingRequest options;
             options.voice = "scylla";
-            sing(*spoken, fixture.get("sings")[0].get("score"), options);
+            sing(*spoken, parse_score(fixture.get("sings")[0].get("score")), options);
         } catch (const std::invalid_argument& error) {
             refused = std::string(error.what()).find("v4") != std::string::npos;
         }
@@ -611,15 +612,208 @@ void singing_suite(const Json& fixture) {
                "v3 speech feeds no delivery mode");
         bool unknown = false;
         try {
-            SingOptions options;
+            SingRequest options;
             options.voice = "scylla";
             options.decoder = "hifigan";
             options.plan.pad = 0.02;
-            sing(*engine, fixture.get("sings")[0].get("score"), options);
+            sing(*engine, parse_score(fixture.get("sings")[0].get("score")), options);
         } catch (const std::invalid_argument& error) {
             unknown = std::string(error.what()).find("no 'hifigan' decoder") != std::string::npos;
         }
         expect(unknown, "an unknown decoder is refused");
+    }
+    // A bundle whose BigVGAN stops below the flow's largest bucket, as the Apple bundles carry it (BigVGAN to 512 frames, the flow
+    // to 1024): longer decodes are refused (never written past the bucket) and plans keep within it whichever decoder sings.
+    {
+        Json files = bundles.get("v4");
+        Json manifest = files.get("manifest.json"), controls = manifest.get("controls"), targets = controls.get("target_buckets");
+        Json buckets = targets.get("buckets");
+        for (Json& bucket : buckets.elements()) {
+            if (bucket.get("latent_frames").integer() <= 8) continue;
+            Json kept{Json::Object{}};
+            for (const auto& [key, value] : bucket.items()) {
+                if (key != "vocoder_bigvgan") kept.set(key, value);
+            }
+            bucket = kept;
+        }
+        targets.set("buckets", buckets);
+        controls.set("target_buckets", targets);
+        manifest.set("controls", controls);
+        files.set("manifest.json", manifest);
+        const FakeBundle small(files);
+        auto engine = fake_engine(small, files);
+        EngineSongFrontend frontend(*engine);
+        expect(engine->decoder_max_frames("bigvgan") == 8 && engine->decoder_max_frames("vocos") == 16 && frontend.max_phrase_frames() == 8,
+               "decoder limits: bigvgan " + std::to_string(engine->decoder_max_frames("bigvgan")) + ", phrase " + std::to_string(frontend.max_phrase_frames()));
+        const std::vector<float> latents(24 * 12, 0.5f);
+        DecodeRequest decode;
+        decode.voice = "scylla";
+        decode.language = "en_us";
+        decode.decoder = "bigvgan";
+        bool overlong = false;
+        try {
+            engine->decode(latents, 12, decode);
+        } catch (const OverlongError&) {
+            overlong = true;
+        }
+        expect(overlong, "a decode longer than the decoder's largest bucket is refused");
+        decode.decoder = "vocos";
+        expect(engine->decode(latents, 12, decode).size() == static_cast<std::size_t>(12 * 512), "vocos decodes past BigVGAN's largest bucket");
+        const Score score = parse_score(Json::parse(R"({"text": "bob wow", "bpm": 1200, "style": "pop",
+            "notes": [["bob", "C4", 1], ["-", "rest", 6], ["wow", "D4", 1]]})"));
+        std::vector<Json> phrases;
+        for (const char* decoder : {"bigvgan", "vocos"}) {
+            SingRequest request;
+            request.voice = "scylla";
+            request.decoder = decoder;
+            request.seed = 3;
+            request.plan.pad = 0.02;
+            Json metadata;
+            sing(*engine, score, request, &metadata);
+            phrases.push_back(metadata.get("phrases"));
+            for (const Json& phrase : metadata.get("phrases").elements()) {
+                expect(phrase.get("frames").integer() <= 8, std::string(decoder) + " phrase within the phrase limit: " + phrase.get("frames").dump());
+            }
+        }
+        std::vector<std::vector<int64_t>> durations[2];
+        for (int k = 0; k < 2; ++k) {
+            for (const Json& phrase : phrases[k].elements()) durations[k].push_back(ints(phrase.get("durations")));
+        }
+        expect(!durations[0].empty() && durations[0] == durations[1], "the plan does not depend on the decoder");
+    }
+    // The planner through a fake frontend: the phrase limit comes from the frontend, styles from its controls, and every
+    // request check happens in resolve_sing_request.
+    {
+        class LetterFrontend : public SongFrontend {
+        public:
+            Phonemized phonemize(const std::string& text, const std::string&) override {
+                Phonemized out;
+                out.phones = {kSilencePhone};
+                std::size_t word = 0;
+                std::string current;
+                auto flush = [&]() {
+                    if (current.empty()) return;
+                    if (word++ > 0) out.word_starts.push_back(static_cast<int>(out.phones.size()));
+                    for (char letter : current) out.phones.push_back(std::string(1, letter));
+                    out.phones.push_back(kSilencePhone);
+                    current.clear();
+                };
+                for (char c : text) {
+                    if (c == ' ') flush();
+                    else current += c;
+                }
+                flush();
+                return out;
+            }
+            std::string resolve_language(const std::string& voice, const std::string& language) const override {
+                if (voice != "v") throw std::invalid_argument("Unknown voice '" + voice + "'");
+                return language.empty() ? "en_us" : language;
+            }
+            const SingingControls& singing() const override { return controls; }
+            int sample_rate() const override { return 24000; }
+            int latent_hop() const override { return 512; }
+            int64_t max_phrase_frames() const override { return limit; }
+            bool has_decoder(const std::string& decoder) const override { return decoder == "vocos" || decoder == "bigvgan"; }
+            std::vector<std::string> available_decoders() const override { return {"bigvgan", "vocos"}; }
+            SingingControls controls;
+            int64_t limit = 1024;
+        };
+        LetterFrontend frontend;
+        frontend.controls.mode_ids = {{"spoken", 0}, {"sung", 1}, {"ballad", 3}};
+        frontend.controls.modes = {"sung", "ballad"};
+        frontend.controls.voice_center = {{"v", 60.0}};
+        // Two 0.6 s runs a 0.3 s rest apart: one phrase with a roomy limit, two when the limit holds only one run.
+        const Score song = parse_score(Json::parse(R"({"text": "bob wow bob wow", "bpm": 100, "style": "pop", "notes": [
+            ["bob", "C4", 0.5], ["wow", "D4", 0.5], ["-", "rest", 0.5], ["bob", "E4", 0.5], ["wow", "G4", 0.5]]})"));
+        PlanSettings settings;
+        settings.max_seconds = 2.0;
+        const SongPlan roomy = plan_song(song, frontend, "v", "en_us", settings);
+        frontend.limit = 50;   // (50 - 2) * 512 / 24000 - 0.24 = 0.78 s
+        const SongPlan tight = plan_song(song, frontend, "v", "en_us", settings);
+        expect(roomy.phrases.size() == 1 && tight.phrases.size() == 2, "the frontend's phrase limit packs phrases: " +
+               std::to_string(roomy.phrases.size()) + " / " + std::to_string(tight.phrases.size()));
+        frontend.limit = 20;
+        bool overlong = false;
+        try {
+            plan_song(song, frontend, "v", "en_us", settings);
+        } catch (const OverlongError&) {
+            overlong = true;
+        }
+        expect(overlong, "a phrase longer than the frontend's limit is refused");
+        frontend.limit = 1024;
+        auto refused = [&](const SingRequest& request, const Score& score, const std::string& needle) {
+            try {
+                resolve_sing_request(frontend, score, request);
+            } catch (const std::invalid_argument& error) {
+                return std::string(error.what()).find(needle) != std::string::npos;
+            }
+            return false;
+        };
+        SingRequest request;
+        request.voice = "  v ";
+        const ResolvedSing resolved = resolve_sing_request(frontend, song, request);
+        expect(resolved.voice == "v" && resolved.language == "en_us" && resolved.settings.decoder == "vocos" && resolved.settings.steps == 8 &&
+                   resolved.settings.sampler == "heun",
+               "resolved request: " + resolved.voice + " " + resolved.settings.decoder);
+        SingRequest blank = request;
+        blank.voice = " ";
+        expect(refused(blank, song, "A voice is required"), "a blank voice is refused");
+        SingRequest unknown_voice = request;
+        unknown_voice.voice = "nobody";
+        expect(refused(unknown_voice, song, "Unknown voice"), "an unknown voice is refused");
+        SingRequest bad_decoder = request;
+        bad_decoder.decoder = "hifigan";
+        expect(refused(bad_decoder, song, "no 'hifigan' decoder"), "an unknown decoder is refused");
+        SingRequest bad_sampler = request;
+        bad_sampler.sampler = "dpm";
+        expect(refused(bad_sampler, song, "Unsupported sampler"), "an unknown sampler is refused");
+        frontend.controls.modes = {"sung"};
+        const Score ballad = parse_score(Json::parse(R"({"bpm": 80, "style": "ballad", "notes": [["wow", "C4", 2]]})"));
+        expect(refused(request, ballad, "not a singing style"), "a style the bundle does not sing is refused");
+        frontend.controls.modes = {"sung", "ballad"};
+        SingingControls spoken_only;
+        LetterFrontend speech = frontend;
+        speech.controls = spoken_only;
+        bool needs_v4 = false;
+        try {
+            resolve_sing_request(speech, song, request);
+        } catch (const std::invalid_argument& error) {
+            needs_v4 = std::string(error.what()).find("v4") != std::string::npos;
+        }
+        expect(needs_v4, "a bundle without delivery modes refuses to sing");
+    }
+    // Key fit: no graphs, only the controls and the score.
+    {
+        SingingControls controls;
+        controls.mode_ids = {{"spoken", 0}, {"sung", 1}};
+        controls.voice_center = {{"v", 60.0}};
+        auto score_of = [](const std::vector<std::string>& notes) {
+            Json rows{Json::Array{}};
+            for (const std::string& note : notes) {
+                Json row{Json::Array{}};
+                row.push(Json("la"));
+                row.push(Json(note));
+                row.push(Json(1));
+                rows.push(row);
+            }
+            Json data{Json::Object{}};
+            data.set("bpm", Json(120));
+            data.set("notes", rows);
+            return parse_score(data);
+        };
+        const SongFit fits = song_fit(controls, score_of({"C5", "C5"}), "v", 0, true);   // mean 72 -> register -12 -> 60
+        expect(fits.register_shift == -12 && fits.outside_semitones == 0.0 && fits.suggested_transpose == 0 && fits.band_low == 57.0 &&
+                   fits.band_high == 65.0 && fits.low_midi == 60 && fits.high_midi == 60,
+               "a song in the voice's range: " + fits.to_json().dump());
+        const SongFit high = song_fit(controls, score_of({"F#4", "A4"}), "v", 0, true);   // mean 67.5: -12 -> 55.5, 1.5 below the band
+        expect(high.register_shift == -12 && std::fabs(high.outside_semitones - 1.5) < 1e-9 && high.suggested_transpose == 2,
+               "a song between octaves: " + high.to_json().dump());
+        const SongFit fixed = song_fit(controls, score_of({"C5", "C5"}), "v", 0, false);   // no register: 7 above, -6 comes nearest
+        expect(fixed.register_shift == 0 && std::fabs(fixed.outside_semitones - 7.0) < 1e-9 && fixed.suggested_transpose == -6,
+               "a song held in its octave: " + fixed.to_json().dump());
+        const SongFit unknown = song_fit(controls, score_of({"C5"}), "nobody", 2, true);
+        expect(!unknown.voice_center && unknown.register_shift == 0 && unknown.suggested_transpose == 2 && unknown.mean_midi == 74.0,
+               "no centre for an unknown voice: " + unknown.to_json().dump());
     }
 }
 
