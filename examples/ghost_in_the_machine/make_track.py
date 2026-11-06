@@ -11,6 +11,7 @@ line re-renders only that line.
     python examples/ghost_in_the_machine/make_track.py                      # the installed bundle (download first)
     python examples/ghost_in_the_machine/make_track.py --bundle <dir> --backend litert --only chorus,tag
     python examples/ghost_in_the_machine/make_track.py --out track.wav --cues track.cues.json
+    python examples/ghost_in_the_machine/make_track.py --script examples/face_down/script.json --out face_down.wav   # another piece
 
 Singing needs a bundle with delivery modes (the singing release); speech works with any bundle.
 """
@@ -101,8 +102,8 @@ def load_runtime(args: argparse.Namespace) -> ScyllasBandRuntime:
     return open_runtime(bundle, engine=args.engine, backend=args.backend, threads=args.threads)   # the CLI's engine choice
 
 
-def render_cue(runtime: ScyllasBandRuntime, cue: dict, cache: Path, *, force: bool) -> tuple[np.ndarray, int, dict]:
-    """One cue's audio (mono float32), its sample rate and metadata; cached as <cache>/<name>.wav + .json."""
+def render_cue(runtime: ScyllasBandRuntime, cue: dict, cache: Path, *, force: bool, root: Path = HERE) -> tuple[np.ndarray, int, dict]:
+    """One cue's audio (mono float32), its sample rate and metadata; cached as <cache>/<name>.wav + .json. Scores are relative to root."""
     wav, meta_path = cache / f"{cue['name']}.wav", cache / f"{cue['name']}.json"
     if wav.is_file() and meta_path.is_file() and not force:
         audio, sample_rate = read_wav(wav)
@@ -114,7 +115,7 @@ def render_cue(runtime: ScyllasBandRuntime, cue: dict, cache: Path, *, force: bo
                                                      pitch=delivery.get("pitch"), seed=cue.get("seed")), progress=sys.stderr)
         audio, sample_rate, meta = result.audio, result.sample_rate, dict(type="speak", voice=cue["voice"], text=cue["text"])
     elif cue["type"] == "sing":
-        score = json.loads((HERE / cue["score"]).read_text(encoding="utf-8"))
+        score = json.loads((root / cue["score"]).read_text(encoding="utf-8"))
         voices, gains = list(cue["voices"]), list(cue.get("gains") or [1.0] * len(cue["voices"]))
         takes, plans = [], []
         for voice in voices:
@@ -181,7 +182,8 @@ def main() -> None:
     runtime = load_runtime(args)
     pieces, sheet, cursor, sample_rate = [], [], 0.0, int(script.get("sample_rate", 24000))
     for cue in script["cues"]:
-        audio, rate, meta = render_cue(runtime, cue, cache, force=args.force or (only is not None and cue["name"] in only))
+        audio, rate, meta = render_cue(runtime, cue, cache, force=args.force or (only is not None and cue["name"] in only),
+                                       root=args.script.resolve().parent)
         if rate != sample_rate:
             raise ValueError(f"cue {cue['name']}: sample rate {rate} differs from the script's {sample_rate}")
         audio = trim_silence(audio, rate)

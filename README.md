@@ -6,8 +6,8 @@ Delivery is controlled with **intensity, pace and pitch**. The emotion comes fro
 
 ## Samples and community
 
-- **[Listen to the voice gallery](https://lowkeytea.github.io/scyllasband/)**: every voice in all six languages, six delivery styles per voice, a long-form narration and a nine-voice dialogue.
-- The [sample index](samples/README.md) lists every clip with the settings used, and `samples/generate_gallery.py` regenerates them.
+- **[Listen to the voices](https://lowkeytea.dev/scyllasband/samples/)**: every voice saying hello, playing a scene and singing a chorus, four songs built from scores, long-form narration and a nine-voice dialogue in six languages.
+- **[Try it in your browser](https://lowkeytea.dev/scyllasband/demo/)**: the runtime compiled to WebAssembly, with the model downloaded once.
 - Join the [Scylla's Band Discord](https://discord.gg/mBhpn7WB5N) for release updates, help, and community discussion.
 
 ## Highlights
@@ -319,9 +319,8 @@ See [the model card](MODEL_CARD.md) for the model contract.
 ```text
 scyllasband/          Python API, CLI, first-run setup, download, bundle contract and execution
 libscyllasband/       C++ runtime with a C API, for LiteRT and ONNX Runtime
-examples/             Android and iOS applications; the singing tutorials (ghost_in_the_machine, kitchen_patter)
-samples/              gallery script and generator, sample index
-docs/                 voice gallery (GitHub Pages)
+examples/             Android and iOS applications; the singing pieces, each a tutorial (ghost_in_the_machine, kitchen_patter,
+                      face_down, bubble_wrap, thank_you) and write_scores.py, which compiles a score source into melody JSON
 data/                 example texts and a dialogue script
 tests/                runtime tests (python -m pytest tests)
 MODEL_CARD.md         model card for the current release
