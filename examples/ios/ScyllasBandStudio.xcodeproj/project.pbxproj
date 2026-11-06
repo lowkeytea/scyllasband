@@ -7,125 +7,169 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		2BE1DF588EA189BB95BA1DAE /* PresetParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9565D6C8DAF9EC17F7349630 /* PresetParser.swift */; };
-		3193689C7B16328808EA9D8E /* Pods_ScyllasBandStudio.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CEF7DC94783AC72AF3DF064A /* Pods_ScyllasBandStudio.framework */; };
-		3F0C9E1A56376B09A050A7E9 /* RuntimeSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34676AECE67A747A8B8AC71E /* RuntimeSettingsView.swift */; };
-		4018EE9141C73579B192906F /* SegmentSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A03276D9A1945614B679F275 /* SegmentSettingsView.swift */; };
-		470AA2972D67ECA2582692C2 /* StreamingAudioPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F4C48C6AD2EE5E7859CBD83 /* StreamingAudioPlayer.swift */; };
-		7A6CE9CCDBC6820375127BF2 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED71A8AB3FFDEC708CFB96D3 /* ContentView.swift */; };
-		7B837D6E4A896487C3FCA661 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5346ED43243359BE902D65F4 /* Models.swift */; };
-		95194EE715BFAB3AD3C568A5 /* ScyllasBandStudioApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73E1F354E5DBBFFCB8D696C3 /* ScyllasBandStudioApp.swift */; };
-		C15FA06B44DD1BC19DE4D1A5 /* BenchmarkRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA6C0B72AFC3155427149C0F /* BenchmarkRunner.swift */; };
-		DBA668F5A80A9CD8A3C1E8B2 /* StudioViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59DDFBB2F35EDD9CF52A0026 /* StudioViewModel.swift */; };
-		EE05C13B604A412074CAE5C2 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 8EE0C1A85AF3A62D5D350A63 /* Foundation.framework */; };
+		01FBDEA1A704B6209A107F6A /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = D69FE60758A4A3FE7E0B3AEB /* Models.swift */; };
+		0738C5129D4278575199B5D8 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7F5F34550444D11BA20B6C03 /* Foundation.framework */; };
+		1A24D2B02620782918CD424B /* RuntimeController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F59430E4F87EEAF3BAD8BA52 /* RuntimeController.swift */; };
+		2042B0AD7D6EAFD77E8AD8DF /* SongViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CB9C6F8C84E2AA541B6A743 /* SongViewModel.swift */; };
+		28EC156A76CA8EC7103405C7 /* SongDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EA6D22B03142774242110FE /* SongDocument.swift */; };
+		2CD810C3EAF5CA860908FBD6 /* StudioViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 506BC3498466625078946527 /* StudioViewModel.swift */; };
+		34C6FC00F4F11D5A821B5DDB /* RuntimeSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C44192E6D5283997C524540 /* RuntimeSettingsView.swift */; };
+		5CBE76721FF657E4E4320D76 /* StreamingAudioPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 954B010FD135367E6F131803 /* StreamingAudioPlayer.swift */; };
+		61896029B7DC96CCD9D95F7F /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47830F71A5283A5045A7FF7C /* ContentView.swift */; };
+		63A62F624AD05CDBDCE84D94 /* BenchmarkRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = D257941020D82361B23DEE68 /* BenchmarkRunner.swift */; };
+		78F518E402A88D8DA6D5C2B6 /* NoteInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51AADF22BB775CEE41277877 /* NoteInspector.swift */; };
+		8955776BF1C8476374E7F1A8 /* ScyllasBandStudioApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFA9DDC1539866BF94284E9F /* ScyllasBandStudioApp.swift */; };
+		97594AFE5D3B64AF7934F797 /* SongSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4CAC08815596187CF96D495 /* SongSettingsView.swift */; };
+		9BC203A86D87C4F3D5241018 /* Pods_ScyllasBandStudio.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A9F495D8A6CCD1C2A7D8A66A /* Pods_ScyllasBandStudio.framework */; };
+		B3B65027D4AFA0EC891FB540 /* SongStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0FD1D8BCD796AD7EBF15130 /* SongStore.swift */; };
+		B7DFBC5565EE6E5615D828F4 /* LineCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 273156B5EA890C602A8C96EC /* LineCard.swift */; };
+		D11BE1A3415AE28CC0CF6369 /* SingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AD301E9A3A0665A211511A8 /* SingView.swift */; };
+		E208CB1AA3727A6E07055150 /* SegmentSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0FFE753597504B360417C4A /* SegmentSettingsView.swift */; };
+		FE55FDFB038571CF278BFEE2 /* PresetParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39197FCBFA653B107CC4786D /* PresetParser.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		0336B4BFCDC9712BF7033FFD /* ScyllasBandStudio.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ScyllasBandStudio.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		34676AECE67A747A8B8AC71E /* RuntimeSettingsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RuntimeSettingsView.swift; sourceTree = "<group>"; };
-		5346ED43243359BE902D65F4 /* Models.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
-		59DDFBB2F35EDD9CF52A0026 /* StudioViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = StudioViewModel.swift; sourceTree = "<group>"; };
-		73E1F354E5DBBFFCB8D696C3 /* ScyllasBandStudioApp.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ScyllasBandStudioApp.swift; sourceTree = "<group>"; };
-		8EE0C1A85AF3A62D5D350A63 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
-		8F4C48C6AD2EE5E7859CBD83 /* StreamingAudioPlayer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = StreamingAudioPlayer.swift; sourceTree = "<group>"; };
-		9565D6C8DAF9EC17F7349630 /* PresetParser.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PresetParser.swift; sourceTree = "<group>"; };
-		A03276D9A1945614B679F275 /* SegmentSettingsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SegmentSettingsView.swift; sourceTree = "<group>"; };
-		BA0649D0C2430184024C97BD /* Pods-ScyllasBandStudio.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-ScyllasBandStudio.debug.xcconfig"; path = "Target Support Files/Pods-ScyllasBandStudio/Pods-ScyllasBandStudio.debug.xcconfig"; sourceTree = "<group>"; };
-		CA6C0B72AFC3155427149C0F /* BenchmarkRunner.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BenchmarkRunner.swift; sourceTree = "<group>"; };
-		CEF7DC94783AC72AF3DF064A /* Pods_ScyllasBandStudio.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_ScyllasBandStudio.framework; sourceTree = BUILT_PRODUCTS_DIR; };
-		ED71A8AB3FFDEC708CFB96D3 /* ContentView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
-		F7427C8A5B5C5CF428CEF8FB /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		FCBE0B6DF25305E8249601B1 /* Pods-ScyllasBandStudio.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-ScyllasBandStudio.release.xcconfig"; path = "Target Support Files/Pods-ScyllasBandStudio/Pods-ScyllasBandStudio.release.xcconfig"; sourceTree = "<group>"; };
+		273156B5EA890C602A8C96EC /* LineCard.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = LineCard.swift; sourceTree = "<group>"; };
+		313DEE15919653D93DE4166B /* Pods-ScyllasBandStudio.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-ScyllasBandStudio.debug.xcconfig"; path = "Target Support Files/Pods-ScyllasBandStudio/Pods-ScyllasBandStudio.debug.xcconfig"; sourceTree = "<group>"; };
+		39197FCBFA653B107CC4786D /* PresetParser.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PresetParser.swift; sourceTree = "<group>"; };
+		3AD301E9A3A0665A211511A8 /* SingView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SingView.swift; sourceTree = "<group>"; };
+		3CB9C6F8C84E2AA541B6A743 /* SongViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SongViewModel.swift; sourceTree = "<group>"; };
+		47830F71A5283A5045A7FF7C /* ContentView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		4C44192E6D5283997C524540 /* RuntimeSettingsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RuntimeSettingsView.swift; sourceTree = "<group>"; };
+		506BC3498466625078946527 /* StudioViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = StudioViewModel.swift; sourceTree = "<group>"; };
+		51AADF22BB775CEE41277877 /* NoteInspector.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NoteInspector.swift; sourceTree = "<group>"; };
+		72DA3CEF5FB3B8CF29CD341F /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		7F5F34550444D11BA20B6C03 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
+		8D6FE9A3AE200962AD720DCA /* Studio.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; path = Studio.xcconfig; sourceTree = "<group>"; };
+		8EA6D22B03142774242110FE /* SongDocument.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SongDocument.swift; sourceTree = "<group>"; };
+		954B010FD135367E6F131803 /* StreamingAudioPlayer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = StreamingAudioPlayer.swift; sourceTree = "<group>"; };
+		A9F495D8A6CCD1C2A7D8A66A /* Pods_ScyllasBandStudio.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_ScyllasBandStudio.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		AE290E083C3942A908F61BA8 /* Pods-ScyllasBandStudio.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-ScyllasBandStudio.release.xcconfig"; path = "Target Support Files/Pods-ScyllasBandStudio/Pods-ScyllasBandStudio.release.xcconfig"; sourceTree = "<group>"; };
+		C4CAC08815596187CF96D495 /* SongSettingsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SongSettingsView.swift; sourceTree = "<group>"; };
+		C566589E4CA67AB1643272BF /* ScyllasBandStudio.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ScyllasBandStudio.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		CFA9DDC1539866BF94284E9F /* ScyllasBandStudioApp.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ScyllasBandStudioApp.swift; sourceTree = "<group>"; };
+		D257941020D82361B23DEE68 /* BenchmarkRunner.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BenchmarkRunner.swift; sourceTree = "<group>"; };
+		D69FE60758A4A3FE7E0B3AEB /* Models.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		F0FD1D8BCD796AD7EBF15130 /* SongStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SongStore.swift; sourceTree = "<group>"; };
+		F0FFE753597504B360417C4A /* SegmentSettingsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SegmentSettingsView.swift; sourceTree = "<group>"; };
+		F59430E4F87EEAF3BAD8BA52 /* RuntimeController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RuntimeController.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
-		BE4700E884377AAC6F3AEDD5 /* Frameworks */ = {
+		28BCC10424BC0752EB7993AF /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				EE05C13B604A412074CAE5C2 /* Foundation.framework in Frameworks */,
-				3193689C7B16328808EA9D8E /* Pods_ScyllasBandStudio.framework in Frameworks */,
+				0738C5129D4278575199B5D8 /* Foundation.framework in Frameworks */,
+				9BC203A86D87C4F3D5241018 /* Pods_ScyllasBandStudio.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		4A1EAFE7D57F53C185DEDC9F /* ScyllasBandStudio */ = {
+		02D0510297A148D1EA1C56AA /* ScyllasBandStudio */ = {
 			isa = PBXGroup;
 			children = (
-				CA6C0B72AFC3155427149C0F /* BenchmarkRunner.swift */,
-				ED71A8AB3FFDEC708CFB96D3 /* ContentView.swift */,
-				5346ED43243359BE902D65F4 /* Models.swift */,
-				9565D6C8DAF9EC17F7349630 /* PresetParser.swift */,
-				34676AECE67A747A8B8AC71E /* RuntimeSettingsView.swift */,
-				73E1F354E5DBBFFCB8D696C3 /* ScyllasBandStudioApp.swift */,
-				A03276D9A1945614B679F275 /* SegmentSettingsView.swift */,
-				8F4C48C6AD2EE5E7859CBD83 /* StreamingAudioPlayer.swift */,
-				59DDFBB2F35EDD9CF52A0026 /* StudioViewModel.swift */,
-				F7427C8A5B5C5CF428CEF8FB /* Info.plist */,
+				D257941020D82361B23DEE68 /* BenchmarkRunner.swift */,
+				47830F71A5283A5045A7FF7C /* ContentView.swift */,
+				D69FE60758A4A3FE7E0B3AEB /* Models.swift */,
+				39197FCBFA653B107CC4786D /* PresetParser.swift */,
+				F59430E4F87EEAF3BAD8BA52 /* RuntimeController.swift */,
+				4C44192E6D5283997C524540 /* RuntimeSettingsView.swift */,
+				CFA9DDC1539866BF94284E9F /* ScyllasBandStudioApp.swift */,
+				F0FFE753597504B360417C4A /* SegmentSettingsView.swift */,
+				CB32651B2EE4144FAF4DBB31 /* Sing */,
+				954B010FD135367E6F131803 /* StreamingAudioPlayer.swift */,
+				506BC3498466625078946527 /* StudioViewModel.swift */,
+				72DA3CEF5FB3B8CF29CD341F /* Info.plist */,
 			);
 			name = ScyllasBandStudio;
 			path = ScyllasBandStudio;
 			sourceTree = "<group>";
 		};
-		68E8B86C3A1140D479B5174F /* Frameworks */ = {
+		19A764DB1518ADB0FFD586E3 = {
 			isa = PBXGroup;
 			children = (
-				CD62B0539FBD0520BB8DF227 /* iOS */,
-				CEF7DC94783AC72AF3DF064A /* Pods_ScyllasBandStudio.framework */,
+				A23A037F78967F796E973DFB /* Products */,
+				49927A25D41940390AF65504 /* Frameworks */,
+				02D0510297A148D1EA1C56AA /* ScyllasBandStudio */,
+				BD0C9193A83F1E02F7C04AB0 /* Config */,
+				F233F5304545B843DCD4F521 /* Pods */,
+			);
+			sourceTree = "<group>";
+		};
+		49927A25D41940390AF65504 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				CB88DF9EA4392304BC9A7911 /* iOS */,
+				A9F495D8A6CCD1C2A7D8A66A /* Pods_ScyllasBandStudio.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
 		};
-		79685510CF9B5A8C3485589D /* Pods */ = {
+		A23A037F78967F796E973DFB /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				FCBE0B6DF25305E8249601B1 /* Pods-ScyllasBandStudio.release.xcconfig */,
-				BA0649D0C2430184024C97BD /* Pods-ScyllasBandStudio.debug.xcconfig */,
+				C566589E4CA67AB1643272BF /* ScyllasBandStudio.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		BD0C9193A83F1E02F7C04AB0 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				8D6FE9A3AE200962AD720DCA /* Studio.xcconfig */,
+			);
+			name = Config;
+			path = Config;
+			sourceTree = "<group>";
+		};
+		CB32651B2EE4144FAF4DBB31 /* Sing */ = {
+			isa = PBXGroup;
+			children = (
+				273156B5EA890C602A8C96EC /* LineCard.swift */,
+				51AADF22BB775CEE41277877 /* NoteInspector.swift */,
+				3AD301E9A3A0665A211511A8 /* SingView.swift */,
+				8EA6D22B03142774242110FE /* SongDocument.swift */,
+				C4CAC08815596187CF96D495 /* SongSettingsView.swift */,
+				F0FD1D8BCD796AD7EBF15130 /* SongStore.swift */,
+				3CB9C6F8C84E2AA541B6A743 /* SongViewModel.swift */,
+			);
+			name = Sing;
+			path = Sing;
+			sourceTree = "<group>";
+		};
+		CB88DF9EA4392304BC9A7911 /* iOS */ = {
+			isa = PBXGroup;
+			children = (
+				7F5F34550444D11BA20B6C03 /* Foundation.framework */,
+			);
+			name = iOS;
+			sourceTree = "<group>";
+		};
+		F233F5304545B843DCD4F521 /* Pods */ = {
+			isa = PBXGroup;
+			children = (
+				AE290E083C3942A908F61BA8 /* Pods-ScyllasBandStudio.release.xcconfig */,
+				313DEE15919653D93DE4166B /* Pods-ScyllasBandStudio.debug.xcconfig */,
 			);
 			name = Pods;
 			path = Pods;
 			sourceTree = "<group>";
 		};
-		CD62B0539FBD0520BB8DF227 /* iOS */ = {
-			isa = PBXGroup;
-			children = (
-				8EE0C1A85AF3A62D5D350A63 /* Foundation.framework */,
-			);
-			name = iOS;
-			sourceTree = "<group>";
-		};
-		D6EE0E826C977E4AA7A99B2A = {
-			isa = PBXGroup;
-			children = (
-				FE48BC0F1962FE0EE147FAA7 /* Products */,
-				68E8B86C3A1140D479B5174F /* Frameworks */,
-				4A1EAFE7D57F53C185DEDC9F /* ScyllasBandStudio */,
-				79685510CF9B5A8C3485589D /* Pods */,
-			);
-			sourceTree = "<group>";
-		};
-		FE48BC0F1962FE0EE147FAA7 /* Products */ = {
-			isa = PBXGroup;
-			children = (
-				0336B4BFCDC9712BF7033FFD /* ScyllasBandStudio.app */,
-			);
-			name = Products;
-			sourceTree = "<group>";
-		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		F22D94F362FEC0E4B616B9BB /* ScyllasBandStudio */ = {
+		76789D61B0FD97B242AD6E04 /* ScyllasBandStudio */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 51D0B3972AF8C62812951D59 /* Build configuration list for PBXNativeTarget "ScyllasBandStudio" */;
+			buildConfigurationList = A5B7F3E0677939320F1BED82 /* Build configuration list for PBXNativeTarget "ScyllasBandStudio" */;
 			buildPhases = (
-				6368D2F44FA5D84A38258DFD /* [CP] Check Pods Manifest.lock */,
-				733C3626AB9D7A3C5FFE0FDD /* Sources */,
-				BE4700E884377AAC6F3AEDD5 /* Frameworks */,
-				9D9335140E5769C8AB5B486C /* Resources */,
-				940687E630E7AA59011C2F8B /* Prepare Scylla's Band assets */,
+				97E5F50171DF36923546DCA3 /* [CP] Check Pods Manifest.lock */,
+				2BD5EE8B9D21BB5FF01F7A7D /* Sources */,
+				28BCC10424BC0752EB7993AF /* Frameworks */,
+				CD3816A3D6A50EB916F0A16E /* Resources */,
+				7CD1DB9E5880FA4E1024577C /* Prepare Scylla's Band assets */,
 			);
 			buildRules = (
 			);
@@ -133,19 +177,19 @@
 			);
 			name = ScyllasBandStudio;
 			productName = ScyllasBandStudio;
-			productReference = 0336B4BFCDC9712BF7033FFD /* ScyllasBandStudio.app */;
+			productReference = C566589E4CA67AB1643272BF /* ScyllasBandStudio.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
-		1A4B48C121103A55C6DC92D8 /* Project object */ = {
+		F2603EE0BCCDA3FA434CAD36 /* Project object */ = {
 			isa = PBXProject;
 			attributes = {
 				LastSwiftUpdateCheck = 2700;
 				LastUpgradeCheck = 2700;
 			};
-			buildConfigurationList = 8E07A742C291A5855448CB80 /* Build configuration list for PBXProject "ScyllasBandStudio" */;
+			buildConfigurationList = 930E825EA801B9DBC07E63D0 /* Build configuration list for PBXProject "ScyllasBandStudio" */;
 			compatibilityVersion = "Xcode 3.2";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
@@ -153,20 +197,20 @@
 				en,
 				Base,
 			);
-			mainGroup = D6EE0E826C977E4AA7A99B2A;
+			mainGroup = 19A764DB1518ADB0FFD586E3;
 			minimizedProjectReferenceProxies = 0;
 			preferredProjectObjectVersion = 77;
-			productRefGroup = FE48BC0F1962FE0EE147FAA7 /* Products */;
+			productRefGroup = A23A037F78967F796E973DFB /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				F22D94F362FEC0E4B616B9BB /* ScyllasBandStudio */,
+				76789D61B0FD97B242AD6E04 /* ScyllasBandStudio */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		9D9335140E5769C8AB5B486C /* Resources */ = {
+		CD3816A3D6A50EB916F0A16E /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -176,7 +220,27 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		6368D2F44FA5D84A38258DFD /* [CP] Check Pods Manifest.lock */ = {
+		7CD1DB9E5880FA4E1024577C /* Prepare Scylla's Band assets */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Prepare Scylla's Band assets";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/zsh;
+			shellScript = "\"${SRCROOT}/Scripts/prepare_assets.sh\" \"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\n";
+			showEnvVarsInLog = 0;
+		};
+		97E5F50171DF36923546DCA3 /* [CP] Check Pods Manifest.lock */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -198,157 +262,39 @@
 			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
 			showEnvVarsInLog = 0;
 		};
-		940687E630E7AA59011C2F8B /* Prepare Scylla's Band assets */ = {
-			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-			);
-			inputPaths = (
-			);
-			name = "Prepare Scylla's Band assets";
-			outputFileListPaths = (
-			);
-			outputPaths = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/zsh;
-			shellScript = "\"${SRCROOT}/Scripts/prepare_assets.sh\" \"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\n";
-			showEnvVarsInLog = 0;
-		};
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		733C3626AB9D7A3C5FFE0FDD /* Sources */ = {
+		2BD5EE8B9D21BB5FF01F7A7D /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				C15FA06B44DD1BC19DE4D1A5 /* BenchmarkRunner.swift in Sources */,
-				7A6CE9CCDBC6820375127BF2 /* ContentView.swift in Sources */,
-				7B837D6E4A896487C3FCA661 /* Models.swift in Sources */,
-				2BE1DF588EA189BB95BA1DAE /* PresetParser.swift in Sources */,
-				3F0C9E1A56376B09A050A7E9 /* RuntimeSettingsView.swift in Sources */,
-				95194EE715BFAB3AD3C568A5 /* ScyllasBandStudioApp.swift in Sources */,
-				4018EE9141C73579B192906F /* SegmentSettingsView.swift in Sources */,
-				470AA2972D67ECA2582692C2 /* StreamingAudioPlayer.swift in Sources */,
-				DBA668F5A80A9CD8A3C1E8B2 /* StudioViewModel.swift in Sources */,
+				63A62F624AD05CDBDCE84D94 /* BenchmarkRunner.swift in Sources */,
+				61896029B7DC96CCD9D95F7F /* ContentView.swift in Sources */,
+				01FBDEA1A704B6209A107F6A /* Models.swift in Sources */,
+				FE55FDFB038571CF278BFEE2 /* PresetParser.swift in Sources */,
+				1A24D2B02620782918CD424B /* RuntimeController.swift in Sources */,
+				34C6FC00F4F11D5A821B5DDB /* RuntimeSettingsView.swift in Sources */,
+				8955776BF1C8476374E7F1A8 /* ScyllasBandStudioApp.swift in Sources */,
+				E208CB1AA3727A6E07055150 /* SegmentSettingsView.swift in Sources */,
+				B7DFBC5565EE6E5615D828F4 /* LineCard.swift in Sources */,
+				78F518E402A88D8DA6D5C2B6 /* NoteInspector.swift in Sources */,
+				D11BE1A3415AE28CC0CF6369 /* SingView.swift in Sources */,
+				28EC156A76CA8EC7103405C7 /* SongDocument.swift in Sources */,
+				97594AFE5D3B64AF7934F797 /* SongSettingsView.swift in Sources */,
+				B3B65027D4AFA0EC891FB540 /* SongStore.swift in Sources */,
+				2042B0AD7D6EAFD77E8AD8DF /* SongViewModel.swift in Sources */,
+				5CBE76721FF657E4E4320D76 /* StreamingAudioPlayer.swift in Sources */,
+				2CD810C3EAF5CA860908FBD6 /* StudioViewModel.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
-		57B443470E53781BEE91E69F /* Release */ = {
+		0381B0CB384EE2ECACD7FD6B /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = FCBE0B6DF25305E8249601B1 /* Pods-ScyllasBandStudio.release.xcconfig */;
-			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CLANG_ENABLE_OBJC_WEAK = NO;
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				ENABLE_USER_SCRIPT_SANDBOXING = NO;
-				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = ScyllasBandStudio/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
-				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = org.scyllasband.studio;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = iphoneos;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator xros xrsimulator";
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2,7";
-				VALIDATE_PRODUCT = YES;
-				XROS_DEPLOYMENT_TARGET = 2.0;
-			};
-			name = Release;
-		};
-		89FB18DD8D85C38AE7D4EC80 /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ALWAYS_SEARCH_USER_PATHS = NO;
-				CLANG_ANALYZER_NONNULL = YES;
-				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
-				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
-				CLANG_CXX_LIBRARY = "libc++";
-				CLANG_ENABLE_MODULES = YES;
-				CLANG_ENABLE_OBJC_ARC = YES;
-				CLANG_ENABLE_OBJC_WEAK = YES;
-				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
-				CLANG_WARN_BOOL_CONVERSION = YES;
-				CLANG_WARN_COMMA = YES;
-				CLANG_WARN_CONSTANT_CONVERSION = YES;
-				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
-				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
-				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
-				CLANG_WARN_EMPTY_BODY = YES;
-				CLANG_WARN_ENUM_CONVERSION = YES;
-				CLANG_WARN_INFINITE_RECURSION = YES;
-				CLANG_WARN_INT_CONVERSION = YES;
-				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
-				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
-				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
-				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
-				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
-				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
-				CLANG_WARN_STRICT_PROTOTYPES = YES;
-				CLANG_WARN_SUSPICIOUS_MOVE = YES;
-				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
-				CLANG_WARN_UNREACHABLE_CODE = YES;
-				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
-				COPY_PHASE_STRIP = NO;
-				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				ENABLE_NS_ASSERTIONS = NO;
-				ENABLE_STRICT_OBJC_MSGSEND = YES;
-				GCC_C_LANGUAGE_STANDARD = gnu11;
-				GCC_NO_COMMON_BLOCKS = YES;
-				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
-				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
-				GCC_WARN_UNDECLARED_SELECTOR = YES;
-				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
-				GCC_WARN_UNUSED_FUNCTION = YES;
-				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
-				MTL_ENABLE_DEBUG_INFO = NO;
-				MTL_FAST_MATH = YES;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SWIFT_COMPILATION_MODE = wholemodule;
-				SWIFT_OPTIMIZATION_LEVEL = "-O";
-				SWIFT_VERSION = 5.0;
-				XROS_DEPLOYMENT_TARGET = 2.0;
-			};
-			name = Release;
-		};
-		B9918A31D0235BA7D5397CFF /* Debug */ = {
-			isa = XCBuildConfiguration;
-			baseConfigurationReference = BA0649D0C2430184024C97BD /* Pods-ScyllasBandStudio.debug.xcconfig */;
-			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CLANG_ENABLE_OBJC_WEAK = NO;
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				ENABLE_USER_SCRIPT_SANDBOXING = NO;
-				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = ScyllasBandStudio/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
-				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = org.scyllasband.studio;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = iphoneos;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator xros xrsimulator";
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2,7";
-				XROS_DEPLOYMENT_TARGET = 2.0;
-			};
-			name = Debug;
-		};
-		BD616A4A11B2DE42A1E7BDF3 /* Debug */ = {
-			isa = XCBuildConfiguration;
+			baseConfigurationReference = 8D6FE9A3AE200962AD720DCA /* Studio.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -410,28 +356,136 @@
 			};
 			name = Debug;
 		};
+		567B491E0A5B9789D68073ED /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 8D6FE9A3AE200962AD720DCA /* Studio.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				XROS_DEPLOYMENT_TARGET = 2.0;
+			};
+			name = Release;
+		};
+		8E9EE2DB33218B60B22C65FF /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 313DEE15919653D93DE4166B /* Pods-ScyllasBandStudio.debug.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ScyllasBandStudio/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = org.scyllasband.studio;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator xros xrsimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2,7";
+				XROS_DEPLOYMENT_TARGET = 2.0;
+			};
+			name = Debug;
+		};
+		CF9D1D8743F9B72347C4727F /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = AE290E083C3942A908F61BA8 /* Pods-ScyllasBandStudio.release.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ScyllasBandStudio/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = org.scyllasband.studio;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator xros xrsimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2,7";
+				VALIDATE_PRODUCT = YES;
+				XROS_DEPLOYMENT_TARGET = 2.0;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		51D0B3972AF8C62812951D59 /* Build configuration list for PBXNativeTarget "ScyllasBandStudio" */ = {
+		930E825EA801B9DBC07E63D0 /* Build configuration list for PBXProject "ScyllasBandStudio" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				57B443470E53781BEE91E69F /* Release */,
-				B9918A31D0235BA7D5397CFF /* Debug */,
+				0381B0CB384EE2ECACD7FD6B /* Debug */,
+				567B491E0A5B9789D68073ED /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		8E07A742C291A5855448CB80 /* Build configuration list for PBXProject "ScyllasBandStudio" */ = {
+		A5B7F3E0677939320F1BED82 /* Build configuration list for PBXNativeTarget "ScyllasBandStudio" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				BD616A4A11B2DE42A1E7BDF3 /* Debug */,
-				89FB18DD8D85C38AE7D4EC80 /* Release */,
+				CF9D1D8743F9B72347C4727F /* Release */,
+				8E9EE2DB33218B60B22C65FF /* Debug */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
 	};
-	rootObject = 1A4B48C121103A55C6DC92D8 /* Project object */;
+	rootObject = F2603EE0BCCDA3FA434CAD36 /* Project object */;
 }

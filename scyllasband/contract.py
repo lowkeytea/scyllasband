@@ -1,4 +1,16 @@
-"""Bundle contract: what a Scylla's Band model bundle must contain for this runtime."""
+"""Bundle contract: what a Scylla's Band model bundle must contain for this runtime.
+
+Two graph contracts are accepted:
+
+- ``scyllasband_measured_controls_v3``: the spoken model. The flow (``vector_estimator[_N]``) takes ``VECTOR_INPUTS``.
+- ``scyllasband_measured_controls_v4``: the same graphs plus singing. The flow takes ``VECTOR_INPUTS_V4``, which adds the
+  ``delivery_mode_id`` input (0 spoken, 1 sung, 2 rap, 3 ballad; ``controls.delivery_modes``), and each bucket may name an
+  optional second decoder ``vocoder_bigvgan[_N]`` with the vocoder's inputs (``controls.decoders``).
+
+``CONTRACT_VERSION`` stays ``1.0.0``: it names the manifest layout (assets, components, buckets, controls), which v4 bundles
+keep; what changed is the graph contract, which the manifest declares separately and the runtime reads per bundle. A v3
+bundle runs exactly as before (the mode input is never fed); a v4 bundle is always fed the mode input, 0 for speech.
+"""
 
 from __future__ import annotations
 
@@ -8,17 +20,22 @@ from typing import Any, Mapping
 
 CONTRACT_VERSION = "1.0.0"
 GRAPH_CONTRACT = "scyllasband_measured_controls_v3"
+GRAPH_CONTRACT_V4 = "scyllasband_measured_controls_v4"
+GRAPH_CONTRACTS = (GRAPH_CONTRACT, GRAPH_CONTRACT_V4)
 DURATION_INPUTS = ("span_phone_ids", "span_segment_ids", "span_mask", "voice_id", "language_id", "delivery_values", "delivery_present")
 CONTEXT_INPUTS = ("span_context_phone_ids", "span_context_segment_ids", "span_context_mask")
 EVENT_INPUTS = ("expanded_boundary_event_ids", "expanded_modifier_event_ids", "expanded_phone_phase", "expanded_phone_log_duration",
                 "expanded_sentence_type_ids")
 VECTOR_INPUTS = ("noise", "time", "expanded_phone_ids", "voice_id", "language_id", "delivery_values", "delivery_present", "latent_mask",
                  "span_context_hidden", "prefix_latents", "prefix_mask", *EVENT_INPUTS, "expanded_melody")
+DELIVERY_MODE_INPUT = "delivery_mode_id"
+VECTOR_INPUTS_V4 = (*VECTOR_INPUTS, DELIVERY_MODE_INPUT)
 PITCH_INPUTS = ("noise", "time", "expanded_phone_ids", "voice_id", "language_id", "delivery_values", "delivery_present", "latent_mask",
                 "span_context_hidden", *EVENT_INPUTS)
 VOCODER_INPUTS = ("latents", "latent_mask", "voice_id", "language_id", "emotion_id")
 COMPONENT_INPUTS = {"g2p": ("text",), "duration_predictor": DURATION_INPUTS, "vector_context_encoder": CONTEXT_INPUTS,
                     "pitch_context_encoder": CONTEXT_INPUTS}
+OPTIONAL_BUCKET_COMPONENTS = {"vocoder_bigvgan": VOCODER_INPUTS}   # bucket key -> inputs; validated only when a bucket names one
 REQUIRED_ASSETS = ("phone_vocab", "voice_index", "language_index", "g2p_config", "g2p_tokenizer", "g2p_language_map")
 BACKEND_FORMATS = {"onnx": "onnx", "litert": "litert", "coreml": "coreml", "coreai": "coreai"}
 
@@ -34,6 +51,11 @@ def load_manifest(bundle_dir: str | Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def vector_inputs(graph_contract: str | None) -> tuple[str, ...]:
+    """The flow's inputs under a graph contract: v4 adds the delivery mode id, v3 has none."""
+    return VECTOR_INPUTS_V4 if graph_contract == GRAPH_CONTRACT_V4 else VECTOR_INPUTS
+
+
 def validate_bundle_layout(bundle_dir: str | Path) -> dict[str, Any]:
     """Raise BundleError when the bundle cannot run on this runtime; return a short summary otherwise."""
     bundle_dir = Path(bundle_dir)
@@ -41,9 +63,10 @@ def validate_bundle_layout(bundle_dir: str | Path) -> dict[str, Any]:
     if manifest.get("contract_version") != CONTRACT_VERSION:
         raise BundleError(f"Bundle contract_version {manifest.get('contract_version')!r} != {CONTRACT_VERSION!r}")
     controls = manifest.get("controls") or {}
-    if controls.get("graph_input_contract") != GRAPH_CONTRACT:   # v2 bundles: use a runtime from before v3
-        raise BundleError(f"Bundle graph contract {controls.get('graph_input_contract')!r} is not supported by this runtime "
-                          f"(expected {GRAPH_CONTRACT!r}). Download the current model: python -m scyllasband download --yes")
+    graph_contract = controls.get("graph_input_contract")
+    if graph_contract not in GRAPH_CONTRACTS:   # v2 bundles: use a runtime from before v3
+        raise BundleError(f"Bundle graph contract {graph_contract!r} is not supported by this runtime "
+                          f"(expected one of {', '.join(GRAPH_CONTRACTS)}). Download the current model: python -m scyllasband download --yes")
     for key in REQUIRED_ASSETS:
         rel = (manifest.get("assets") or {}).get(key)
         if not rel or not (bundle_dir / rel).is_file():
@@ -53,10 +76,14 @@ def validate_bundle_layout(bundle_dir: str | Path) -> dict[str, Any]:
     if not buckets:
         raise BundleError("Bundle declares no latent-frame buckets")
     expected = dict(COMPONENT_INPUTS)
+    optional: dict[str, tuple[str, ...]] = {}
     for bucket in buckets:
-        expected[str(bucket["vector_estimator"])] = VECTOR_INPUTS
+        expected[str(bucket["vector_estimator"])] = vector_inputs(graph_contract)
         expected[str(bucket["pitch_estimator"])] = PITCH_INPUTS
         expected[str(bucket["vocoder"])] = VOCODER_INPUTS
+        for key, inputs in OPTIONAL_BUCKET_COMPONENTS.items():
+            if bucket.get(key):
+                optional[str(bucket[key])] = inputs
     backends = sorted({fmt for spec in components.values() for fmt in (spec.get("artifacts") or {}) if fmt in BACKEND_FORMATS})
     if not backends:
         raise BundleError(f"Bundle components declare no {', '.join(BACKEND_FORMATS)} artifacts")
@@ -70,11 +97,22 @@ def validate_bundle_layout(bundle_dir: str | Path) -> dict[str, Any]:
             artifact = (spec.get("artifacts") or {}).get(backend)
             if not artifact or not (bundle_dir / artifact["path"]).exists():   # Core ML/Core AI assets are directories
                 raise BundleError(f"Bundle component {name!r} has no {backend} artifact at {artifact and artifact.get('path')}")
+    # An optional component (a second decoder) need not exist for every backend; the artifacts it declares must be there.
+    for name, inputs in optional.items():
+        spec = components.get(name)
+        if spec is None:
+            raise BundleError(f"Bundle component {name!r} is named by a bucket but missing")
+        if tuple(spec.get("inputs") or ()) != inputs:
+            raise BundleError(f"Bundle component {name!r} inputs {spec.get('inputs')} differ from the contract {list(inputs)}")
+        for backend, artifact in (spec.get("artifacts") or {}).items():
+            if backend in BACKEND_FORMATS and not (bundle_dir / artifact["path"]).exists():
+                raise BundleError(f"Bundle component {name!r} has no {backend} artifact at {artifact.get('path')}")
     voices = manifest.get("voices") or []
     if not voices or any(not v.get("languages") for v in voices):
         raise BundleError("Bundle voices must each declare their languages")
     return dict(bundle_dir=str(bundle_dir), backends=backends, voices=[v["id"] for v in voices],
-                buckets=sorted(int(b["latent_frames"]) for b in buckets), release=_release(controls))
+                buckets=sorted(int(b["latent_frames"]) for b in buckets), release=_release(controls), graph_contract=graph_contract,
+                singing=bool((controls.get("delivery_modes") or {}).get("enabled")))
 
 
 def _release(controls: Mapping[str, Any]) -> str | None:

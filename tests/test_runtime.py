@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 import numpy as np
 
-from scyllasband.contract import (BundleError, CONTEXT_INPUTS, DURATION_INPUTS, GRAPH_CONTRACT, PITCH_INPUTS, VECTOR_INPUTS,
-                                  VOCODER_INPUTS, validate_bundle_layout)
+from scyllasband.contract import (BundleError, CONTEXT_INPUTS, DURATION_INPUTS, GRAPH_CONTRACT, GRAPH_CONTRACT_V4, PITCH_INPUTS,
+                                  VECTOR_INPUTS, VECTOR_INPUTS_V4, VOCODER_INPUTS, validate_bundle_layout)
 from scyllasband.delivery import CONTROLS, DEFAULT_RANGES, delivery_tensors, resolve_delivery, with_defaults
 from scyllasband.engine import Engine, OverlongError, Sentence, balanced_context
 from scyllasband.events import frame_events, frames_to_durations, modifier_bits, sentence_types
@@ -21,6 +23,13 @@ from scyllasband.streaming import StreamOptions, synthesize_plan_stream
 VOCAB = ["<pad>", "<unk>", "<sil>", "<pause_comma>", "<pause_semicolon>", "<pause_colon>", "<pause_dash>", "<ellipsis>", "<end_stmt>",
          "<end_question>", "<end_exclaim>", "a", "b", "h", "l", "o", "w", "ˈ", "ː"]
 PHONE_TO_ID = {p: i for i, p in enumerate(VOCAB)}
+# The v4 manifest controls of the singing release, as the fake bundle declares them (tests copy and adjust them).
+V4_DELIVERY_MODES = dict(enabled=True, input="delivery_mode_id", ids=dict(spoken=0, sung=1, rap=2, ballad=3), default="spoken",
+                         singing=dict(modes=["sung", "ballad"], sampler="heun", steps=8, decoder="bigvgan",
+                                      melody=dict(layout="note_phase_presence", midi_center=60, midi_scale=24),
+                                      pitch_predictor="bypassed", pitch_soft_limit="bypassed"))
+V4_DECODERS = dict(vocos=dict(component="vocoder", samples_per_frame=512, output_samples="latent_frames * 512 - 256"),
+                   bigvgan=dict(component="vocoder_bigvgan", samples_per_frame=512, output_samples="latent_frames * 512", required=False))
 
 
 class PunctuationTest(unittest.TestCase):
@@ -239,6 +248,38 @@ class ContractTest(unittest.TestCase):
             with self.assertRaises(BundleError):
                 validate_bundle_layout(bundle)
 
+    def test_v4_bundles_take_the_mode_input_and_optional_decoders(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = _fake_bundle(Path(tmp), v4=True)
+            summary = validate_bundle_layout(bundle)
+            self.assertEqual((summary["graph_contract"], summary["singing"]), (GRAPH_CONTRACT_V4, True))
+            manifest = json.loads((bundle / "manifest.json").read_text())
+            # A v3 flow under the v4 contract (or the reverse) is rejected.
+            broken = json.loads(json.dumps(manifest))
+            broken["components"]["vector_estimator"]["inputs"] = list(VECTOR_INPUTS)
+            (bundle / "manifest.json").write_text(json.dumps(broken))
+            with self.assertRaisesRegex(BundleError, "vector_estimator"):
+                validate_bundle_layout(bundle)
+            broken = json.loads(json.dumps(manifest))
+            broken["controls"]["graph_input_contract"] = GRAPH_CONTRACT
+            (bundle / "manifest.json").write_text(json.dumps(broken))
+            with self.assertRaisesRegex(BundleError, "vector_estimator"):
+                validate_bundle_layout(bundle)
+            # The second decoder need not exist for every backend, but a bucket may not name a component that is absent.
+            tolerant = json.loads(json.dumps(manifest))
+            tolerant["components"]["vocoder_bigvgan_8"]["artifacts"] = {}
+            (bundle / "manifest.json").write_text(json.dumps(tolerant))
+            self.assertTrue(validate_bundle_layout(bundle)["singing"])
+            del tolerant["components"]["vocoder_bigvgan"]
+            (bundle / "manifest.json").write_text(json.dumps(tolerant))
+            with self.assertRaisesRegex(BundleError, "vocoder_bigvgan"):
+                validate_bundle_layout(bundle)
+
+    def test_v3_bundles_validate_without_the_mode_input(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            summary = validate_bundle_layout(_fake_bundle(Path(tmp)))
+            self.assertEqual((summary["graph_contract"], summary["singing"]), (GRAPH_CONTRACT, False))
+
 
 class LiteRTThreadsTest(unittest.TestCase):
     def test_default_threads_follow_the_native_runtime(self):
@@ -424,6 +465,145 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(melody[:, 2].tolist(), [1.0, 1.0, 0.0])
         self.assertEqual(float(melody[2, 0]), 0.0)                       # unvoiced: no pitch
 
+    def _spoken(self, engine, **kwargs):
+        sentence = Sentence(phones=["<sil>", "a", "b", "a", "b", "<end_stmt>", "<sil>"], word_starts=[3], before_ids=[11], after_ids=[12])
+        delivery = (*engine.delivery_inputs("scylla", dict(intensity=0.5))[:2], 1.0)
+        return engine.synthesize_sentence(sentence, voice="scylla", language="en_us", delivery=delivery, steps=2, sampler="heun",
+                                          rng=np.random.default_rng(7), prefix=np.ones((24, 2), np.float32), **kwargs)
+
+    def test_v3_speech_feeds_exactly_the_v3_inputs_and_v4_adds_mode_zero(self):
+        v3, v4 = _fake_engine(), _fake_engine(v4=True)
+        spoken_v3, spoken_v4 = self._spoken(v3), self._spoken(v4)
+        flows_v3 = [c for c in v3._fake.calls if c["name"].startswith("vector_estimator")]
+        flows_v4 = [c for c in v4._fake.calls if c["name"].startswith("vector_estimator")]
+        self.assertEqual(len(flows_v3), 4)
+        for call in flows_v3:
+            self.assertEqual(set(call) - {"name"}, set(VECTOR_INPUTS))
+        self.assertFalse(any("delivery_mode_id" in call for call in v3._fake.calls))
+        self.assertNotIn("delivery_mode", spoken_v3.metadata)
+        # Spoken on v4: the same graphs are called with the same values, plus delivery_mode_id = 0 on the flow.
+        self.assertEqual([c["name"] for c in v3._fake.calls], [c["name"] for c in v4._fake.calls])
+        for call in flows_v4:
+            self.assertEqual(set(call) - {"name"}, set(VECTOR_INPUTS_V4))
+            self.assertEqual(call["delivery_mode_id"].tolist(), [0])
+            self.assertEqual(call["delivery_mode_id"].dtype, np.int64)
+        for a, b in zip(v3._fake.calls, v4._fake.calls):
+            for key in a:
+                if key != "name":
+                    np.testing.assert_array_equal(a[key], b[key], key)
+        np.testing.assert_array_equal(spoken_v3.latents, spoken_v4.latents)
+        self.assertEqual(spoken_v4.metadata["delivery_mode"], 0)
+        self.assertEqual(spoken_v4.metadata["melody_source"], "pitch_predictor")
+
+    def test_a_score_melody_replaces_the_pitch_predictor(self):
+        engine = _fake_engine(v4=True)
+        melody = np.zeros((6, 3), np.float32)
+        melody[1:5] = [[2 / 24, 0.5, 1.0]] * 4
+        result = self._spoken(engine, melody=melody, delivery_mode=3)
+        names = [c["name"] for c in engine._fake.calls]
+        self.assertFalse(any(n.startswith("pitch_") for n in names))
+        flow = next(c for c in engine._fake.calls if c["name"].startswith("vector_estimator"))
+        np.testing.assert_array_equal(flow["expanded_melody"][0, :6], melody)
+        self.assertTrue((flow["expanded_melody"][0, 6:] == 0).all())
+        self.assertEqual(flow["delivery_mode_id"].tolist(), [3])
+        self.assertEqual((result.metadata["delivery_mode"], result.metadata["melody_source"]), (3, "score"))
+        with self.assertRaisesRegex(ValueError, r"\[6, 3\]"):
+            self._spoken(engine, melody=np.zeros((5, 3), np.float32))
+        with self.assertRaisesRegex(ValueError, "v4"):
+            self._spoken(_fake_engine(), delivery_mode=1)
+
+    def test_guidance_contrasts_the_melody_and_mode_against_off(self):
+        engine = _fake_engine(v4=True)
+        melody = np.full((6, 3), 0.5, np.float32)
+        self._spoken(engine, melody=melody, delivery_mode=1, guidance=2.0)
+        flows = [c for c in engine._fake.calls if c["name"].startswith("vector_estimator")]
+        self.assertEqual(len(flows), 8)                                  # two evaluations per Heun stage
+        self.assertEqual([c["delivery_mode_id"].tolist()[0] for c in flows], [1, 0] * 4)
+        self.assertTrue((flows[1]["expanded_melody"] == 0).all() and (flows[0]["expanded_melody"][0, :6] == 0.5).all())
+
+    def test_bigvgan_decoder_needs_no_spare_frame(self):
+        engine = _fake_engine(v4=True)
+        for frames in (9, 16):
+            audio = engine.decode(np.zeros((24, frames), np.float32), voice="scylla", language="en_us", decoder="bigvgan")
+            self.assertEqual(audio.shape, (frames * 512,))
+            self.assertEqual(engine._fake.calls[-1]["name"], "vocoder_bigvgan")
+            self.assertEqual(int(engine._fake.calls[-1]["latent_mask"].sum()), frames)
+        engine.decode(np.zeros((24, 7), np.float32), voice="scylla", language="en_us", decoder="bigvgan")
+        self.assertEqual(engine._fake.calls[-1]["name"], "vocoder_bigvgan_8")
+        engine.decode(np.zeros((24, 7), np.float32), voice="scylla", language="en_us")
+        self.assertEqual(engine._fake.calls[-1]["name"], "vocoder_8")    # vocos keeps its spare frame: 7 + 1 fits 8
+        engine.decode(np.zeros((24, 8), np.float32), voice="scylla", language="en_us")
+        self.assertEqual(engine._fake.calls[-1]["name"], "vocoder")
+        with self.assertRaisesRegex(ValueError, "Unknown decoder"):
+            _fake_engine().decode(np.zeros((24, 4), np.float32), voice="scylla", language="en_us", decoder="bigvgan")
+
+
+class DecoderWindowTest(unittest.TestCase):
+    """Windowed decoding (controls.decoders.<name>.window), as libscyllasband does it: with a BigVGAN stand-in whose
+    samples are their frame's first latent channel, windows stitched from the frames each keeps equal one whole decode."""
+
+    @staticmethod
+    def _engine(window=None, *, single_bucket=False):
+        tmp = tempfile.TemporaryDirectory()
+        bundle = _fake_bundle(Path(tmp.name), v4=True)
+        manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
+        if window is not None:
+            manifest["controls"]["decoders"]["bigvgan"]["window"] = window
+        if single_bucket:   # BigVGAN only at the 8-frame bucket
+            for entry in manifest["controls"]["target_buckets"]["buckets"]:
+                if entry["latent_frames"] != 8:
+                    entry.pop("vocoder_bigvgan")
+            del manifest["components"]["vocoder_bigvgan"]
+        (bundle / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        graphs = _FakeGraphs(1.0)
+        graphs.bigvgan_by_frame = True
+        engine = Engine(bundle, session_factory=graphs.factory)
+        engine._fake, engine._tmp = graphs, tmp
+        return engine
+
+    @staticmethod
+    def _latents(frames, base):
+        latents = np.full((24, frames), 0.5, np.float32)
+        latents[0] = base + np.arange(frames, dtype=np.float32) / 100
+        return latents
+
+    def test_windows_stitch_to_the_whole_decode(self):
+        whole, windowed = self._engine(), self._engine(dict(frames=8, context=2))
+        self.assertEqual(windowed.decoder_windows, {"bigvgan": (8, 2)})
+        latents = self._latents(13, 0.1)
+        want = whole.decode(latents, voice="scylla", language="en_us", decoder="bigvgan")
+        got = windowed.decode(latents, voice="scylla", language="en_us", decoder="bigvgan")
+        np.testing.assert_array_equal(got, want)
+        self.assertEqual([c["name"] for c in windowed._fake.calls], ["vocoder_bigvgan_8"] * 3)   # keeps [0, 6), [6, 10), [10, 13)
+        left = self._latents(5, 0.7)
+        np.testing.assert_array_equal(windowed.decode(latents, voice="scylla", language="en_us", left=left, decoder="bigvgan"),
+                                      whole.decode(latents, voice="scylla", language="en_us", left=left, decoder="bigvgan"))
+        short = self._latents(5, 0.3)
+        windowed._fake.calls.clear()
+        np.testing.assert_array_equal(windowed.decode(short, voice="scylla", language="en_us", decoder="bigvgan"),
+                                      whole.decode(short, voice="scylla", language="en_us", decoder="bigvgan"))
+        self.assertEqual([c["name"] for c in windowed._fake.calls], ["vocoder_bigvgan_8"])
+        # Vocos is unchanged by a BigVGAN window.
+        np.testing.assert_array_equal(windowed.decode(latents, voice="scylla", language="en_us"), whole.decode(latents, voice="scylla", language="en_us"))
+
+    def test_a_single_bucket_decodes_any_length(self):
+        engine = self._engine(dict(frames=8, context=2), single_bucket=True)
+        latents = self._latents(13, 0.1)
+        np.testing.assert_array_equal(engine.decode(latents, voice="scylla", language="en_us", decoder="bigvgan"),
+                                      self._engine().decode(latents, voice="scylla", language="en_us", decoder="bigvgan"))
+        with self.assertRaises(OverlongError):   # without its window the one bucket refuses longer decodes
+            self._engine(single_bucket=True).decode(latents, voice="scylla", language="en_us", decoder="bigvgan")
+
+    def test_bad_windows_and_the_environment(self):
+        with self.assertRaisesRegex(ValueError, "leave frames to keep"):
+            self._engine(dict(frames=8, context=4))
+        with mock.patch.dict(os.environ, {"SCYLLASBAND_DECODER_WINDOW": "bigvgan=8:3"}):
+            self.assertEqual(self._engine().decoder_windows, {"bigvgan": (8, 3)})
+        with mock.patch.dict(os.environ, {"SCYLLASBAND_DECODER_WINDOW": "bigvgan=0"}):
+            self.assertEqual(self._engine(dict(frames=8, context=2)).decoder_windows, {})
+        with mock.patch.dict(os.environ, {"SCYLLASBAND_DECODER_WINDOW": "vocos=8"}), self.assertRaisesRegex(ValueError, "whole frames"):
+            self._engine()
+
 
 class StreamingTargetTest(unittest.TestCase):
     """Fake durations: one frame per phone and silence, none for punctuation ("ab." 4 frames, "ab ab." 7); trained
@@ -479,10 +659,12 @@ class StreamingTargetTest(unittest.TestCase):
 
 # --- fakes --------------------------------------------------------------------------------------------------------------
 class _FakeGraphs:
-    """Graph stand-ins with the bundle's input names. The vocoder returns frames * 512 - 256 samples, like the real one."""
+    """Graph stand-ins with the bundle's input names. The vocoder returns frames * 512 - 256 samples, like the real one;
+    the BigVGAN decoder of a v4 bundle returns frames * 512."""
 
     def __init__(self, frames_per_phone: float):
         self.frames_per_phone, self.calls = frames_per_phone, []
+        self.bigvgan_by_frame = False   # BigVGAN samples = their frame's first latent channel (0 where masked)
 
     def factory(self, name, spec):
         graphs = self
@@ -505,6 +687,11 @@ class _FakeGraphs:
                 if name.startswith("vector_estimator"):
                     return -feeds["noise"]
                 frames = feeds["latents"].shape[-1]
+                if name.startswith("vocoder_bigvgan"):
+                    if graphs.bigvgan_by_frame:
+                        values = np.where(feeds["latent_mask"][0], feeds["latents"][0, 0], 0.0).astype(np.float32)
+                        return np.repeat(values, 512)[None]
+                    return np.ones((1, frames * 512), np.float32) * 0.2
                 return np.ones((1, frames * 512 - 256), np.float32) * 0.1
         return Session()
 
@@ -533,12 +720,14 @@ def _fake_g2p_logits(encoded: np.ndarray) -> np.ndarray:
     return logits
 
 
-def _fake_bundle(root: Path, *, apple: bool = False, controls: dict | None = None) -> Path:
+def _fake_bundle(root: Path, *, apple: bool = False, controls: dict | None = None, v4: bool = False) -> Path:
     """``apple``: also the optional fused-flow graphs and narrower G2P inputs of the Core ML and Core AI bundles.
-    ``controls``: manifest controls to replace."""
+    ``controls``: manifest controls to replace. ``v4``: the singing contract (the flow takes delivery_mode_id, delivery
+    modes and decoders are declared, every bucket has a BigVGAN decoder)."""
     bundle = root / "bundle"
     (bundle / "assets/g2p").mkdir(parents=True)
     (bundle / "onnx").mkdir()
+    flow_inputs = list(VECTOR_INPUTS_V4 if v4 else VECTOR_INPUTS)
     write = lambda rel, value: (bundle / rel).write_text(json.dumps(value))  # noqa: E731
     write("assets/phone_vocab.json", dict(token_to_id=PHONE_TO_ID))
     write("assets/voices.json", [dict(id="scylla", index=0)])
@@ -549,9 +738,10 @@ def _fake_bundle(root: Path, *, apple: bool = False, controls: dict | None = Non
     write("assets/g2p/language_map.json", {"en_us": "en_us"})
     components = {}
     for name, inputs in (("g2p", ["text"]), ("duration_predictor", list(DURATION_INPUTS)), ("vector_context_encoder", list(CONTEXT_INPUTS)),
-                         ("pitch_context_encoder", list(CONTEXT_INPUTS)), ("vector_estimator_8", list(VECTOR_INPUTS)),
+                         ("pitch_context_encoder", list(CONTEXT_INPUTS)), ("vector_estimator_8", flow_inputs),
                          ("pitch_estimator_8", list(PITCH_INPUTS)), ("vocoder_8", list(VOCODER_INPUTS)),
-                         ("vector_estimator", list(VECTOR_INPUTS)), ("pitch_estimator", list(PITCH_INPUTS)), ("vocoder", list(VOCODER_INPUTS))):
+                         ("vector_estimator", flow_inputs), ("pitch_estimator", list(PITCH_INPUTS)), ("vocoder", list(VOCODER_INPUTS)),
+                         *((("vocoder_bigvgan_8", list(VOCODER_INPUTS)), ("vocoder_bigvgan", list(VOCODER_INPUTS))) if v4 else ())):
         (bundle / f"onnx/{name}.onnx").write_bytes(b"")
         components[name] = dict(artifacts=dict(onnx=dict(path=f"onnx/{name}.onnx", format="onnx")), inputs=inputs, outputs=["out"])
     manifest = dict(contract_version="1.0.0", audio=dict(sample_rate=24000, latent_dim=24, latent_hop_length=512, hop_length=256),
@@ -574,23 +764,28 @@ def _fake_bundle(root: Path, *, apple: bool = False, controls: dict | None = Non
                                                                dict(latent_frames=16, vector_estimator="vector_estimator", vocoder="vocoder",
                                                                     pitch_estimator="pitch_estimator")])))
     if apple:
-        flow_inputs = [n for n in VECTOR_INPUTS if n != "time"]
-        for name, inputs in (("vector_flow_8", flow_inputs), ("vector_flow", flow_inputs), ("g2p_16", ["text"]), ("g2p_32", ["text"])):
+        fused_inputs = [n for n in flow_inputs if n != "time"]
+        for name, inputs in (("vector_flow_8", fused_inputs), ("vector_flow", fused_inputs), ("g2p_16", ["text"]), ("g2p_32", ["text"])):
             (bundle / f"onnx/{name}.onnx").write_bytes(b"")
             components[name] = dict(artifacts=dict(onnx=dict(path=f"onnx/{name}.onnx", format="onnx")), inputs=inputs, outputs=["out"])
-        controls = manifest["controls"]
-        controls["fused_flow"] = dict(sampler="heun", steps=8)
-        controls["g2p_buckets"] = [dict(text_tokens=16, component="g2p_16"), dict(text_tokens=32, component="g2p_32")]
-        for entry, flow in zip(controls["target_buckets"]["buckets"], ("vector_flow_8", "vector_flow")):
+        manifest["controls"]["fused_flow"] = dict(sampler="heun", steps=8)
+        manifest["controls"]["g2p_buckets"] = [dict(text_tokens=16, component="g2p_16"), dict(text_tokens=32, component="g2p_32")]
+        for entry, flow in zip(manifest["controls"]["target_buckets"]["buckets"], ("vector_flow_8", "vector_flow")):
             entry["vector_flow"] = flow
+    if v4:
+        manifest["controls"]["graph_input_contract"] = GRAPH_CONTRACT_V4
+        manifest["controls"]["delivery_modes"] = json.loads(json.dumps(V4_DELIVERY_MODES))
+        manifest["controls"]["decoders"] = json.loads(json.dumps(V4_DECODERS))
+        for entry, decoder in zip(manifest["controls"]["target_buckets"]["buckets"], ("vocoder_bigvgan_8", "vocoder_bigvgan")):
+            entry["vocoder_bigvgan"] = decoder
     manifest["controls"].update(controls or {})
     write("manifest.json", manifest)
     return bundle
 
 
-def _fake_engine(frames_per_phone: float = 1.0, *, apple: bool = False, **controls) -> Engine:
+def _fake_engine(frames_per_phone: float = 1.0, *, apple: bool = False, v4: bool = False, **controls) -> Engine:
     tmp = tempfile.TemporaryDirectory()
-    bundle = _fake_bundle(Path(tmp.name), apple=apple, controls=controls)
+    bundle = _fake_bundle(Path(tmp.name), apple=apple, controls=controls, v4=v4)
     graphs = _FakeGraphs(frames_per_phone)
     engine = Engine(bundle, session_factory=graphs.factory)
     engine._fake, engine._tmp = graphs, tmp

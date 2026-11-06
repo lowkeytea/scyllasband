@@ -107,6 +107,89 @@ A runtime serializes its requests; use separate runtimes for concurrent synthesi
 the calling thread and audio pointers are valid only during the callback; returning nonzero stops the
 request. Errors return a status and set the thread-local `scyllasband_last_error()`.
 
+### Records (ABI 3.1)
+
+A records request speaks several voices, languages and deliveries in one go, as `group-speak` does:
+
+```c
+ScyllasBandRecordsRequest request;
+scyllasband_records_request_init(&request);   /* sets struct_size, which every call checks */
+request.records_json = "[{\"text\": \"Hello there.\", \"voice\": \"scylla\"},"
+                       " {\"text\": \"It has been a while.\", \"voice\": \"ink\", \"language\": \"en_gb\", \"pace\": -0.5}]";
+request.pause_ms = 250;
+request.seed = 2027;
+request.has_seed = 1;
+scyllasband_synthesize_records_stream(runtime, &request, on_event, user_data);
+```
+
+| Function | Purpose |
+| --- | --- |
+| `scyllasband_records_request_init` | Defaults and `struct_size` for a `ScyllasBandRecordsRequest`. |
+| `scyllasband_plan_records_json` | The sentence plan for the records, without synthesizing. |
+| `scyllasband_synthesize_records_stream` | The records spoken target by target, with the same events as `scyllasband_synthesize_stream`. |
+
+Each record is `{"text", "voice", "language"?, "delivery"?, "intensity"?, "pace"?, "pitch"?}`: the delivery as a
+`control=value` string or a `{"intensity", "pace", "pitch"}` object, or the controls as fields, not both. Consecutive
+records with the same voice, language and delivery form one chain, spoken continuously with the previous target's
+acoustics as context; a record that changes any of the three starts a new chain, even when it has no text, and
+`pause_ms` of silence opens every chain after the first (at the start of that target's audio). Chunk *i* of the
+whole plan, counted across records, draws its noise from `seed + i`. The rules and messages are the Python runtime's (`planner.plan_records`).
+
+### Singing (ABI 3.1)
+
+A v4 bundle (`voices_json` → `"singing": {"supported": true, ...}`) sings a melody score:
+
+```c
+ScyllasBandSingRequest request;
+scyllasband_sing_request_init(&request);   /* sets struct_size, which every call checks */
+request.score_json = "{\"text\": \"hold on tight\", \"bpm\": 104, \"style\": \"pop\","
+                     " \"notes\": [[\"hold\", \"E3\", 1], [\"on\", \"G3\", 1], [\"tight\", \"A3\", 2]]}";
+request.voice_id = "gwen";
+request.decoder = "vocos";                 /* NULL: the bundle's singing decoder (BigVGAN); "vocos": turbo */
+request.seed = 7;
+request.has_seed = 1;
+scyllasband_sing_stream(runtime, &request, on_event, user_data);
+```
+
+| Function | Purpose |
+| --- | --- |
+| `scyllasband_sing_request_init` | Defaults and `struct_size` for a `ScyllasBandSingRequest`. |
+| `scyllasband_score_parse` | Checks a score without a runtime and returns it normalized (notes with MIDI and times, words, range, lines); an error names the note at fault. |
+| `scyllasband_sing_fit_json` | How the song sits in the voice's range after transpose and octave register, with a suggested transpose. No graph runs. |
+| `scyllasband_sing_plan_json` | The phrase plan (phones, durations, notes per phrase) and the settings a sing would use. |
+| `scyllasband_sing` | The whole song as one waveform, silence in the rests. |
+| `scyllasband_sing_stream` | Plan, phrase-started, audio and done events; the audio events are contiguous, so a player appends them. |
+| `scyllasband_sing_preview` | The score as plain tones at the pitch it will be sung, for an instant preview. No graph runs. |
+| `scyllasband_warmup_singing` | Loads the graphs a short phrase needs with a decoder. |
+
+A score is `{"text", "bpm", "style": "pop" | "ballad", "notes": [[label, note, beats], ...]}`: a note is a pitch name with
+octave (`C4`, `F#3`, `Bb3`) or `rest` (label `-`), and a word over several notes is numbered (`ba~1`, `by~2`). The song is
+split into phrases at rests of 0.25 s or more, moved by octaves into the voice's sung range (`use_register`) after
+`transpose`, and each phrase is sung with the bundle's singing settings (`v4-20261106`: 4 Euler steps without guidance)
+through BigVGAN, or Vocos with `decoder = "vocos"`. Phrase *i* draws its noise from `seed + i`. Score parse, fit and
+preview don't wait for a request in progress, so an editor can call them while a song renders.
+
+On LiteRT each bucket graph a process opens keeps its own working memory, about 2 MB per latent frame for BigVGAN, so a
+song whose phrases fall into several buckets holds several. A decoder window decodes every phrase through one bucket graph
+instead, with `context` frames of overlap either side of each cut: `controls.decoders.bigvgan.window: {"frames": 256,
+"context": 16}` in the manifest, or `SCYLLASBAND_DECODER_WINDOW=bigvgan=256:16` (`bigvgan=0` turns it off). The 71 s
+example song then peaks at 1.5 GB instead of 3.7 GB on a Galaxy Z Fold 8 (3 % slower) and at 1.0 GB instead of 3.5 GB on a
+Mac (7 % slower), with audio within 68 dB of whole-phrase decoding (16 frames of overlap is enough; 8 leaves audible
+joins). A phrase shorter than the window is padded to it: a 3.6 s phrase (176 frames) takes 36 % longer in a 256-frame
+window than in its own 192-frame bucket. Only a decoder whose output is whole frames (BigVGAN) can window. A windowed
+decoder decodes any length, so a bundle may carry it at the window's bucket only (its phrase limit is then the flow's):
+the LiteRT bundle's BigVGAN as the one 256-frame signature peaks at 1.4 GB on the Fold for the same song, at the same
+speed. FP16 BigVGAN weights halve the download but cost memory on LiteRT's CPU path: XNNPACK expands them to FP32 when
+it loads them, and its FP16 compute mode cannot use the weight cache in LiteRT 2.2.0. They suit the GPU: a singing LiteRT
+bundle can name BigVGAN as its one GPU graph (`controls.litert.gpu: {"graphs": ["vocoder_bigvgan"], "precision":
+"fp16_fp32_accumulation"}`), so `SCYLLASBAND_ACCELERATOR_AUTO` sings through the GPU and speaks on the CPU. With the
+release's channels-last BigVGAN graph (BigVGAN's usual channels-first graph does not run on the GPU delegate) the Fold
+renders the 71 s song in 19 s at 764 MB, against 71 s on its CPU.
+
+`ScyllasBandRecordsRequest` and `ScyllasBandSingRequest` start with `struct_size`; initialize requests with their
+init function so a caller built against another layout gets an error instead of misread fields. Every 3.0.0 type and
+function is unchanged in 3.1 (`scyllasband_abi` checks it).
+
 ## Build
 
 The LiteRT C headers (2.2.0) and ONNX Runtime headers (1.30.0) are staged under `third_party/`. Shared
@@ -156,9 +239,11 @@ The library target is `scyllasband_native` (alias `scyllasband::native`). Only `
 exported. On Android, pass the `libLiteRt.so` from the `com.google.ai.edge.litert:litert` AAR or the
 `libonnxruntime.so` from the `com.microsoft.onnxruntime:onnxruntime-android` AAR for `${ANDROID_ABI}`.
 
-LiteRT runs on CPU through XNNPACK. `SCYLLASBAND_ACCELERATOR_GPU` and `_AUTO` load the GPU accelerator
-library from the directory of `libLiteRt` and run the ops it supports on the GPU, the rest on the CPU; with
-`_AUTO`, a graph that the GPU accelerator cannot compile runs entirely on the CPU instead of failing.
+LiteRT runs on CPU through XNNPACK. `SCYLLASBAND_ACCELERATOR_GPU` loads the GPU accelerator library from the directory of
+`libLiteRt` and runs every graph's supported ops on the GPU, the rest on the CPU. `_AUTO` puts only the graphs the bundle
+lists in `controls.litert.gpu.graphs` on the GPU (a singing bundle lists BigVGAN) and runs everything else on the CPU, and
+every graph of a bundle that lists none: with LiteRT 2.2.0 the duration predictor returns wrong durations on the GPU. A
+graph the GPU accelerator cannot compile runs entirely on the CPU instead of failing.
 
 ## Command-line tool
 
@@ -170,11 +255,23 @@ build/litert/scyllasband_speak --bundle ../scyllasband/models/litert --voice ink
 
 `--plan-only` prints the sentence plan; `--stream` prints the stream events.
 
+```bash
+build/litert/scyllasband_speak --bundle ../scyllasband/models/litert --voice gwen \
+    --score ../scyllasband/models/melodies/phrase_pop_02.json --seed 7 --output phrase.wav   # BigVGAN
+build/litert/scyllasband_speak --bundle ../scyllasband/models/litert --voice gwen \
+    --score ../scyllasband/models/melodies/phrase_pop_02.json --turbo-sing --timings 3       # Vocos, timed
+```
+
+`--score` sings a score on a v4 bundle, with `--decoder bigvgan|vocos` (`--turbo-sing` = Vocos), `--sing-steps`,
+`--guidance`, `--transpose` and `--no-register`.
+
 ## Tests
 
 `ctest` runs the unit suites (`events`, `durations`, `context`, `delivery`, `sentences`, `segments`,
-`normalizer`, `unicode`, `targets`) against fixtures produced by the Python runtime; `targets` also runs the
-streaming loop on fake graphs. Regenerate them after a reference
+`normalizer`, `unicode`, `targets`, `singing`, `records`) against fixtures produced by the Python runtime; `targets` also runs the
+streaming loop on fake graphs, and `records` plans records (delivery forms, chains, errors) and streams them with
+`pause_ms`. `scyllasband_abi` checks that the 3.0.0 types keep their layout and every 3.0.0 symbol is still exported
+(`fixtures/abi_3_0_layout.txt`, `fixtures/abi_3_0_symbols.txt`). Regenerate the fixtures after a reference
 change:
 
 ```bash
@@ -191,7 +288,9 @@ python tools/generate_lexicon.py
 `tests/parity_harness.py` compares the built library with the Python runtime on a bundle of the build's
 flavor: text normalization, sentence splitting, punctuation segments and Unicode handling; G2P phones and word
 starts; per-target durations, latents (given the same noise) and decoded audio with passage context and
-prefix; the long-form plan, targets and whole-passage audio. It needs numpy and `onnxruntime` or `ai-edge-litert`:
+prefix; the long-form plan, targets and whole-passage audio; records plans, error messages and the records stream with
+`pause_ms`. It loads the library through `scyllasband.native`, the Python binding, and needs numpy and `onnxruntime` or
+`ai-edge-litert`:
 
 ```bash
 PYTHONPATH=.. python tests/parity_harness.py --library build/litert/libscyllasband_native.so \

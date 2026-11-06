@@ -84,10 +84,11 @@ let pace = request.delivery.pace?.floatValue   // nil: the voice's default
 
 Rules:
 
-- Pass the URL of a complete v3 bundle directory: `manifest.json`, `assets/`,
+- Pass the URL of a complete v3 or v4 bundle directory: `manifest.json`, `assets/`,
   and `coreml/*.mlmodelc` or `coreai/*.aimodel` (`g2p`, `duration_predictor`,
   `pitch_context_encoder`, `pitch_estimator`, `vector_context_encoder`,
-  `vector_estimator`, `vocoder`). Bundles from the v2 model don't load.
+  `vector_estimator`, `vocoder`; v4 adds `vocoder_bigvgan` for singing).
+  Bundles from the v2 model don't load.
 - Create, warm, and call one runtime from a single serial queue, never the
   main thread. Callbacks run synchronously on that queue.
 - The first load of a Core AI bundle specializes its graphs for the device,
@@ -100,6 +101,40 @@ Rules:
   continues in the background use `NeuralEngine` with a Core AI bundle (its
   speech generator runs on the Neural Engine, the other graphs on the CPU, as
   listed in the manifest's `neural_engine_assets`) or `CPU`.
+
+### Singing
+
+A v4 bundle sings melody scores (`bundleInfo.singing.isSupported`). The
+[iOS sample's](../../examples/ios/README.md) Sing tab builds scores in an editor.
+
+| Type or method | Purpose |
+| --- | --- |
+| `SBScyllasBandSingRequest` | Score JSON, voice, optional language, seed, steps, guidance, `decoder`, `transpose`, `usesRegister`. |
+| `SBScyllasBandSingingDecoder` | `.default` (the bundle's singing decoder, BigVGAN), `.bigVGAN`, `.vocos` (turbo: much faster, with some artefacts on held notes in some voices). |
+| `SBScyllasBandSingingInfo` | `bundleInfo.singing`: styles, decoders, the singing steps, sampler and guidance, each voice's MIDI centre, the register band, and the longest phrase. |
+| `sing(_:phraseStarted:phraseAudio:)` | Sings phrase by phrase; each `SBScyllasBandSungPhrase` is the next run of the song (`startSample`, contiguous), so a player appends them. |
+| `sing(_:)` | The whole song as one `SBScyllasBandAudioChunk`. |
+| `singPlan(for:)` | The phrase plan, without singing. |
+| `parseScore(json:transpose:)` (class) | Checks and normalizes a score without a runtime; errors carry the note at fault (`SBScyllasBandScoreNoteIndexKey`). |
+| `singFit(for:)`, `preview(for:)` | How the song sits in the voice's range (with a suggested transpose), and the melody as plain tones. Neither runs a graph or waits for a song in progress. |
+| `warmUpSinging(voice:decoder:)` | Loads the graphs a short phrase needs. |
+
+```swift
+let request = SBScyllasBandSingRequest(scoreJSON: score, voiceIdentifier: "gwen")
+request.decoder = .vocos   // turbo; .default sings through BigVGAN
+try runtime.sing(request, phraseStarted: nil) { phrase in
+    // Append phrase.pcmFloat32Data (phrase.sampleRate Hz) to the player; return false to stop.
+    return true
+}
+```
+
+BigVGAN runs on the GPU with `Automatic` and on the Neural Engine with
+`NeuralEngine` on Core AI bundles (it is listed in `neural_engine_assets`), so
+songs can render in the background too. On iOS and visionOS a Core ML bundle
+runs it on the CPU with `Automatic` (`controls.coreml.compute_units_ios`):
+Core ML's GPU path for its largest bucket runs out of an iPhone's GPU memory,
+which aborts the app. On an iPhone 17 Pro Max with `v4-20261106` (4 Euler steps without guidance) a 71 s song sings in
+31 s that way, in 12.5 s with Core AI on the GPU and in 14 s on the Neural Engine; Turbo (Vocos) takes about 1 s on each.
 
 ## macOS library and CLI
 

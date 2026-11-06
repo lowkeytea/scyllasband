@@ -24,7 +24,8 @@ SCYLLASBAND_API int32_t scyllasband_test_phonemize(ScyllasBandRuntime* runtime, 
 
 /*
  * One sentence from explicit inputs. request_json: {"phones", "word_starts", "before_ids", "after_ids", "voice", "language",
- * "delivery", "steps", "sampler", "speed", "durations" (optional: skip the duration graph)}.
+ * "delivery", "steps", "sampler", "speed", "durations" (optional: skip the duration graph); for a sung target (v4) also
+ * "melody" ([frames * 3] row-major: replaces the pitch predictor), "delivery_mode", "guidance" and "decoder" (vocos | bigvgan)}.
  * noise: [2 + latent_dim, noise_frames] row-major (the pitch predictor's two rows, then the flow's); noise_frames must equal the sentence's latent frames. NULL noise only
  * predicts durations. prefix: [latent_dim, prefix_frames] previously spoken latents (flow prefix and decode context).
  * out_json: {"durations", "latent_frames", "bucket", ...}; out_latents [latent_dim, frames]; out_audio samples.
@@ -39,6 +40,10 @@ SCYLLASBAND_API int32_t scyllasband_test_synthesize_sentence(ScyllasBandRuntime*
 typedef void (*ScyllasBandTestNoise)(int32_t chunk_index, uint64_t seed, int32_t has_seed, int32_t latent_dim, int64_t frames, float* out,
                                      void* user_data);
 SCYLLASBAND_API void scyllasband_test_set_noise(ScyllasBandRuntime* runtime, ScyllasBandTestNoise noise, void* user_data);
+
+/* The sing plan with each phrase's melody input ("melody": [frames * 3]); singing with a test noise set draws phrase i's flow
+   noise from it (chunk_index = i, the first two rows unused). */
+SCYLLASBAND_API int32_t scyllasband_test_sing_plan(ScyllasBandRuntime* runtime, const ScyllasBandSingRequest* request, char** out_json);
 
 #ifdef __cplusplus
 }

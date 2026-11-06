@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The files the Sing screen shares: a song's score and its last take (SongStore.SHARED_DIRECTORY in the cache). -->
+<paths>
+    <cache-path
+        name="shared"
+        path="shared/" />
+</paths>

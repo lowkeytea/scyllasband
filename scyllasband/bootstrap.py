@@ -24,7 +24,7 @@ REQUIRED = {"numpy": "numpy", "huggingface_hub": "huggingface_hub", "ai_edge_lit
 # Optional extras (pyproject) by graph backend: module -> package.
 EXTRAS = {"onnx": {"onnxruntime": "onnxruntime"}, "cuda": {"onnxruntime": "onnxruntime-gpu"}, "coreml": {"coremltools": "coremltools"},
           "coreai": {"coreai": "coreai-core"}}
-MODEL_COMMANDS = ("speak", "group-speak", "stream", "plan", "list-voices", "validate-bundle")
+MODEL_COMMANDS = ("speak", "group-speak", "sing", "stream", "plan", "list-voices", "validate-bundle")
 REPO_ROOT = Path(__file__).resolve().parents[1]
 VENV_DIR = REPO_ROOT / ".venv"
 _RELAUNCHED = "SCYLLASBAND_BOOTSTRAPPED"

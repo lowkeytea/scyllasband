@@ -227,3 +227,9 @@ scyllasband/models_release
 !docs/
 !docs/scylla_long_form_sample.wav
 !docs/multi_lingual_sample.wav
+
+# The iOS sample's per-machine settings (signing team)
+examples/ios/Config/Local.xcconfig
+
+# Native libraries built by python -m scyllasband build-native
+scyllasband/_native/

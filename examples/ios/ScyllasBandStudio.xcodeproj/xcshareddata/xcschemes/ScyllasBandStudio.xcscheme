@@ -14,7 +14,7 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "F22D94F362FEC0E4B616B9BB"
+               BlueprintIdentifier = "76789D61B0FD97B242AD6E04"
                BuildableName = "ScyllasBandStudio.app"
                BlueprintName = "ScyllasBandStudio"
                ReferencedContainer = "container:ScyllasBandStudio.xcodeproj">
@@ -30,7 +30,7 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "F22D94F362FEC0E4B616B9BB"
+            BlueprintIdentifier = "76789D61B0FD97B242AD6E04"
             BuildableName = "ScyllasBandStudio.app"
             BlueprintName = "ScyllasBandStudio"
             ReferencedContainer = "container:ScyllasBandStudio.xcodeproj">
@@ -53,7 +53,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "F22D94F362FEC0E4B616B9BB"
+            BlueprintIdentifier = "76789D61B0FD97B242AD6E04"
             BuildableName = "ScyllasBandStudio.app"
             BlueprintName = "ScyllasBandStudio"
             ReferencedContainer = "container:ScyllasBandStudio.xcodeproj">
@@ -70,7 +70,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "F22D94F362FEC0E4B616B9BB"
+            BlueprintIdentifier = "76789D61B0FD97B242AD6E04"
             BuildableName = "ScyllasBandStudio.app"
             BlueprintName = "ScyllasBandStudio"
             ReferencedContainer = "container:ScyllasBandStudio.xcodeproj">

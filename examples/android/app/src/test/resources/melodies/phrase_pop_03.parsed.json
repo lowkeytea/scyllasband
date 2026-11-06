@@ -1,0 +1,160 @@
+{
+ "bpm": 112.0,
+ "lines": [
+  {
+   "first": 0,
+   "last": 8
+  }
+ ],
+ "mode": "sung",
+ "notes": [
+  {
+   "beats": 0.25,
+   "end": 0.1339,
+   "index": 0,
+   "label": "ev~1",
+   "midi": 67,
+   "note": "G4",
+   "part": 1,
+   "start": 0.0,
+   "word_index": 0
+  },
+  {
+   "beats": 0.25,
+   "end": 0.2679,
+   "index": 1,
+   "label": "ery~2",
+   "midi": 67,
+   "note": "G4",
+   "part": 2,
+   "start": 0.1339,
+   "word_index": 0
+  },
+  {
+   "beats": 0.5,
+   "end": 0.5357,
+   "index": 2,
+   "label": "mor~1",
+   "midi": 69,
+   "note": "A4",
+   "part": 1,
+   "start": 0.2679,
+   "word_index": 1
+  },
+  {
+   "beats": 0.5,
+   "end": 0.8036,
+   "index": 3,
+   "label": "ning~2",
+   "midi": 67,
+   "note": "G4",
+   "part": 2,
+   "start": 0.5357,
+   "word_index": 1
+  },
+  {
+   "beats": 0.5,
+   "end": 1.0714,
+   "index": 4,
+   "label": "i",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 0.8036,
+   "word_index": 2
+  },
+  {
+   "beats": 0.5,
+   "end": 1.3393,
+   "index": 5,
+   "label": "wake",
+   "midi": 65,
+   "note": "F4",
+   "part": 1,
+   "start": 1.0714,
+   "word_index": 3
+  },
+  {
+   "beats": 0.5,
+   "end": 1.6071,
+   "index": 6,
+   "label": "up",
+   "midi": 67,
+   "note": "G4",
+   "part": 1,
+   "start": 1.3393,
+   "word_index": 4
+  },
+  {
+   "beats": 0.5,
+   "end": 1.875,
+   "index": 7,
+   "label": "sing~1",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 1.6071,
+   "word_index": 5
+  },
+  {
+   "beats": 1.0,
+   "end": 2.4107,
+   "index": 8,
+   "label": "ing~2",
+   "midi": 62,
+   "note": "D4",
+   "part": 2,
+   "start": 1.875,
+   "word_index": 5
+  }
+ ],
+ "range": {
+  "high": 69,
+  "high_note": "A4",
+  "low": 62,
+  "low_note": "D4",
+  "mean": 65.778
+ },
+ "seconds": 2.4107,
+ "style": "pop",
+ "text": "every morning i wake up singing",
+ "transpose": 0,
+ "words": [
+  {
+   "end": 0.2679,
+   "parts": 2,
+   "start": 0.0,
+   "word": "every"
+  },
+  {
+   "end": 0.8036,
+   "parts": 2,
+   "start": 0.2679,
+   "word": "morning"
+  },
+  {
+   "end": 1.0714,
+   "parts": 1,
+   "start": 0.8036,
+   "word": "i"
+  },
+  {
+   "end": 1.3393,
+   "parts": 1,
+   "start": 1.0714,
+   "word": "wake"
+  },
+  {
+   "end": 1.6071,
+   "parts": 1,
+   "start": 1.3393,
+   "word": "up"
+  },
+  {
+   "end": 2.4107,
+   "parts": 2,
+   "start": 1.6071,
+   "word": "singing"
+  }
+ ]
+}

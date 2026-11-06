@@ -59,7 +59,7 @@ internal class AudioChunkBuffer(
         // Two chunks cover normal producer/consumer jitter without retaining a
         // long queue of generated waveforms or letting transcript updates race
         // far ahead of audible playback.
-        private const val DEFAULT_CAPACITY = 2
+        const val DEFAULT_CAPACITY = 2
         private const val OFFER_POLL_MS = 25L
         private const val CONSUMER_POLL_MS = 25L
     }

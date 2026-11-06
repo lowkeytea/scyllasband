@@ -1,0 +1,144 @@
+{
+ "bpm": 106.0,
+ "lines": [
+  {
+   "first": 0,
+   "last": 6
+  }
+ ],
+ "mode": "sung",
+ "notes": [
+  {
+   "beats": 0.5,
+   "end": 0.283,
+   "index": 0,
+   "label": "count",
+   "midi": 60,
+   "note": "C4",
+   "part": 1,
+   "start": 0.0,
+   "word_index": 0
+  },
+  {
+   "beats": 0.5,
+   "end": 0.566,
+   "index": 1,
+   "label": "the",
+   "midi": 62,
+   "note": "D4",
+   "part": 1,
+   "start": 0.283,
+   "word_index": 1
+  },
+  {
+   "beats": 1.0,
+   "end": 1.1321,
+   "index": 2,
+   "label": "stars",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 0.566,
+   "word_index": 2
+  },
+  {
+   "beats": 0.5,
+   "end": 1.4151,
+   "index": 3,
+   "label": "and",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 1.1321,
+   "word_index": 3
+  },
+  {
+   "beats": 0.5,
+   "end": 1.6981,
+   "index": 4,
+   "label": "call",
+   "midi": 67,
+   "note": "G4",
+   "part": 1,
+   "start": 1.4151,
+   "word_index": 4
+  },
+  {
+   "beats": 0.5,
+   "end": 1.9811,
+   "index": 5,
+   "label": "them",
+   "midi": 65,
+   "note": "F4",
+   "part": 1,
+   "start": 1.6981,
+   "word_index": 5
+  },
+  {
+   "beats": 1.5,
+   "end": 2.8302,
+   "index": 6,
+   "label": "mine",
+   "midi": 62,
+   "note": "D4",
+   "part": 1,
+   "start": 1.9811,
+   "word_index": 6
+  }
+ ],
+ "range": {
+  "high": 67,
+  "high_note": "G4",
+  "low": 60,
+  "low_note": "C4",
+  "mean": 63.429
+ },
+ "seconds": 2.8302,
+ "style": "pop",
+ "text": "count the stars and call them mine",
+ "transpose": 0,
+ "words": [
+  {
+   "end": 0.283,
+   "parts": 1,
+   "start": 0.0,
+   "word": "count"
+  },
+  {
+   "end": 0.566,
+   "parts": 1,
+   "start": 0.283,
+   "word": "the"
+  },
+  {
+   "end": 1.1321,
+   "parts": 1,
+   "start": 0.566,
+   "word": "stars"
+  },
+  {
+   "end": 1.4151,
+   "parts": 1,
+   "start": 1.1321,
+   "word": "and"
+  },
+  {
+   "end": 1.6981,
+   "parts": 1,
+   "start": 1.4151,
+   "word": "call"
+  },
+  {
+   "end": 1.9811,
+   "parts": 1,
+   "start": 1.6981,
+   "word": "them"
+  },
+  {
+   "end": 2.8302,
+   "parts": 1,
+   "start": 1.9811,
+   "word": "mine"
+  }
+ ]
+}

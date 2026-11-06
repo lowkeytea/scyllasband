@@ -56,8 +56,18 @@ double element(const TensorView& view, std::size_t index) {
 }
 
 // The compute unit for an asset: the caller's choice, or for AUTO the bundle's recommendation ("gpu,g2p=cpu": a default
-// and per-asset choices) from controls.<backend>.compute_units. SCYLLASBAND_COMPUTE_UNITS, in the same form, replaces
-// the recommendation (for measuring other placements without editing the bundle).
+// and per-asset choices) from controls.<backend>.compute_units, or on iOS and visionOS from compute_units_ios when the
+// bundle has one (Core ML's BigVGAN at 512 frames exhausts an iPhone's GPU memory and aborts the app, so the v4 Core ML
+// bundle runs it on the CPU there). SCYLLASBAND_COMPUTE_UNITS, in the same form, replaces the recommendation (for
+// measuring other placements without editing the bundle).
+std::string recommended_units(const Json& manifest, const std::string& backend) {
+    const Json& controls = manifest.get("controls").get(backend);
+#if TARGET_OS_IPHONE
+    if (controls.get("compute_units_ios").is_string()) return controls.get("compute_units_ios").str();
+#endif
+    return controls.get("compute_units").str();
+}
+
 int unit_for(const Json& manifest, const std::string& backend, const std::string& asset, int accelerator) {
     if (accelerator == kAcceleratorNeuralEngine) {
         // Only graphs the bundle lists as accurate there (controls.<backend>.neural_engine_assets) go to the Neural
@@ -72,8 +82,7 @@ int unit_for(const Json& manifest, const std::string& backend, const std::string
     auto parse = [](const std::string& unit) {
         return unit == "cpu" ? kAcceleratorCpu : unit == "gpu" ? kAcceleratorGpu : unit == "ane" ? kAcceleratorNeuralEngine : kAcceleratorAuto;
     };
-    const std::string spec = override_units && override_units[0] ? std::string(override_units)
-                                                                 : manifest.get("controls").get(backend).get("compute_units").str();
+    const std::string spec = override_units && override_units[0] ? std::string(override_units) : recommended_units(manifest, backend);
     int fallback = kAcceleratorAuto;
     std::size_t start = 0;
     while (start < spec.size()) {

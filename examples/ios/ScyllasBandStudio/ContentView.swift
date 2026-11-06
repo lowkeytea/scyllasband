@@ -147,10 +147,10 @@ struct ContentView: View {
                 ProgressView()
                     .tint(.accentColor)
             }
-            Text(model.status)
+            Text(model.statusText)
                 .font(.footnote)
                 .foregroundStyle(Color(uiColor: .secondaryLabel))
-                .accessibilityLabel("Status: \(model.status)")
+                .accessibilityLabel("Status: \(model.statusText)")
             Spacer(minLength: 0)
         }
     }

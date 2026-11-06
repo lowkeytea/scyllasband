@@ -16,6 +16,7 @@ from .text_normalizer import normalize_spoken_text
 
 SUPPORTED_BACKENDS = ("onnx", "litert", "coreml", "coreai")
 SUPPORTED_SAMPLERS = ("heun", "euler")
+PYTHON_NOISE = "numpy-pcg64"   # this engine's noise (numpy.random.default_rng); the native runtime's is xoshiro256**
 
 
 @dataclass(frozen=True)
@@ -160,7 +161,7 @@ class ScyllasBandRuntime:
         metadata.update(backend=self.backend, bundle_dir=str(self.bundle_dir), voice_id=request.voice_id,
                         language=plan.chunks[0].language,
                         delivery=self.engine.delivery_inputs(request.voice_id, plan.chunks[0].delivery)[3], steps=options.steps,
-                        sampler=options.sampler, speed=options.speed, seed=request.seed)
+                        sampler=options.sampler, speed=options.speed, seed=request.seed, engine="python", noise=PYTHON_NOISE)
         return SynthesisResult(audio=audio, sample_rate=sample_rate, metadata=metadata)
 
     def synthesize_stream(self, records: Sequence[Mapping[str, Any]], *, normalize: bool = True, progress: TextIO | None = None,
@@ -172,7 +173,32 @@ class ScyllasBandRuntime:
                        **options: Any) -> SynthesisResult:
         plan = self.plan_records(records, normalize=normalize)
         audio, sample_rate, metadata = render_plan(self.engine, plan, self.stream_options(**options), progress=progress)
-        return SynthesisResult(audio=audio, sample_rate=sample_rate, metadata=dict(metadata, backend=self.backend))
+        return SynthesisResult(audio=audio, sample_rate=sample_rate, metadata=dict(metadata, backend=self.backend, engine="python", noise=PYTHON_NOISE))
+
+    # --- singing ------------------------------------------------------------------------------------------------------
+    @property
+    def supports_singing(self) -> bool:
+        """True on a v4 bundle with delivery modes (``controls.delivery_modes.enabled``)."""
+        return bool(self.engine.delivery_modes)
+
+    def sing(self, score: Mapping[str, Any], voice_id: str, language: str | None = None, *, seed: int | None = None,
+             steps: int | None = None, sampler: str | None = None, decoder: str | None = None, guidance: float | None = None,
+             register: bool = True, transpose: int = 0, progress: TextIO | None = None) -> SynthesisResult:
+        """Sing a melody score (``text``, ``bpm``, ``style``, ``notes``; see :mod:`scyllasband.singing`) with a voice.
+        ``steps``, ``sampler`` and ``decoder`` default to the bundle's singing settings (Heun, 8 steps, BigVGAN where
+        exported); ``transpose`` adds semitones to the whole score, then ``register`` moves it by octaves into the voice's
+        sung range."""
+        from .singing import sing as sing_score
+        if not self.supports_singing:
+            raise ValueError("Singing needs a v4 bundle with delivery modes; this bundle is spoken only. Download a current model: "
+                             "python -m scyllasband download --yes")
+        if sampler is not None and str(sampler).lower() not in SUPPORTED_SAMPLERS:
+            raise ValueError(f"Unsupported sampler {sampler!r}; choose one of {', '.join(SUPPORTED_SAMPLERS)}")
+        language = self.resolve_language_for_voice(voice_id, language)
+        result = sing_score(self.engine, score, voice_id, language, seed=seed, steps=steps, sampler=sampler, decoder=decoder,
+                            guidance=guidance, register=register, transpose=transpose, progress=progress)
+        result.metadata.update(backend=self.backend, bundle_dir=str(self.bundle_dir), voice_id=voice_id, engine="python", noise=PYTHON_NOISE)
+        return result
 
     def warmup(self, *, voice_id: str | None = None) -> dict[str, Any]:
         """Create every session once with a short sentence so the first real request starts fast."""
@@ -182,7 +208,9 @@ class ScyllasBandRuntime:
 
     def runtime_status(self) -> dict[str, Any]:
         return dict(backend=self.backend, bundle_dir=str(self.bundle_dir), voices=self.available_voices(),
-                    buckets=[b[0] for b in self.engine.buckets], sessions=sorted(self.engine._sessions))
+                    buckets=[b[0] for b in self.engine.buckets], sessions=sorted(self.engine._sessions),
+                    graph_contract=self.engine.graph_contract, singing=self.supports_singing,
+                    decoders=sorted(name for name, graphs in self.engine.decoder_graphs.items() if graphs))
 
 
 def _compute_units(bundle_dir: Path, backend: str, requested: str | Mapping[str, str] | None) -> str | Mapping[str, str]:

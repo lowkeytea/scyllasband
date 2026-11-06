@@ -1,68 +1,21 @@
 // C ABI over the engine (include/scyllasband.h) and the parity-harness entry points (src/scyllasband_test_api.h).
-#include "scyllasband.h"
-
-#include "scyllasband_engine.h"
-#include "scyllasband_test_api.h"
+#include "scyllasband_abi_internal.h"
+#include "scyllasband_song_render.h"
+#include "scyllasband_speech_stream.h"
 #include "scyllasband_text.h"
 
-#include <algorithm>
-#include <cstdlib>
-#include <cstring>
-#include <mutex>
-#include <string>
+#include <cmath>
+#include <cstdio>
 
 using namespace scyllasband;
+using namespace scyllasband::abi;
 
-struct ScyllasBandRuntime {
-    std::unique_ptr<Engine> engine;
-    std::string voices_json;
-    std::mutex mutex;
-    ScyllasBandTestNoise test_noise = nullptr;
-    void* test_noise_user = nullptr;
-};
+std::string& scyllasband::abi::last_error() {
+    thread_local std::string message;
+    return message;
+}
 
 namespace {
-
-thread_local std::string g_last_error;
-
-template <typename Fn>
-ScyllasBandStatus guarded(Fn&& fn) {
-    try {
-        fn();
-        g_last_error.clear();
-        return SCYLLASBAND_OK;
-    } catch (const CancelledError& error) {
-        g_last_error = error.what();
-        return SCYLLASBAND_ERROR_CANCELLED;
-    } catch (const std::invalid_argument& error) {
-        g_last_error = error.what();
-        return SCYLLASBAND_ERROR_INVALID_ARGUMENT;
-    } catch (const std::exception& error) {
-        g_last_error = error.what();
-        return SCYLLASBAND_ERROR_RUNTIME;
-    } catch (...) {
-        g_last_error = "Unknown native error";
-        return SCYLLASBAND_ERROR_RUNTIME;
-    }
-}
-
-char* copy_string(const std::string& value) {
-    char* out = static_cast<char*>(std::malloc(value.size() + 1));
-    if (out == nullptr) throw std::bad_alloc();
-    std::memcpy(out, value.c_str(), value.size() + 1);
-    return out;
-}
-
-float* copy_floats(const std::vector<float>& values) {
-    float* out = static_cast<float*>(std::malloc(std::max<std::size_t>(1, values.size()) * sizeof(float)));
-    if (out == nullptr) throw std::bad_alloc();
-    std::copy(values.begin(), values.end(), out);
-    return out;
-}
-
-void require(bool condition, const char* message) {
-    if (!condition) throw std::invalid_argument(message);
-}
 
 SynthesisOptions options_from(const ScyllasBandRequest* request) {
     require(request != nullptr, "request is required");
@@ -85,6 +38,48 @@ SynthesisOptions options_from(const ScyllasBandRequest* request) {
     options.temperature = request->temperature;
     options.normalize = request->normalize_text != 0;
     return options;
+}
+
+// A records request's settings (its text fields stay empty) and its records.
+SynthesisOptions records_options_from(const ScyllasBandRecordsRequest* request, Json* records) {
+    require(request != nullptr, "request is required");
+    require(request->struct_size == sizeof(ScyllasBandRecordsRequest),
+            "request.struct_size does not match this library's ScyllasBandRecordsRequest: initialize requests with scyllasband_records_request_init");
+    require(request->records_json != nullptr && request->records_json[0] != '\0', "request.records_json is required");
+    try {
+        *records = Json::parse(request->records_json);
+    } catch (const std::exception& error) {
+        throw std::invalid_argument(std::string("request.records_json is not valid JSON: ") + error.what());
+    }
+    SynthesisOptions options;
+    options.speed = request->speed;
+    options.steps = request->steps;
+    switch (request->sampler) {
+        case SCYLLASBAND_SAMPLER_DEFAULT: break;
+        case SCYLLASBAND_SAMPLER_HEUN: options.sampler = "heun"; break;
+        case SCYLLASBAND_SAMPLER_EULER: options.sampler = "euler"; break;
+        default: throw std::invalid_argument("Unsupported sampler");
+    }
+    if (request->has_seed) options.seed = request->seed;
+    options.temperature = request->temperature;
+    options.normalize = request->normalize_text != 0;
+    options.pause_ms = request->pause_ms;
+    return options;
+}
+
+// A speech stream event as the C API passes it (valid during the callback); false stops the stream.
+bool forward_event(const StreamEvent& event, int sample_rate, ScyllasBandEventCallback callback, void* user_data) {
+    const std::string metadata = event.metadata.dump();
+    ScyllasBandEvent out{};
+    out.type = static_cast<ScyllasBandEventType>(event.type);
+    out.chunk_index = event.chunk ? event.chunk->index : -1;
+    out.chunk_count = event.chunk_count;
+    out.chunk_id = event.chunk ? event.chunk->chunk_id.c_str() : nullptr;
+    out.metadata_json = metadata.c_str();
+    out.samples = event.audio ? event.audio->data() : nullptr;
+    out.sample_count = event.audio ? static_cast<int64_t>(event.audio->size()) : 0;
+    out.sample_rate = sample_rate;
+    return callback(&out, user_data) == 0;
 }
 
 ChunkNoiseFn test_noise(ScyllasBandRuntime* runtime) {
@@ -132,7 +127,7 @@ const char* scyllasband_backend(void) {
 #endif
 }
 
-const char* scyllasband_last_error(void) { return g_last_error.c_str(); }
+const char* scyllasband_last_error(void) { return last_error().c_str(); }
 
 void scyllasband_request_init(ScyllasBandRequest* request) {
     if (request == nullptr) return;
@@ -167,6 +162,8 @@ ScyllasBandStatus scyllasband_runtime_create(const ScyllasBandRuntimeOptions* op
         }
         info.set("voices", Json(std::move(voices)));
         info.set("delivery", engine.delivery_info());
+        info.set("graph_contract", Json(engine.graph_contract()));
+        info.set("singing", singing_info(engine));
         runtime->voices_json = info.dump();
         *out_runtime = runtime.release();
     });
@@ -240,17 +237,44 @@ ScyllasBandStatus scyllasband_synthesize_stream(ScyllasBandRuntime* runtime, con
         Engine& engine = *runtime->engine;
         engine.begin_request(generation);
         synthesize_stream(engine, options, [&](const StreamEvent& event) {
-            const std::string metadata = event.metadata.dump();
-            ScyllasBandEvent out{};
-            out.type = static_cast<ScyllasBandEventType>(event.type);
-            out.chunk_index = event.chunk ? event.chunk->index : -1;
-            out.chunk_count = event.chunk_count;
-            out.chunk_id = event.chunk ? event.chunk->chunk_id.c_str() : nullptr;
-            out.metadata_json = metadata.c_str();
-            out.samples = event.audio ? event.audio->data() : nullptr;
-            out.sample_count = event.audio ? static_cast<int64_t>(event.audio->size()) : 0;
-            out.sample_rate = engine.sample_rate();
-            return callback(&out, user_data) == 0;
+            return forward_event(event, engine.sample_rate(), callback, user_data);
+        }, test_noise(runtime));
+    });
+}
+
+void scyllasband_records_request_init(ScyllasBandRecordsRequest* request) {
+    if (request == nullptr) return;
+    std::memset(request, 0, sizeof(*request));
+    request->struct_size = sizeof(ScyllasBandRecordsRequest);
+    request->speed = 1.0f;
+    request->temperature = 1.0f;
+    request->normalize_text = 1;
+}
+
+ScyllasBandStatus scyllasband_plan_records_json(ScyllasBandRuntime* runtime, const ScyllasBandRecordsRequest* request, char** out_json) {
+    return guarded([&] {
+        require(runtime != nullptr && out_json != nullptr, "runtime and out_json are required");
+        *out_json = nullptr;
+        Json records;
+        const SynthesisOptions options = records_options_from(request, &records);
+        std::lock_guard<std::mutex> lock(runtime->mutex);
+        *out_json = copy_string(plan_records(*runtime->engine, records, options.normalize).to_json().dump());
+    });
+}
+
+ScyllasBandStatus scyllasband_synthesize_records_stream(ScyllasBandRuntime* runtime, const ScyllasBandRecordsRequest* request,
+                                                        ScyllasBandEventCallback callback, void* user_data) {
+    return guarded([&] {
+        require(runtime != nullptr && callback != nullptr, "runtime and callback are required");
+        Json records;
+        const SynthesisOptions options = records_options_from(request, &records);
+        const uint64_t generation = runtime->engine->cancel_generation();
+        std::lock_guard<std::mutex> lock(runtime->mutex);
+        Engine& engine = *runtime->engine;
+        engine.begin_request(generation);
+        const Plan plan = plan_records(engine, records, options.normalize);
+        synthesize_plan_stream(engine, plan, options, [&](const StreamEvent& event) {
+            return forward_event(event, engine.sample_rate(), callback, user_data);
         }, test_noise(runtime));
     });
 }
@@ -335,8 +359,10 @@ int32_t scyllasband_test_synthesize_sentence(ScyllasBandRuntime* runtime, const 
         sentence.after_ids = int_list(request.get("after_ids"));
         const std::string voice = request.get("voice").str(), language = request.get("language").str();
         const std::string delivery_spec = request.get("delivery").str();
-        const DeliveryTensors delivery =
-            engine.delivery_tensors(voice, Delivery::parse(request.get("delivery").is_null() ? nullptr : delivery_spec.c_str()));
+        // A sung target (a melody given) has no delivery request: sung clips were trained without intensity or pace.
+        const DeliveryTensors delivery = request.get("melody").is_array()
+            ? DeliveryTensors{}
+            : engine.delivery_tensors(voice, Delivery::parse(request.get("delivery").is_null() ? nullptr : delivery_spec.c_str()));
         const double speed = request.get("speed").num(1.0);
         Json out{Json::Object{}};
         std::vector<int> forced;
@@ -353,17 +379,35 @@ int32_t scyllasband_test_synthesize_sentence(ScyllasBandRuntime* runtime, const 
         }
         const std::size_t dim = static_cast<std::size_t>(engine.latent_dim());
         std::vector<float> prefix_values(prefix ? prefix : nullptr, prefix ? prefix + dim * static_cast<std::size_t>(prefix_frames) : nullptr);
-        SentenceResult result = engine.synthesize_sentence(
-            sentence, voice, language, delivery, prefix_values, prefix ? prefix_frames : 0, static_cast<int>(request.get("steps").integer(8)),
-            request.get("sampler").str("heun"), speed,
-            [&](int64_t frames, float* pitch, float* flow) {   // noise: [2 + latent_dim, frames], the pitch rows first
-                if (frames != noise_frames) throw std::invalid_argument("noise has " + std::to_string(noise_frames) + " frames; the sentence needs " + std::to_string(frames));
-                const std::size_t T = static_cast<std::size_t>(frames);
-                std::copy_n(noise, 2 * T, pitch);
-                std::copy_n(noise + 2 * T, dim * T, flow);
-            },
-            forced.empty() ? nullptr : &forced);
-        std::vector<float> audio = engine.decode(result.latents, result.frames, voice, language, prefix_values, prefix ? prefix_frames : 0);
+        std::vector<float> melody;
+        for (const Json& value : request.get("melody").elements()) melody.push_back(static_cast<float>(value.num()));
+        const SungConditioning sung{request.get("melody").is_array() ? &melody : nullptr, request.get("delivery_mode").integer(0),
+                                    request.get("guidance").num(1.0)};
+        SentenceRequest sentence_request;
+        sentence_request.voice = voice;
+        sentence_request.language = language;
+        sentence_request.delivery = delivery;
+        sentence_request.prefix = &prefix_values;
+        sentence_request.prefix_frames = prefix ? prefix_frames : 0;
+        sentence_request.steps = static_cast<int>(request.get("steps").integer(8));
+        sentence_request.sampler = request.get("sampler").str("heun");
+        sentence_request.speed = speed;
+        sentence_request.noise = [&](int64_t frames, float* pitch, float* flow) {   // noise: [2 + latent_dim, frames], the pitch rows first
+            if (frames != noise_frames) throw std::invalid_argument("noise has " + std::to_string(noise_frames) + " frames; the sentence needs " + std::to_string(frames));
+            const std::size_t T = static_cast<std::size_t>(frames);
+            std::copy_n(noise, 2 * T, pitch);
+            std::copy_n(noise + 2 * T, dim * T, flow);
+        };
+        sentence_request.durations = forced.empty() ? nullptr : &forced;
+        sentence_request.sung = &sung;
+        SentenceResult result = engine.synthesize_sentence(sentence, sentence_request);
+        DecodeRequest decode;
+        decode.voice = voice;
+        decode.language = language;
+        decode.left = &prefix_values;
+        decode.left_frames = prefix ? prefix_frames : 0;
+        decode.decoder = request.get("decoder").str("vocos");
+        std::vector<float> audio = engine.decode(result.latents, result.frames, decode);
         out = result.metadata;
         *out_json = copy_string(out.dump());
         if (out_latents) *out_latents = copy_floats(result.latents);

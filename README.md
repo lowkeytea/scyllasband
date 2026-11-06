@@ -44,7 +44,7 @@ source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -e .                   # ".[onnx]", ".[cuda]", ".[coreml]" or ".[coreai]" for the other backends
 ```
 
-The model is downloaded from [`spybyscript/scyllasband`](https://huggingface.co/spybyscript/scyllasband), pinned to the tag `v3-20261104-apple` (release `v3-20261104` with its Core ML and Core AI bundles), into `scyllasband/models/<bundle>` (`litert`, `coreai`, `coreml` or `onnx`). Voice conditioning is embedded in the graphs; no separate voice files are needed.
+The model is downloaded from [`spybyscript/scyllasband`](https://huggingface.co/spybyscript/scyllasband), pinned to the tag `v4-20261106-apple` (release `v4-20261106`, which speaks and [sings](#singing), with its Core ML and Core AI bundles), into `scyllasband/models/<bundle>` (`litert`, `coreai`, `coreml`, `onnx` or `webgpu`), with the release's example scores in `scyllasband/models/melodies`. `--repo` and `--revision` name another repository or tag (the previous release, `v3-20261104-apple`, speaks only and needs a runtime from before this one's singing support), and `download_provenance.json` in the installed bundle records where it came from. Voice conditioning is embedded in the graphs; no separate voice files are needed.
 
 ## Delivery controls
 
@@ -97,6 +97,7 @@ python -m scyllasband plan --voice scylla "Print the sentence plan as JSON."
 | `--threads` | LiteRT: the CPUs available, up to 4 | CPU threads per graph |
 | `--backend`, `--bundle` | the installed bundle for this machine (Core ML on a Mac, LiteRT elsewhere) | Choose another installed bundle |
 | `--compute-units` | `auto` | Core ML / Core AI: `auto` (the bundle's recommendation), `gpu`, `cpu` or `ane`. ONNX Runtime: `cpu`, or `gpu` for NVIDIA GPUs. See [Backends](#backends) |
+| `--engine` | `native` where built, else `python` | The runtime that runs the bundle; see [Engines](#engines) |
 | `--pause-ms` | 0 | Extra silence where the voice, language or delivery changes |
 | `--metadata` | none | Write phones, durations and timings as JSON |
 | `--no-normalize-text` | off | Skip spoken-text normalization for text that is already normalized |
@@ -105,15 +106,15 @@ python -m scyllasband plan --voice scylla "Print the sentence plan as JSON."
 
 | Bundle | Used on | Download | Runtime package |
 | --- | --- | --- | --- |
-| Core ML | Apple silicon Macs (macOS 15 and later); iOS and iPadOS 18 and visionOS 2 apps | 163 MB | `coremltools`, installed the first time a Core ML bundle runs (or `pip install -e ".[coreml]"`) |
-| Core AI | iOS, iPadOS and visionOS 27 apps; also runs on macOS 27 | 178 MB | `coreai-core`, installed the first time a Core AI bundle runs (or `pip install -e ".[coreai]"`) |
-| LiteRT | Linux, Windows, Android and Intel Macs | 229 MB | `ai-edge-litert` (installed with this package) |
-| ONNX Runtime | anywhere ONNX Runtime runs | 291 MB | `onnxruntime`, installed the first time you use `--backend onnx` (or `pip install -e ".[onnx]"`) |
-| WebGPU (ONNX) | browsers through ONNX Runtime Web; NVIDIA GPUs through ONNX Runtime with CUDA | 291 MB | `onnxruntime-gpu` for NVIDIA GPUs: `pip install -e ".[cuda]"` |
+| Core ML | Apple silicon Macs (macOS 15 and later); iOS and iPadOS 18 and visionOS 2 apps | 406 MB | `coremltools`, installed the first time a Core ML bundle runs (or `pip install -e ".[coreml]"`) |
+| Core AI | iOS, iPadOS and visionOS 27 apps; also runs on macOS 27 | 418 MB | `coreai-core`, installed the first time a Core AI bundle runs (or `pip install -e ".[coreai]"`) |
+| LiteRT | Linux, Windows, Android and Intel Macs | 470 MB | `ai-edge-litert` 2.2 (installed with this package; the native runtime links LiteRT 2.2.0) |
+| ONNX Runtime | anywhere ONNX Runtime runs | 1.1 GB | `onnxruntime`, installed the first time you use `--backend onnx` (or `pip install -e ".[onnx]"`) |
+| WebGPU (ONNX) | browsers through ONNX Runtime Web; NVIDIA GPUs through ONNX Runtime with CUDA | 782 MB | `onnxruntime-gpu` for NVIDIA GPUs: `pip install -e ".[cuda]"` |
 
-`python -m scyllasband download` fetches the Core ML bundle on an Apple silicon Mac and the LiteRT bundle elsewhere. A Mac that can build apps for iOS, iPadOS or visionOS 27 (macOS 27, or an Xcode with those SDKs) is also offered the Core AI bundle those apps use; the Mac itself keeps running Core ML. `--flavor` downloads a particular bundle. Commands use the installed bundle for the machine; `--backend` and `--bundle` select another, for example `--backend coreai` on macOS 27. Every bundle holds INT8 weights for the transformers and the G2P; LiteRT, Core ML and Core AI also quantize the vocoder. `--threads` sets the CPU threads per graph; LiteRT uses the CPUs available, up to four, as the native runtime does. Sampling uses Euler with 4 steps by default (`--sampler`, `--steps`).
+`python -m scyllasband download` fetches the Core ML bundle on an Apple silicon Mac and the LiteRT bundle elsewhere. A Mac that can build apps for iOS, iPadOS or visionOS 27 (macOS 27, or an Xcode with those SDKs) is also offered the Core AI bundle those apps use; the Mac itself keeps running Core ML. `--flavor` downloads a particular bundle. Commands use the installed bundle for the machine; `--backend` and `--bundle` select another, for example `--backend coreai` on macOS 27. The LiteRT, Core ML, Core AI and WebGPU bundles hold 8-bit weights for the transformers and the G2P (the ONNX bundle is full precision); LiteRT, Core ML and Core AI also quantize the speech vocoder, and keep the singing decoder (BigVGAN) in FP16. `--threads` sets the CPU threads per graph; LiteRT uses the CPUs available, up to four, as the native runtime does. Sampling uses Euler with 4 steps by default (`--sampler`, `--steps`).
 
-On an NVIDIA GPU, ONNX Runtime runs the WebGPU bundle, whose 8-bit weights stay on the GPU (the ONNX bundle's dynamic INT8 falls back to the CPU there). Install ONNX Runtime for CUDA in an environment without the CPU-only `onnxruntime` package; the `cuda` extra brings the CUDA and cuDNN libraries it needs:
+On an NVIDIA GPU, ONNX Runtime runs the WebGPU bundle, whose 8-bit weights stay on the GPU (`MatMulNBits`; dynamic INT8 would fall back to the CPU there). Install ONNX Runtime for CUDA in an environment without the CPU-only `onnxruntime` package; the `cuda` extra brings the CUDA and cuDNN libraries it needs:
 
 ```bash
 pip install -e ".[cuda]"
@@ -144,6 +145,22 @@ Measured with the native runtime on a three-sentence passage (10.3 s of speech) 
 | Galaxy Z Fold 8, Snapdragon SM8850 (Android 17) | LiteRT | CPU | 0.81 s | 0.52 s | 120 ms | ~27× |
 |  | ONNX Runtime | CPU | 1.85 s | 1.89 s | 461 ms | ~9.2× |
 
+## Engines
+
+Commands run one of two engines over the same bundles:
+
+- `native`: `libscyllasband`, the C++ runtime the iOS and Android apps use, through `scyllasband.native` (ctypes over its C API). Build it once from this checkout; CMake 3.20 and a compiler are needed, and the Core ML / Core AI build also needs Ninja:
+
+  ```bash
+  python -m scyllasband build-native                    # LiteRT bundles
+  python -m scyllasband build-native --backend apple    # Core ML and Core AI bundles (macOS)
+  ```
+
+  The first LiteRT build downloads LiteRT's prebuilt runtime for this machine (`libscyllasband/scripts/stage_litert_sdk.py`). The library and the SDK libraries it loads go to `scyllasband/_native/<backend>/` (not tracked by git). `SCYLLASBAND_NATIVE_LIB` names another build of ABI 3.1 or later.
+- `python`: this package's engine, over ONNX Runtime, LiteRT, Core ML or Core AI sessions from Python.
+
+By default a command runs the native engine when a library for the bundle's backend is built and the Python engine otherwise, printing one line that says so. ONNX Runtime bundles, including CUDA through the WebGPU bundle, stay on the Python engine. `--engine native` or `--engine python` (or `SCYLLASBAND_ENGINE`) chooses explicitly. The engines plan and speak the same way: `libscyllasband/tests/parity_harness.py` checks plans, passages, dialogue and songs with the same noise fed to both. Each engine draws its own noise, so a `--seed` gives a different take on each; `--metadata` records the engine and its noise.
+
 ## Python API
 
 ```python
@@ -161,6 +178,8 @@ result = runtime.synthesize(SynthesisRequest(
 ))
 # result.audio (float32 numpy array), result.sample_rate, result.metadata
 ```
+
+`ScyllasBandRuntime.from_bundle` always runs the Python engine. `scyllasband.native.open_runtime(bundle, engine=None)` chooses the engine as the CLI does and returns a runtime with the same methods for speech, dialogue and singing; a `NativeRuntime` also has `score_parse`, `sing_fit` and `sing_preview`, the calls the apps' melody editors use.
 
 Reuse the runtime across requests; `runtime.warmup()` creates the sessions before interactive use. `runtime.delivery_ranges()` and `runtime.voice_delivery_defaults(voice)` give the supported ranges and a voice's defaults. `runtime.synthesize_stream(records)` yields each passage's audio as it is ready, and `runtime.plan_records(records)` returns the sentence plan the passages are cut from.
 
@@ -186,6 +205,43 @@ A dialogue file sets the voice, language and controls per tagged span:
 ```
 
 Language tags keep the active delivery request. A new delivery tag replaces it, with unspecified controls back at the voice's own. `--pause-ms` adds silence where the voice, language or delivery changes.
+
+## Singing
+
+A v4 bundle can sing a melody score. The `sing` command takes a score in JSON and writes the sung line, phrase by phrase, on the song's timeline with silence in the rests:
+
+```bash
+python -m scyllasband sing --score song.json --voice gwen --seed 0 -o song.wav
+python -m scyllasband sing --score song.json --voice felix --turboSing --metadata song_plan.json -o song.wav
+python -m scyllasband sing --score scyllasband/models/melodies/phrase_pop_00.json --voice poppy -o ring.wav
+```
+
+`download` also installs the release's twenty example scores (four songs, sixteen phrases) in `scyllasband/models/melodies`.
+
+An installed package also provides `scyllasband-sing`. A score is the lyric, the tempo, a style and the notes:
+
+```json
+{
+  "text": "give me a ring baby make me feel so",
+  "bpm": 108,
+  "style": "pop",
+  "notes": [
+    ["give", "C4", 0.5], ["me", "D4", 0.5], ["a", "E4", 0.5], ["ring", "G4", 1.0],
+    ["-", "rest", 0.5],
+    ["baby~1", "E4", 0.5], ["baby~2", "D4", 0.5],
+    ["make", "C4", 0.5], ["me", "D4", 0.5], ["feel", "E4", 1.0], ["so", "C4", 1.5]
+  ]
+}
+```
+
+- `notes` is an ordered list of `[label, note, beats]`. Time runs from the first entry; beats are fractions of a quarter note at `bpm` (0.25 a sixteenth, 0.5 an eighth, 1 a quarter).
+- `note` is a pitch name with octave (`C4`, `F#3`, `Bb3`) or `rest`; rests use the label `-`.
+- A word on one note is a bare label (`give`). A word over several notes is numbered: `baby~1 baby~2` (the whole word on each part, or its syllables `ba~1 by~2`) or `home~1 home~2` (a melisma, one syllable held over two pitches). The numbered parts must be consecutive, with no rest between them.
+- `text` is the lyric, the labels' words in order; it may be left out.
+- Two styles: `pop` (the sung delivery) and `ballad` (slower, sustained). The style picks the delivery mode the model was trained with; the notes set the pitch and the timing.
+- Phrases are split at rests of 0.25 s or more and rendered one at a time, up to about ten seconds each (less when the bundle's largest bucket is shorter), so put a rest between lines. The whole song is moved by octaves into the voice's sung range (`--no-register` keeps the written octave), so write in any octave; `--transpose N` adds N semitones first, to put a song in the voice's key (a voice sings most accurately within about five semitones of its centre, which the bundle lists per voice).
+
+Singing uses the bundle's singing settings (`v4-20261106`: 4 Euler steps without guidance, the flow distilled from guided 8-step Heun sampling, so a phrase costs the flow what a spoken passage does; the BigVGAN decoder where the bundle carries it; `--steps`, `--sampler`, `--guidance` and `--decoder` override them) and the score's timing in place of the duration and pitch predictors. `--turboSing` (same as `--decoder vocos`) decodes with Vocos, the speech decoder: decoding then costs about as much as for speech instead of most of the render, at the price of some harmonic artefacts on sustained notes in some voices. In Python, `runtime.sing(score, voice_id, language=None, seed=None, steps=None, sampler=None, decoder=None)` returns the same `SynthesisResult` as `synthesize`, with the phrase plan in `metadata["phrases"]`; `runtime.supports_singing` tells whether the loaded bundle can sing. Singing requires a v4 bundle (graph contract `scyllasband_measured_controls_v4`); v3 bundles speak exactly as before and report that they cannot sing.
 
 ## Voices and languages
 
@@ -248,7 +304,7 @@ Latent-length buckets are 128, 256, 384, 512, 768 and 1024 frames (about 2.7 to 
 
 ## Native and mobile integration
 
-`libscyllasband/` is the C++ runtime for the same bundles, built against LiteRT, ONNX Runtime, or Core ML and Core AI on Apple platforms; see [its README](libscyllasband/README.md). The [Android](examples/android/README.md) example runs the LiteRT bundle; the [iOS](examples/ios/README.md) example runs Core AI on iOS 27 and Core ML on iOS 18–26 through the `ScyllasBandKit` pod.
+`libscyllasband/` is the C++ runtime for the same bundles, built against LiteRT, ONNX Runtime, or Core ML and Core AI on Apple platforms; see [its README](libscyllasband/README.md). The [Android](examples/android/README.md) example runs the LiteRT bundle; the [iOS](examples/ios/README.md) example runs Core AI on iOS 27 and Core ML on iOS 18–26 through the `ScyllasBandKit` pod. Two singing tutorials sit beside them: [Ghost in the Machine](examples/ghost_in_the_machine/README.md) (a spoken-and-sung piece built step by step, with the melody format and how speech and song are merged) and [Kitchen Patter](examples/kitchen_patter/README.md) (fast talk-singing from one score).
 
 ## Validation and limitations
 
@@ -263,7 +319,7 @@ See [the model card](MODEL_CARD.md) for the model contract.
 ```text
 scyllasband/          Python API, CLI, first-run setup, download, bundle contract and execution
 libscyllasband/       C++ runtime with a C API, for LiteRT and ONNX Runtime
-examples/             Android and iOS applications
+examples/             Android and iOS applications; the singing tutorials (ghost_in_the_machine, kitchen_patter)
 samples/              gallery script and generator, sample index
 docs/                 voice gallery (GitHub Pages)
 data/                 example texts and a dialogue script

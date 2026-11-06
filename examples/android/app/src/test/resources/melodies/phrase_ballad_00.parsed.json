@@ -1,0 +1,204 @@
+{
+ "bpm": 92.0,
+ "lines": [
+  {
+   "first": 0,
+   "last": 4
+  },
+  {
+   "first": 5,
+   "last": 10
+  }
+ ],
+ "mode": "ballad",
+ "notes": [
+  {
+   "beats": 1.0,
+   "end": 0.6522,
+   "index": 0,
+   "label": "give",
+   "midi": 60,
+   "note": "C4",
+   "part": 1,
+   "start": 0.0,
+   "word_index": 0
+  },
+  {
+   "beats": 0.5,
+   "end": 0.9783,
+   "index": 1,
+   "label": "me",
+   "midi": 62,
+   "note": "D4",
+   "part": 1,
+   "start": 0.6522,
+   "word_index": 1
+  },
+  {
+   "beats": 0.5,
+   "end": 1.3043,
+   "index": 2,
+   "label": "a",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 0.9783,
+   "word_index": 2
+  },
+  {
+   "beats": 2.0,
+   "end": 2.6087,
+   "index": 3,
+   "label": "ring",
+   "midi": 67,
+   "note": "G4",
+   "part": 1,
+   "start": 1.3043,
+   "word_index": 3
+  },
+  {
+   "beats": 0.5,
+   "end": 2.9348,
+   "index": 4,
+   "label": "-",
+   "midi": null,
+   "note": "rest",
+   "part": 0,
+   "start": 2.6087,
+   "word_index": null
+  },
+  {
+   "beats": 1.0,
+   "end": 3.587,
+   "index": 5,
+   "label": "ba~1",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 2.9348,
+   "word_index": 4
+  },
+  {
+   "beats": 1.0,
+   "end": 4.2391,
+   "index": 6,
+   "label": "by~2",
+   "midi": 62,
+   "note": "D4",
+   "part": 2,
+   "start": 3.587,
+   "word_index": 4
+  },
+  {
+   "beats": 1.0,
+   "end": 4.8913,
+   "index": 7,
+   "label": "make",
+   "midi": 60,
+   "note": "C4",
+   "part": 1,
+   "start": 4.2391,
+   "word_index": 5
+  },
+  {
+   "beats": 1.0,
+   "end": 5.5435,
+   "index": 8,
+   "label": "me",
+   "midi": 62,
+   "note": "D4",
+   "part": 1,
+   "start": 4.8913,
+   "word_index": 6
+  },
+  {
+   "beats": 2.0,
+   "end": 6.8478,
+   "index": 9,
+   "label": "feel",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 5.5435,
+   "word_index": 7
+  },
+  {
+   "beats": 2.0,
+   "end": 8.1522,
+   "index": 10,
+   "label": "so",
+   "midi": 60,
+   "note": "C4",
+   "part": 1,
+   "start": 6.8478,
+   "word_index": 8
+  }
+ ],
+ "range": {
+  "high": 67,
+  "high_note": "G4",
+  "low": 60,
+  "low_note": "C4",
+  "mean": 62.5
+ },
+ "seconds": 8.1522,
+ "style": "ballad",
+ "text": "give me a ring baby make me feel so",
+ "transpose": 0,
+ "words": [
+  {
+   "end": 0.6522,
+   "parts": 1,
+   "start": 0.0,
+   "word": "give"
+  },
+  {
+   "end": 0.9783,
+   "parts": 1,
+   "start": 0.6522,
+   "word": "me"
+  },
+  {
+   "end": 1.3043,
+   "parts": 1,
+   "start": 0.9783,
+   "word": "a"
+  },
+  {
+   "end": 2.6087,
+   "parts": 1,
+   "start": 1.3043,
+   "word": "ring"
+  },
+  {
+   "end": 4.2391,
+   "parts": 2,
+   "start": 2.9348,
+   "word": "baby"
+  },
+  {
+   "end": 4.8913,
+   "parts": 1,
+   "start": 4.2391,
+   "word": "make"
+  },
+  {
+   "end": 5.5435,
+   "parts": 1,
+   "start": 4.8913,
+   "word": "me"
+  },
+  {
+   "end": 6.8478,
+   "parts": 1,
+   "start": 5.5435,
+   "word": "feel"
+  },
+  {
+   "end": 8.1522,
+   "parts": 1,
+   "start": 6.8478,
+   "word": "so"
+  }
+ ]
+}

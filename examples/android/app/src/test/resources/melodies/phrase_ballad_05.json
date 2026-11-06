@@ -1,0 +1,53 @@
+{
+ "text": "lanterns on the water drifting slow",
+ "bpm": 96,
+ "style": "ballad",
+ "notes": [
+  [
+   "lan~1",
+   "E4",
+   0.75
+  ],
+  [
+   "terns~2",
+   "D4",
+   0.75
+  ],
+  [
+   "on",
+   "C4",
+   0.5
+  ],
+  [
+   "the",
+   "D4",
+   0.5
+  ],
+  [
+   "wa~1",
+   "E4",
+   1
+  ],
+  [
+   "ter~2",
+   "F4",
+   1
+  ],
+  [
+   "drif~1",
+   "G4",
+   1.5
+  ],
+  [
+   "ting~2",
+   "F4",
+   0.5
+  ],
+  [
+   "slow",
+   "E4",
+   3
+  ]
+ ],
+ "source": "example"
+}

@@ -1,10 +1,9 @@
-// Scylla's Band synthesis engine (see engine.py, planner.py and streaming.py).
+// Scylla's Band synthesis engine (see engine.py): the bundle (manifest, contract, assets) and its graphs.
 //
-// Within a chain, the plan's sentences are read as one stream of phones and spoken as targets: spans of that stream
-// from one silence to another, sized by the predicted durations to stay within the lengths the model was trained on.
-// For each target:
+// For one target (a span of phones from one silence to another, with its context; built by the speech stream,
+// scyllasband_speech_stream.h, or the song planner):
 // 1. its phones form the target of a before/target/after span whose context is up to 180 phones (silences
-//    excluded) of the neighbouring text of the same chain;
+//    excluded) of the neighbouring text;
 // 2. the duration graph predicts frames for every span position; the target slice is rounded to integer frames, with
 //    pauses scaled by the requested pace (controls.pace_pauses);
 // 3. per-frame phone ids and text events are built;
@@ -12,16 +11,26 @@
 //    limit applied (controls.pitch), giving the flow's melody input;
 // 5. the flow integrates noise to latents in the smallest fitting bucket, conditioned on the span, the melody and the
 //    last 96 latent frames already spoken (right-aligned prefix);
-// 6. the vocoder decodes the target with up to 48 frames of the preceding latents as left context, so
-//    consecutive targets join as one continuous waveform.
+// 6. a decoder turns latents into a waveform, with up to 48 frames of the preceding latents as left context.
 // Delivery is intensity and pace (graph slots 0 and 1, standard deviations / z_scale) and a pitch shift in semitones; a
 // target with fewer than min_spoken_phones spoken phones gets neither slot, as in training.
+//
+// A v4 bundle (graph contract scyllasband_measured_controls_v4) adds singing: the flow also takes a delivery mode id (0
+// spoken, 1 sung, 2 rap, 3 ballad; controls.delivery_modes), a sung target brings its own melody from a score, which
+// replaces steps 2 and 4 (durations come from the score, the pitch predictor and its soft limit are skipped), and the
+// bundle may carry a second decoder (controls.decoders, e.g. BigVGAN beside Vocos). Speech on a v4 bundle feeds mode 0
+// and is otherwise unchanged; a v3 bundle never sees the mode input.
+//
+// The engine knows nothing about plans, chains, scores or phrases; it is safe to read its configuration (voices,
+// buckets, decoders, singing settings) from any thread once constructed, while graph calls are serialized by the caller.
 #pragma once
 
+#include "scyllasband_errors.h"
 #include "scyllasband_events.h"
 #include "scyllasband_g2p.h"
 #include "scyllasband_graph.h"
 #include "scyllasband_json.h"
+#include "scyllasband_singing_controls.h"
 
 #include <array>
 #include <atomic>
@@ -36,30 +45,13 @@
 
 namespace scyllasband {
 
-extern const char* const kGraphContract;
-
-// The sentence needs more latent frames (or phones) than the largest bucket holds.
-class OverlongError : public std::runtime_error {
-public:
-    using std::runtime_error::runtime_error;
-};
-
-class CancelledError : public std::runtime_error {
-public:
-    CancelledError() : std::runtime_error("Synthesis was cancelled") {}
-};
+extern const char* const kGraphContract;    // v3: speech
+extern const char* const kGraphContractV4;  // v4: speech and singing
 
 struct Voice {
     std::string id;
     std::vector<std::string> languages;
     std::string default_language;
-};
-
-struct Sentence {
-    std::vector<std::string> phones;
-    std::vector<int> word_starts;
-    std::vector<int64_t> before_ids;  // preceding passage phones, silences excluded
-    std::vector<int64_t> after_ids;   // following passage phones, silences excluded
 };
 
 struct DeliveryTensors {
@@ -76,9 +68,52 @@ struct SentenceResult {
     Json metadata;
 };
 
+// A waveform decoder (controls.decoders): the bucket key naming its graphs and its output length rule
+// ("latent_frames * 512 - 256" for Vocos, "latent_frames * 512" for BigVGAN).
+struct DecoderSpec {
+    std::string name, component;
+    int samples_per_frame = 512;
+    int short_samples = 0;  // samples the output falls short of frames * samples_per_frame
+    // Windowed decoding (0: off): every decode runs through the one bucket graph of window_frames, decoding window_context
+    // frames either side of the frames each call keeps. On LiteRT each bucket graph a process opens keeps its own working
+    // memory (BigVGAN: about 2 MB per frame), so one bucket bounds it whatever the phrase lengths. From the manifest's
+    // controls.decoders.<name>.window {frames, context}, or SCYLLASBAND_DECODER_WINDOW ("bigvgan=256:32"; "bigvgan=0": off).
+    int64_t window_frames = 0, window_context = 0;
+};
+
+// A target sung from a score: its melody input [frames, 3] replaces the pitch predictor's contour, `mode` is fed to the
+// flow, and `guidance` > 1 contrasts the melody and mode against both switched off (classifier-free guidance).
+struct SungConditioning {
+    const std::vector<float>* melody = nullptr;
+    int64_t mode = 0;
+    double guidance = 1.0;
+};
+
 // Fills the initial noise of one target: `pitch` [2, frames] for the pitch predictor, `flow` [latent_dim, frames] for the flow
 // (row-major).
 using NoiseFn = std::function<void(int64_t frames, float* pitch, float* flow)>;
+
+// How one target is synthesized (its phones and context are the Sentence).
+struct SentenceRequest {
+    std::string voice, language;
+    DeliveryTensors delivery{};
+    const std::vector<float>* prefix = nullptr;  // [latent_dim, prefix_frames]: the latents already spoken before the target
+    int64_t prefix_frames = 0;
+    int steps = 0;                               // flow steps (> 0)
+    std::string sampler;                         // heun or euler
+    double speed = 1.0;
+    NoiseFn noise;
+    const std::vector<int>* durations = nullptr;  // phone durations to use instead of the duration graph's
+    const SungConditioning* sung = nullptr;       // a melody from a score in place of the pitch predictor (v4 bundles)
+};
+
+// How latents are decoded to a waveform.
+struct DecodeRequest {
+    std::string voice, language;
+    const std::vector<float>* left = nullptr;  // [latent_dim, left_frames]: preceding latents, up to decode_context of them used
+    int64_t left_frames = 0;
+    std::string decoder = "vocos";             // vocos, which every bundle has, or bigvgan where the bundle carries it
+};
 
 class Engine {
 public:
@@ -103,6 +138,22 @@ public:
     const std::string& default_sampler() const { return default_sampler_; }
     int pitch_steps() const { return pitch_steps_; }
     const std::string& pitch_sampler() const { return pitch_sampler_; }
+    int latent_hop() const { return latent_hop_; }
+    int64_t max_frames() const { return buckets_.back().frames; }
+    const std::string& graph_contract() const { return graph_contract_; }
+    bool feeds_delivery_mode() const { return feeds_delivery_mode_; }
+    // controls.delivery_modes.ids when enabled (empty on v3 bundles and v4 bundles without singing).
+    const std::map<std::string, int64_t>& delivery_modes() const { return singing_.mode_ids; }
+    const SingingControls& singing() const { return singing_; }
+    bool supports_singing() const { return singing_.enabled(); }
+    const std::map<std::string, DecoderSpec>& decoders() const { return decoders_; }
+    // Whether the bundle has graphs for `decoder` (vocos always; bigvgan where exported for this backend).
+    bool has_decoder(const std::string& decoder) const;
+    std::vector<std::string> available_decoders() const;  // sorted
+    // The largest bucket with a graph for `decoder` (0 when this backend has none).
+    int64_t decoder_max_frames(const std::string& decoder) const;
+    const std::map<std::string, std::pair<double, double>>& pitch_edges() const { return pitch_edges_; }
+    double melody_center() const { return melody_center_; }
     // The graph inputs and pitch shift for a request: what it leaves out takes the voice's default; `resolved` (optional)
     // receives {intensity, pace, pitch} as used.
     DeliveryTensors delivery_tensors(const std::string& voice, const Delivery& delivery, Json* resolved = nullptr) const;
@@ -122,13 +173,11 @@ public:
     std::vector<int64_t> context_ids(const std::vector<std::string>& phones) const;
 
     std::vector<int> durations(const Sentence& sentence, int64_t voice, int64_t language, const DeliveryTensors& delivery, double speed);
-    SentenceResult synthesize_sentence(const Sentence& sentence, const std::string& voice, const std::string& language,
-                                       const DeliveryTensors& delivery, const std::vector<float>& prefix, int64_t prefix_frames, int steps,
-                                       const std::string& sampler, double speed, const NoiseFn& noise,
-                                       const std::vector<int>* forced_durations = nullptr);
-    // Waveform for `latents` [latent_dim, frames], decoded after up to decode_context frames of `left` context.
-    std::vector<float> decode(const std::vector<float>& latents, int64_t frames, const std::string& voice, const std::string& language,
-                              const std::vector<float>& left, int64_t left_frames);
+    // Latents for one target. With `request.sung`, the score's melody (and mode and guidance) replaces the pitch predictor,
+    // and the noise function's pitch rows are unused.
+    SentenceResult synthesize_sentence(const Sentence& sentence, const SentenceRequest& request);
+    // Waveform for `latents` [latent_dim, frames], decoded after up to decode_context frames of left context.
+    std::vector<float> decode(const std::vector<float>& latents, int64_t frames, const DecodeRequest& request);
 
     // Cancellation: a request records cancel_generation() when it is issued and passes it to begin_request();
     // request_cancel() then stops every request issued before it, including one still waiting for the runtime.
@@ -149,6 +198,12 @@ private:
     GraphOutput run(const std::string& component, const std::vector<TensorView>& inputs);
     const Bucket& bucket(int64_t frames) const;
     void validate() const;
+    void load_decoders();
+    void load_decoder_windows(const Json& declared);
+    // The smallest bucket of at least `frames` with a graph for `decoder`, and that graph.
+    std::pair<int64_t, std::string> decoder_bucket(const std::string& decoder, int64_t frames) const;
+    // decode() for a decoder with a window: fixed windows through one bucket graph, hard cuts between the frames each keeps.
+    std::vector<float> decode_windowed(const std::vector<float>& latents, int64_t frames, const DecodeRequest& request, const DecoderSpec& spec);
     // The delivery graph inputs for a target: none set when it has fewer than min_spoken_phones spoken phones.
     void target_delivery(const std::vector<std::string>& phones, const DeliveryTensors& delivery, float values[5], uint8_t present[5]) const;
     double pause_scale(const DeliveryTensors& delivery) const;
@@ -186,82 +241,17 @@ private:
     std::map<std::string, std::pair<double, double>> pitch_edges_;
     std::string pitch_context_ = "pitch_context_encoder", pitch_sampler_ = "euler";
     int pitch_steps_ = 4;
+    // v4: delivery modes, singing settings and decoders.
+    std::string graph_contract_;
+    bool feeds_delivery_mode_ = false;
+    SingingControls singing_;
+    std::map<std::string, DecoderSpec> decoders_;
+    std::map<std::string, std::vector<std::pair<int64_t, std::string>>> decoder_graphs_;  // decoder -> (frames, component), smallest first
     std::unique_ptr<G2P> g2p_;
     std::mutex graphs_mutex_;
     std::map<std::string, std::unique_ptr<Graph>> graphs_;
     std::atomic<uint64_t> cancel_generation_{0};
     uint64_t active_generation_ = 0;
 };
-
-// --- planning and streaming ---------------------------------------------------------------------------------------
-
-struct PlanChunk {
-    std::string chunk_id;
-    int index = 0;
-    int record_index = 0;
-    std::string chain_id, voice, language;
-    Delivery delivery;
-    std::string text, source_text;
-    bool paragraph_end = false;
-    Json to_json() const;
-};
-
-struct Plan {
-    std::vector<PlanChunk> chunks;
-    Json to_json() const;
-};
-
-struct SynthesisOptions {
-    std::string text, voice, language, delivery_spec;
-    bool has_delivery = false;
-    double speed = 1.0;
-    int steps = 0;           // 0: bundle default
-    std::string sampler;     // empty: bundle default
-    std::optional<uint64_t> seed;
-    double temperature = 1.0;
-    bool normalize = true;
-};
-
-Plan plan_text(Engine& engine, const SynthesisOptions& options);
-
-struct StreamEvent {
-    enum Type { kPlan = 1, kChunkStarted = 2, kAudio = 3, kDone = 4 };
-    Type type;
-    const PlanChunk* chunk = nullptr;
-    int chunk_count = 0;
-    const std::vector<float>* audio = nullptr;
-    Json metadata;
-};
-
-// Per-chunk noise source for tests: (chunk index, seed, has seed, frames, out [2 + latent_dim, frames]: the pitch predictor's
-// two rows, then the flow's).
-using ChunkNoiseFn = std::function<void(int, uint64_t, bool, int64_t, float*)>;
-
-// Plans `options.text` and speaks it target by target; `emit` returns false to stop. Returns the final metadata.
-Json synthesize_stream(Engine& engine, const SynthesisOptions& options, const std::function<bool(const StreamEvent&)>& emit,
-                       const ChunkNoiseFn& chunk_noise = nullptr);
-
-// Speaks `plan` target by target (the text fields of `options` are unused).
-Json synthesize_plan_stream(Engine& engine, const Plan& plan, const SynthesisOptions& options, const std::function<bool(const StreamEvent&)>& emit,
-                            const ChunkNoiseFn& chunk_noise = nullptr);
-
-// Silences that can end a target: the end of the chain, a paragraph or record boundary, and the silences after a
-// sentence end, after a clause pause and between words.
-enum class TargetCut { kEnd, kParagraph, kSentence, kClause, kWord };
-
-struct TargetCandidate {
-    std::size_t index;  // the silence's position in the chain's phone stream
-    TargetCut kind;
-    int64_t frames;     // predicted frames from the target's start through this silence
-};
-
-// The end of a target among `candidates` (in stream order): the first target of a request ends at the earliest
-// sentence end past the trained minimum (a clause, else a word break, only when the opening sentence does not fit); later targets end at the chain's end or a paragraph if it fits,
-// else reach toward the trained maximum, preferring a sentence boundary, then a clause, then a word break; a remainder
-// shorter than the minimum is never left before the end or a paragraph.
-std::size_t choose_target(const std::vector<TargetCandidate>& candidates, bool first, int64_t shortest, int64_t longest);
-
-// Normal noise from a seeded xoshiro256** generator (Box-Muller), scaled by `temperature`.
-void gaussian_noise(uint64_t seed, int64_t count, float temperature, float* out);
 
 }  // namespace scyllasband

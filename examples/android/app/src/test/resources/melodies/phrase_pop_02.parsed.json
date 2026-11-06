@@ -1,0 +1,170 @@
+{
+ "bpm": 104.0,
+ "lines": [
+  {
+   "first": 0,
+   "last": 3
+  },
+  {
+   "first": 4,
+   "last": 8
+  }
+ ],
+ "mode": "sung",
+ "notes": [
+  {
+   "beats": 0.5,
+   "end": 0.2885,
+   "index": 0,
+   "label": "hold",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 0.0,
+   "word_index": 0
+  },
+  {
+   "beats": 0.5,
+   "end": 0.5769,
+   "index": 1,
+   "label": "on",
+   "midi": 67,
+   "note": "G4",
+   "part": 1,
+   "start": 0.2885,
+   "word_index": 1
+  },
+  {
+   "beats": 1.0,
+   "end": 1.1538,
+   "index": 2,
+   "label": "tight",
+   "midi": 69,
+   "note": "A4",
+   "part": 1,
+   "start": 0.5769,
+   "word_index": 2
+  },
+  {
+   "beats": 0.5,
+   "end": 1.4423,
+   "index": 3,
+   "label": "-",
+   "midi": null,
+   "note": "rest",
+   "part": 0,
+   "start": 1.1538,
+   "word_index": null
+  },
+  {
+   "beats": 0.5,
+   "end": 1.7308,
+   "index": 4,
+   "label": "we",
+   "midi": 67,
+   "note": "G4",
+   "part": 1,
+   "start": 1.4423,
+   "word_index": 3
+  },
+  {
+   "beats": 0.5,
+   "end": 2.0192,
+   "index": 5,
+   "label": "are",
+   "midi": 66,
+   "note": "F#4",
+   "part": 1,
+   "start": 1.7308,
+   "word_index": 4
+  },
+  {
+   "beats": 0.5,
+   "end": 2.3077,
+   "index": 6,
+   "label": "near~1",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 2.0192,
+   "word_index": 5
+  },
+  {
+   "beats": 0.5,
+   "end": 2.5962,
+   "index": 7,
+   "label": "ly~2",
+   "midi": 62,
+   "note": "D4",
+   "part": 2,
+   "start": 2.3077,
+   "word_index": 5
+  },
+  {
+   "beats": 1.5,
+   "end": 3.4615,
+   "index": 8,
+   "label": "home",
+   "midi": 60,
+   "note": "C4",
+   "part": 1,
+   "start": 2.5962,
+   "word_index": 6
+  }
+ ],
+ "range": {
+  "high": 69,
+  "high_note": "A4",
+  "low": 60,
+  "low_note": "C4",
+  "mean": 64.875
+ },
+ "seconds": 3.4615,
+ "style": "pop",
+ "text": "hold on tight we are nearly home",
+ "transpose": 0,
+ "words": [
+  {
+   "end": 0.2885,
+   "parts": 1,
+   "start": 0.0,
+   "word": "hold"
+  },
+  {
+   "end": 0.5769,
+   "parts": 1,
+   "start": 0.2885,
+   "word": "on"
+  },
+  {
+   "end": 1.1538,
+   "parts": 1,
+   "start": 0.5769,
+   "word": "tight"
+  },
+  {
+   "end": 1.7308,
+   "parts": 1,
+   "start": 1.4423,
+   "word": "we"
+  },
+  {
+   "end": 2.0192,
+   "parts": 1,
+   "start": 1.7308,
+   "word": "are"
+  },
+  {
+   "end": 2.5962,
+   "parts": 2,
+   "start": 2.0192,
+   "word": "nearly"
+  },
+  {
+   "end": 3.4615,
+   "parts": 1,
+   "start": 2.5962,
+   "word": "home"
+  }
+ ]
+}

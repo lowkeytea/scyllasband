@@ -16,6 +16,14 @@ namespace scyllasband {
 
 extern const char* const kSilencePhone;
 
+// A target's phones, its words, and the neighbouring text (as phone ids) its span context is drawn from.
+struct Sentence {
+    std::vector<std::string> phones;
+    std::vector<int> word_starts;
+    std::vector<int64_t> before_ids;  // preceding passage phones, silences excluded
+    std::vector<int64_t> after_ids;   // following passage phones, silences excluded
+};
+
 bool is_non_acoustic_modifier(const std::string& phone);  // stress, length and combining marks own no frames
 bool is_punctuation_pause(const std::string& phone);
 bool is_punctuation_phone(const std::string& phone);
@@ -52,6 +60,9 @@ struct Delivery {
 
     // NULL, "", "default" or "neutral": every control at the voice's default; else "control=value,..." pairs.
     static Delivery parse(const char* spec);
+    // delivery.resolve_delivery: null, a control=value string (as parse), or a mapping {"intensity": 1, "pace": "-0.5"} whose
+    // null, "", "default" and "auto" values take the voice's default.
+    static Delivery from_json(const Json& value);
     Json to_json() const;
     std::string spec() const;  // canonical text, used to group sentences into chains
 };

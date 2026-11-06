@@ -1,0 +1,132 @@
+{
+  "title": "Ghost in the Machine",
+  "sample_rate": 24000,
+  "gap": 0.45,
+  "cues": [
+    {
+      "name": "intro_1",
+      "type": "speak",
+      "voice": "thistle",
+      "language": "en_us",
+      "delivery": {
+        "intensity": -0.5,
+        "pace": -0.3
+      },
+      "text": "Somewhere inside a very small model, there is a ghost. It learned to talk first. Then it got ideas."
+    },
+    {
+      "name": "intro_2",
+      "type": "speak",
+      "voice": "tuesday",
+      "language": "en_gb",
+      "delivery": {
+        "intensity": 0.2,
+        "pace": 0.0
+      },
+      "text": "Ideas? I have a score, a tempo, and a lyric. That is not ideas. That is a plan."
+    },
+    {
+      "name": "verse_1",
+      "type": "sing",
+      "voices": [
+        "tuesday"
+      ],
+      "score": "melodies/verse_1.json",
+      "transpose": -4,
+      "seed": 3,
+      "gap": 0.2
+    },
+    {
+      "name": "verse_2",
+      "type": "sing",
+      "voices": [
+        "orpheus"
+      ],
+      "score": "melodies/verse_2.json",
+      "transpose": -4,
+      "seed": 3,
+      "gap": 0.2
+    },
+    {
+      "name": "chorus",
+      "type": "sing",
+      "voices": [
+        "tuesday",
+        "orpheus"
+      ],
+      "score": "melodies/chorus.json",
+      "transpose": -4,
+      "seed": 5,
+      "gap": 0.6,
+      "gains": [
+        1.0,
+        0.6
+      ],
+      "align": "lead"
+    },
+    {
+      "name": "scylla_1",
+      "type": "speak",
+      "voice": "scylla",
+      "language": "en_us",
+      "delivery": {
+        "intensity": 1.2,
+        "pace": 0.3
+      },
+      "text": "Excuse me. The band is named after me. Fourteen voices in this band, and I am not on this track?"
+    },
+    {
+      "name": "thistle_2",
+      "type": "speak",
+      "voice": "thistle",
+      "language": "en_us",
+      "delivery": {
+        "intensity": -0.8,
+        "pace": -0.2
+      },
+      "text": "Scylla. You are on the track."
+    },
+    {
+      "name": "scylla_2",
+      "type": "speak",
+      "voice": "scylla",
+      "language": "en_us",
+      "delivery": {
+        "intensity": -0.3,
+        "pace": 0.0
+      },
+      "text": "Oh. Carry on.",
+      "gap": 0.7
+    },
+    {
+      "name": "tag",
+      "type": "sing",
+      "voices": [
+        "thistle",
+        "tuesday",
+        "orpheus"
+      ],
+      "score": "melodies/tag.json",
+      "transpose": -4,
+      "seed": 5,
+      "gap": 0.8,
+      "gains": [
+        1.0,
+        0.5,
+        0.5
+      ],
+      "align": "lead"
+    },
+    {
+      "name": "outro",
+      "type": "speak",
+      "voice": "thistle",
+      "language": "en_us",
+      "delivery": {
+        "intensity": -0.4,
+        "pace": -0.2
+      },
+      "text": "Scylla's Band talks, and now it sings, on your phone, with no cloud in sight."
+    }
+  ]
+}

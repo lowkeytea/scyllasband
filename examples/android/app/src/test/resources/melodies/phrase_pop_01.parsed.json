@@ -1,0 +1,155 @@
+{
+ "bpm": 110.0,
+ "lines": [
+  {
+   "first": 0,
+   "last": 7
+  }
+ ],
+ "mode": "sung",
+ "notes": [
+  {
+   "beats": 0.5,
+   "end": 0.2727,
+   "index": 0,
+   "label": "the",
+   "midi": 62,
+   "note": "D4",
+   "part": 1,
+   "start": 0.0,
+   "word_index": 0
+  },
+  {
+   "beats": 0.5,
+   "end": 0.5455,
+   "index": 1,
+   "label": "ri~1",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 0.2727,
+   "word_index": 1
+  },
+  {
+   "beats": 0.5,
+   "end": 0.8182,
+   "index": 2,
+   "label": "ver~2",
+   "midi": 66,
+   "note": "F#4",
+   "part": 2,
+   "start": 0.5455,
+   "word_index": 1
+  },
+  {
+   "beats": 1.0,
+   "end": 1.3636,
+   "index": 3,
+   "label": "runs",
+   "midi": 69,
+   "note": "A4",
+   "part": 1,
+   "start": 0.8182,
+   "word_index": 2
+  },
+  {
+   "beats": 0.5,
+   "end": 1.6364,
+   "index": 4,
+   "label": "down",
+   "midi": 67,
+   "note": "G4",
+   "part": 1,
+   "start": 1.3636,
+   "word_index": 3
+  },
+  {
+   "beats": 0.5,
+   "end": 1.9091,
+   "index": 5,
+   "label": "to",
+   "midi": 66,
+   "note": "F#4",
+   "part": 1,
+   "start": 1.6364,
+   "word_index": 4
+  },
+  {
+   "beats": 0.5,
+   "end": 2.1818,
+   "index": 6,
+   "label": "the",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 1.9091,
+   "word_index": 5
+  },
+  {
+   "beats": 1.5,
+   "end": 3.0,
+   "index": 7,
+   "label": "sea",
+   "midi": 62,
+   "note": "D4",
+   "part": 1,
+   "start": 2.1818,
+   "word_index": 6
+  }
+ ],
+ "range": {
+  "high": 69,
+  "high_note": "A4",
+  "low": 62,
+  "low_note": "D4",
+  "mean": 65.0
+ },
+ "seconds": 3.0,
+ "style": "pop",
+ "text": "the river runs down to the sea",
+ "transpose": 0,
+ "words": [
+  {
+   "end": 0.2727,
+   "parts": 1,
+   "start": 0.0,
+   "word": "the"
+  },
+  {
+   "end": 0.8182,
+   "parts": 2,
+   "start": 0.2727,
+   "word": "river"
+  },
+  {
+   "end": 1.3636,
+   "parts": 1,
+   "start": 0.8182,
+   "word": "runs"
+  },
+  {
+   "end": 1.6364,
+   "parts": 1,
+   "start": 1.3636,
+   "word": "down"
+  },
+  {
+   "end": 1.9091,
+   "parts": 1,
+   "start": 1.6364,
+   "word": "to"
+  },
+  {
+   "end": 2.1818,
+   "parts": 1,
+   "start": 1.9091,
+   "word": "the"
+  },
+  {
+   "end": 3.0,
+   "parts": 1,
+   "start": 2.1818,
+   "word": "sea"
+  }
+ ]
+}

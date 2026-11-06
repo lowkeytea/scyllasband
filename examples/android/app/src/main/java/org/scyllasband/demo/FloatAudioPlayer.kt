@@ -13,9 +13,11 @@ import kotlin.math.max
 
 class FloatAudioPlayer(
     private val sampleRate: Int,
+    /** Chunks queued ahead of playback before [enqueue] waits: two sentences for speech; a whole song for singing. */
+    chunkCapacity: Int = AudioChunkBuffer.DEFAULT_CAPACITY,
 ) : Closeable {
     private val track: AudioTrack
-    private val chunks = AudioChunkBuffer()
+    private val chunks = AudioChunkBuffer(chunkCapacity)
     private val playbackCues = PlaybackCueTimeline()
     private val closed = AtomicBoolean(false)
     private val playbackComplete = CountDownLatch(1)

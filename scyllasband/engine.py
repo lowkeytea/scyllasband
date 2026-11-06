@@ -16,6 +16,11 @@ Long text is spoken as targets of 64 to 420 latent frames cut by :mod:`scyllasba
 
 Delivery is intensity and pace (graph slots 0 and 1, in the voice's standard deviations / z_scale) plus a pitch shift in
 semitones. A target with fewer than ``min_spoken_phones`` spoken phones gets neither slot, as in training.
+
+A v4 bundle (:mod:`scyllasband.contract`) adds singing: the flow also takes a delivery mode id (0 spoken, 1 sung, 2 rap,
+3 ballad), a sung target brings its own melody from a score (:mod:`scyllasband.singing`), which replaces steps 2 and 4
+(durations come from the score, the pitch predictor and its soft limit are skipped), and the bundle may carry a second
+decoder (``controls.decoders``). On a v3 bundle the mode input is never fed and everything above is unchanged.
 """
 
 from __future__ import annotations
@@ -23,18 +28,24 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import functools
 import json
+import os
 from pathlib import Path
+import re
 import threading
 from typing import Any, Callable, Mapping, Sequence
 
 import numpy as np
 
+from .contract import DELIVERY_MODE_INPUT, GRAPH_CONTRACTS, GRAPH_CONTRACT_V4
 from .events import frame_events, frames_to_durations, modifier_bits
 from .g2p_phrases import is_non_acoustic_phone_modifier
 from .g2p import SILENCE, G2PFrontend
 
 GRAPH_CONTRACT = "scyllasband_measured_controls_v3"
 LATENT_HOP = 512
+# The decoder every bundle has, as v3 manifests (which have no controls.decoders) describe it.
+DEFAULT_DECODERS = {"vocos": dict(component="vocoder", samples_per_frame=LATENT_HOP, output_samples="latent_frames * 512 - 256")}
+_OUTPUT_RULE = re.compile(r"^\s*latent_frames\s*\*\s*(\d+)\s*(?:-\s*(\d+))?\s*$")
 # Target lengths v2 was trained on, in latent frames (about 1.4 to 9 seconds): shorter targets lose their prosody and
 # longer ones their intelligibility. A bundle can state its own as controls.chunking.min/max_target_frames.
 MIN_TARGET_FRAMES, MAX_TARGET_FRAMES = 64, 420
@@ -134,11 +145,18 @@ class Engine:
         self.bundle_dir = Path(bundle_dir)
         self.manifest = json.loads((self.bundle_dir / "manifest.json").read_text(encoding="utf-8"))
         controls = self.manifest["controls"]
-        if controls.get("graph_input_contract") != GRAPH_CONTRACT:
+        if controls.get("graph_input_contract") not in GRAPH_CONTRACTS:
             raise ValueError(f"Bundle graph contract {controls.get('graph_input_contract')!r} is not supported by this runtime "
-                             f"(expected {GRAPH_CONTRACT!r}); download the current model.")
+                             f"(expected one of {', '.join(GRAPH_CONTRACTS)}); download the current model.")
         self.backend, self.threads, self.providers = backend, threads, providers
         self.controls = controls
+        self.graph_contract = str(controls["graph_input_contract"])
+        # v4 flows take the delivery mode id on every call (0 for speech); v3 flows have no such input.
+        self.feeds_delivery_mode = self.graph_contract == GRAPH_CONTRACT_V4
+        modes = controls.get("delivery_modes") or {}
+        self.delivery_modes: dict[str, int] = ({str(k): int(v) for k, v in (modes.get("ids") or {}).items()} if modes.get("enabled") else {})
+        self.singing: dict[str, Any] = dict(modes.get("singing") or {}) if modes.get("enabled") else {}
+        self.decoders = {str(k): dict(v) for k, v in (controls.get("decoders") or DEFAULT_DECODERS).items()}
         assets = self.manifest["assets"]
         vocab = json.loads((self.bundle_dir / assets["phone_vocab"]).read_text(encoding="utf-8"))
         self.phone_to_id: dict[str, int] = {str(k): int(v) for k, v in dict(vocab.get("token_to_id", vocab)).items()}
@@ -164,6 +182,11 @@ class Engine:
         buckets = controls["target_buckets"]["buckets"]
         self.buckets = sorted((int(b["latent_frames"]), str(b["vector_estimator"]), str(b["vocoder"])) for b in buckets)
         self.pitch_graphs = {int(b["latent_frames"]): str(b["pitch_estimator"]) for b in buckets}
+        # Decoder graphs per bucket, by decoder name: a bucket names a decoder's component under that component's base
+        # name ("vocoder", "vocoder_bigvgan"); an optional decoder may be missing from some or all buckets.
+        self.decoder_graphs = {name: {int(b["latent_frames"]): str(b[key]) for b in buckets if b.get(key)}
+                               for name, spec in self.decoders.items() for key in [str(spec.get("component") or "vocoder")]}
+        self.decoder_windows = self._decoder_windows()
         # Optional graphs that run every flow step in one call, for one sampler and step count: {latent_frames: component}.
         fused = controls.get("fused_flow") or {}
         self.fused_flow = (str(fused.get("sampler", "")).lower(), int(fused.get("steps", 0)))
@@ -227,6 +250,59 @@ class Engine:
                 return bucket
         raise OverlongError(f"Predicted {frames} latent frames, but this bundle supports at most {self.max_frames}. "
                             "Split the text into shorter sentences.", frames=frames, limit=self.max_frames)
+
+    def decoder_bucket(self, decoder: str, frames: int) -> tuple[int, str]:
+        """The smallest bucket of at least ``frames`` that has a graph for ``decoder``, and that graph."""
+        graphs = self.decoder_graphs.get(decoder)
+        if graphs is None:
+            raise ValueError(f"Unknown decoder {decoder!r}; this bundle declares {', '.join(sorted(self.decoders))}")
+        if not graphs:
+            raise ValueError(f"This bundle has no {decoder} decoder graphs")
+        for size in sorted(graphs):
+            if size >= frames:
+                return size, graphs[size]
+        limit = max(graphs)
+        raise OverlongError(f"{frames} latent frames to decode, but the {decoder} decoder supports at most {limit}.",
+                            frames=frames, limit=limit)
+
+    def _decoder_windows(self) -> dict[str, tuple[int, int]]:
+        """Decoders that decode in fixed windows through one bucket graph, as libscyllasband does: {name: (the window's
+        bucket in frames, frames of context either side of each cut)}, from ``controls.decoders.<name>.window`` {frames,
+        context} or SCYLLASBAND_DECODER_WINDOW ("bigvgan=256:16"; "bigvgan=0" turns it off). A windowed decoder decodes any
+        length, so a bundle may carry it at the window's bucket only."""
+        requested = {name: (int((spec.get("window") or {}).get("frames", 0)), int((spec.get("window") or {}).get("context", 0)))
+                     for name, spec in self.decoders.items()}
+        for entry in filter(None, os.environ.get("SCYLLASBAND_DECODER_WINDOW", "").split(",")):
+            name, _, value = entry.partition("=")
+            frames, _, context = value.partition(":")
+            if name not in self.decoders or not frames.isdigit() or (context and not context.isdigit()):
+                raise ValueError(f"SCYLLASBAND_DECODER_WINDOW entry {entry!r} is not decoder=frames[:context] for a decoder of this bundle")
+            requested[name] = (int(frames), int(context or 0))
+        windows = {}
+        for name, (frames, context) in requested.items():
+            if frames <= 0:
+                continue
+            if self.decoder_rule(name)[1] != 0:
+                raise ValueError(f"The {name} decoder cannot decode in windows (its output is not whole frames)")
+            graphs = self.decoder_graphs.get(name) or {}
+            if graphs:
+                frames = self.decoder_bucket(name, min(frames, max(graphs)))[0]
+            if context < 0 or 2 * context >= frames:
+                raise ValueError(f"The {name} decoder's window context must leave frames to keep: {frames} frames, {context} context")
+            windows[name] = (frames, context)
+        return windows
+
+    def delivery_mode_id(self, mode: str | int | None) -> int:
+        """A delivery mode's id (``controls.delivery_modes.ids``); 0 (spoken) when the bundle has none and none is asked."""
+        if mode is None or mode == 0 or mode == "spoken":
+            return 0
+        if isinstance(mode, str):
+            if mode not in self.delivery_modes:
+                raise ValueError(f"Unknown delivery mode {mode!r}; this bundle has {', '.join(sorted(self.delivery_modes)) or 'spoken only'}")
+            return int(self.delivery_modes[mode])
+        if not self.feeds_delivery_mode:
+            raise ValueError("This bundle has no delivery modes (a v3 bundle); singing needs a v4 bundle")
+        return int(mode)
 
     # --- text ---------------------------------------------------------------------------------------------------------
     def phonemize(self, text: str, *, language: str) -> dict[str, Any]:
@@ -306,16 +382,29 @@ class Engine:
                             prefix: np.ndarray | None = None, steps: int = 8, sampler: str = "heun", speed: float = 1.0,
                             noise_scale: float = 1.0, rng: np.random.Generator | None = None, noise: np.ndarray | None = None,
                             durations: list[int] | None = None, voice_row: int | None = None, pitch_noise: np.ndarray | None = None,
-                            pitch_steps: int | None = None, pitch_sampler: str | None = None) -> SentenceResult:
+                            pitch_steps: int | None = None, pitch_sampler: str | None = None, melody: np.ndarray | None = None,
+                            delivery_mode: int = 0, guidance: float = 1.0) -> SentenceResult:
         """``delivery``: (values, present[, pitch shift in semitones]) from delivery_inputs. ``voice_row``: the duration / flow
-        voice row; defaults to the voice index. The pitch predictor draws its noise from ``rng`` before the flow does."""
+        voice row; defaults to the voice index. The pitch predictor draws its noise from ``rng`` before the flow does.
+
+        ``melody``: a ready melody input [T, 3] (T = the sum of ``durations``) in the flow's layout, as a score gives it
+        (:mod:`scyllasband.singing`); it replaces the pitch predictor's contour and the voice's soft limit entirely, so the
+        pitch graphs do not run and the pitch shift is ignored. ``delivery_mode``: the mode id fed to a v4 flow (0 spoken;
+        a v3 bundle takes only 0). ``guidance`` > 1 contrasts the melody and mode against both switched off
+        (v = v_off + guidance * (v_on - v_off), classifier-free guidance); 1 runs the flow once per evaluation.
+        """
         voice_id = self.voice_index(voice) if voice_row is None else int(voice_row)
         language_id = self.language_index(language)
+        mode_id = self.delivery_mode_id(delivery_mode)
         if durations is None:
             durations = self.durations(sentence, voice=voice_id, language=language_id, delivery=delivery, speed=speed)
         length = int(sum(durations))
         if length <= 0:
             raise ValueError("Predicted zero latent frames; cannot synthesize")
+        if melody is not None:
+            melody = np.asarray(melody, np.float32)
+            if melody.shape != (length, 3):
+                raise ValueError(f"melody must be [{length}, 3] (one row per latent frame); got {melody.shape}")
         frames, vector_name, _ = self.bucket(length)
         target = [self.phone_to_id[p] for p in sentence.phones]
         events = frame_events(sentence.phones, durations, sentence.word_starts,
@@ -326,10 +415,11 @@ class Engine:
         span_feeds = dict(span_context_phone_ids=_pad(span, width), span_context_segment_ids=_pad(segments, width),
                           span_context_mask=_pad([True] * len(span), width, False))
         hidden = self._run(graph, **span_feeds)
-        pitch_width, pitch_graph = self._span_graph(len(span), 2, self.pitch_context)
-        pitch_hidden = (self._run(pitch_graph, **span_feeds) if pitch_width == width else
-                        self._run(pitch_graph, span_context_phone_ids=_pad(span, pitch_width), span_context_segment_ids=_pad(segments, pitch_width),
-                                  span_context_mask=_pad([True] * len(span), pitch_width, False)))
+        if melody is None:
+            pitch_width, pitch_graph = self._span_graph(len(span), 2, self.pitch_context)
+            pitch_hidden = (self._run(pitch_graph, **span_feeds) if pitch_width == width else
+                            self._run(pitch_graph, span_context_phone_ids=_pad(span, pitch_width), span_context_segment_ids=_pad(segments, pitch_width),
+                                      span_context_mask=_pad([True] * len(span), pitch_width, False)))
         values, present = self.target_delivery(sentence.phones, delivery)
         shift = float(delivery[2]) if len(delivery) > 2 and delivery[2] is not None else 0.0
         prefix_latents = np.zeros((1, self.latent_dim, self.prefix_frames), np.float32)
@@ -343,14 +433,19 @@ class Engine:
                       language_id=_scalar(language_id), delivery_values=values, delivery_present=present, latent_mask=mask,
                       **{k: _pad(v, frames, 0) for k, v in events.items()})
         rng = rng if rng is not None else np.random.default_rng()
-        if pitch_noise is None:
-            pitch_noise = rng.standard_normal((2, length)).astype(np.float32)
-        contour = self._integrate(self.pitch_graphs[frames], np.asarray(pitch_noise, np.float32).reshape(2, length), frames, mask,
-                                  dict(common, span_context_hidden=pitch_hidden), int(pitch_steps or self.pitch_steps),
-                                  str(pitch_sampler or self.pitch_sampler).lower() == "heun")
-        melody = np.zeros((1, frames, 3), np.float32)
-        melody[0, :length] = self.melody(contour, voice, shift)
-        feeds = dict(common, span_context_hidden=hidden, prefix_latents=prefix_latents, prefix_mask=prefix_mask, expanded_melody=melody)
+        expanded_melody = np.zeros((1, frames, 3), np.float32)
+        if melody is None:
+            if pitch_noise is None:
+                pitch_noise = rng.standard_normal((2, length)).astype(np.float32)
+            contour = self._integrate(self.pitch_graphs[frames], np.asarray(pitch_noise, np.float32).reshape(2, length), frames, mask,
+                                      dict(common, span_context_hidden=pitch_hidden), int(pitch_steps or self.pitch_steps),
+                                      str(pitch_sampler or self.pitch_sampler).lower() == "heun")
+            expanded_melody[0, :length] = self.melody(contour, voice, shift)
+        else:
+            expanded_melody[0, :length] = melody
+        feeds = dict(common, span_context_hidden=hidden, prefix_latents=prefix_latents, prefix_mask=prefix_mask, expanded_melody=expanded_melody)
+        if self.feeds_delivery_mode:
+            feeds[DELIVERY_MODE_INPUT] = _scalar(mode_id)
         x = np.zeros((1, self.latent_dim, frames), np.float32)
         if noise is None:
             noise = rng.standard_normal((self.latent_dim, length)).astype(np.float32) * float(noise_scale)
@@ -360,13 +455,26 @@ class Engine:
         if no_prefix and frames in self.first_graphs:
             vector_name = self.first_graphs[frames]
         flows = self.first_flow_graphs if no_prefix and frames in self.first_flow_graphs else self.flow_graphs
-        fused = flows.get(frames) if (str(sampler).lower(), int(steps)) == self.fused_flow else None
+        # Guidance contrasts the conditioned velocity with the melody and mode switched off; it needs the stepped graph.
+        guided = float(guidance) != 1.0 and (melody is not None or mode_id != 0)
+        off = dict(feeds, expanded_melody=np.zeros_like(expanded_melody)) if guided else None
+        if off is not None and self.feeds_delivery_mode:
+            off[DELIVERY_MODE_INPUT] = _scalar(0)
+        fused = flows.get(frames) if (str(sampler).lower(), int(steps)) == self.fused_flow and not guided else None
+
+        def velocity(current: np.ndarray, t: float) -> np.ndarray:
+            on = self._run(vector_name, noise=current, time=np.array([t], np.float32), **feeds)
+            if off is None:
+                return on
+            base = self._run(vector_name, noise=current, time=np.array([t], np.float32), **off)
+            return base + float(guidance) * (on - base)
+
         if fused is not None:
             x = self._run(fused, noise=x, **feeds)
         for step in range(0 if fused is not None else int(steps)):
-            a = self._run(vector_name, noise=x, time=np.array([step / steps], np.float32), **feeds)
+            a = velocity(x, step / steps)
             if heun:
-                b = self._run(vector_name, noise=x + a / steps, time=np.array([(step + 1) / steps], np.float32), **feeds)
+                b = velocity(x + a / steps, (step + 1) / steps)
                 x = x + (a + b) / (2 * steps)
             else:
                 x = x + a / steps
@@ -377,6 +485,8 @@ class Engine:
                         fused_flow=fused is not None, flow_graph=fused if fused is not None else vector_name,
                         prefix_frames=int(prefix_mask.sum()), context_before=min(len(sentence.before_ids), self.context_phones),
                         context_after=min(len(sentence.after_ids), self.context_phones))
+        if self.feeds_delivery_mode or melody is not None:
+            metadata.update(delivery_mode=mode_id, melody_source="pitch_predictor" if melody is None else "score", guidance=float(guidance))
         return SentenceResult(latents=x[0, :, :length].copy(), durations=durations, bucket=frames, metadata=metadata)
 
     def _integrate(self, graph: str, noise: np.ndarray, frames: int, mask: np.ndarray, feeds: Mapping[str, np.ndarray], steps: int,
@@ -395,26 +505,78 @@ class Engine:
             x = x * mask[:, None, :]
         return x[0, :, :length]
 
-    def decode(self, latents: np.ndarray, *, voice: str, language: str, left: np.ndarray | None = None) -> np.ndarray:
-        """Waveform for ``latents`` [24, T], decoded after up to ``decoding.context_frames`` frames of ``left`` context."""
+    def decoder_rule(self, decoder: str) -> tuple[int, int]:
+        """(samples per latent frame, samples the decoder's output falls short of frames * samples_per_frame) from
+        ``controls.decoders[decoder].output_samples`` ("latent_frames * 512 - 256"; Vocos) or "latent_frames * 512" (BigVGAN)."""
+        spec = self.decoders.get(decoder)
+        if spec is None:
+            raise ValueError(f"Unknown decoder {decoder!r}; this bundle declares {', '.join(sorted(self.decoders))}")
+        per_frame = int(spec.get("samples_per_frame", LATENT_HOP))
+        match = _OUTPUT_RULE.match(str(spec.get("output_samples") or ""))
+        if match:
+            per_frame, short = int(match.group(1)), int(match.group(2) or 0)
+        else:
+            short = 0
+        return per_frame, short
+
+    def decode(self, latents: np.ndarray, *, voice: str, language: str, left: np.ndarray | None = None, decoder: str = "vocos") -> np.ndarray:
+        """Waveform for ``latents`` [24, T], decoded after up to ``decoding.context_frames`` frames of ``left`` context.
+        ``decoder`` names one of ``controls.decoders`` (vocos, the default every bundle has; bigvgan where exported)."""
         latents = np.asarray(latents, np.float32).reshape(self.latent_dim, -1)
         context = np.zeros((self.latent_dim, 0), np.float32) if left is None else np.asarray(left, np.float32).reshape(self.latent_dim, -1)
+        per_frame, short = self.decoder_rule(decoder)
+        if decoder in self.decoder_windows:
+            return self._decode_windowed(latents, context, decoder=decoder, voice=voice, language=language)
+        graphs = self.decoder_graphs.get(decoder) or {}
+        limit = max(graphs) if graphs else self.max_frames
+        if latents.shape[-1] > limit:   # (BigVGAN may stop below the flow's largest bucket)
+            raise OverlongError(f"{latents.shape[-1]} latent frames to decode, but the {decoder} decoder supports at most {limit}.",
+                                frames=latents.shape[-1], limit=limit)
         # Left context gives way to the sentence itself when both do not fit the largest bucket.
-        keep = min(self.decode_context, max(0, self.max_frames - 1 - latents.shape[-1]))
+        keep = min(self.decode_context, max(0, limit - 1 - latents.shape[-1]))
         context = context[:, context.shape[-1] - min(keep, context.shape[-1]):]
         joined = np.concatenate([context, latents], -1)
-        # The vocoder returns frames * 512 - 256 samples, so keep one spare frame to emit the sentence's last frame in full;
-        # a sentence that fills the largest bucket has its last 256 samples padded with silence instead.
-        frames, _, vocoder_name = self.bucket(min(joined.shape[-1] + 1, self.max_frames))
+        # Vocos returns frames * 512 - 256 samples, so keep one spare frame to emit the sentence's last frame in full; a
+        # sentence that fills the largest bucket has its last 256 samples padded with silence instead. BigVGAN returns
+        # frames * 512 samples and needs no spare frame.
+        spare = 1 if short > 0 else 0
+        frames, vocoder_name = self.decoder_bucket(decoder, min(joined.shape[-1] + spare, limit))
         padded = np.zeros((1, self.latent_dim, frames), np.float32)
         padded[0, :, :joined.shape[-1]] = joined
         audio = self._run(vocoder_name, latents=padded, latent_mask=_pad([True] * joined.shape[-1], frames, False),
                           voice_id=_scalar(self.voice_index(voice)), language_id=_scalar(self.language_index(language)),
                           emotion_id=_scalar(0))
         audio = np.asarray(audio, np.float32).reshape(-1)
-        start, length = context.shape[-1] * LATENT_HOP, latents.shape[-1] * LATENT_HOP
+        start, length = context.shape[-1] * per_frame, latents.shape[-1] * per_frame
         audio = audio[start:start + length]
         return np.clip(np.pad(audio, (0, length - audio.size)), -1.0, 1.0)
+
+    def _decode_windowed(self, latents: np.ndarray, context: np.ndarray, *, decoder: str, voice: str, language: str) -> np.ndarray:
+        """decode() through the window's one bucket graph (libscyllasband's Engine::decode_windowed): the sequence (up to
+        ``decoding.context_frames`` of left context, then the target) is decoded ``window`` frames at a time, each call
+        keeping the frames at least ``context`` from a cut inside the sequence; the last window ends at the sequence end and
+        moves left to decode a full window where it can."""
+        window_frames, overlap = self.decoder_windows[decoder]
+        window, graph = self.decoder_bucket(decoder, window_frames)
+        per_frame, _ = self.decoder_rule(decoder)
+        left = min(context.shape[-1], self.decode_context)
+        sequence = np.concatenate([context[:, context.shape[-1] - left:], latents], -1)
+        total = sequence.shape[-1]
+        out = np.zeros(latents.shape[-1] * per_frame, np.float32)
+        ids = dict(voice_id=_scalar(self.voice_index(voice)), language_id=_scalar(self.language_index(language)), emotion_id=_scalar(0))
+        start = left
+        while start < total:
+            first = max(0, min(start - overlap, total - window))
+            last = min(total, first + window)
+            keep = total if last == total else last - overlap
+            padded = np.zeros((1, self.latent_dim, window), np.float32)
+            padded[0, :, :last - first] = sequence[:, first:last]
+            audio = np.asarray(self._run(graph, latents=padded, latent_mask=_pad([True] * (last - first), window, False), **ids),
+                               np.float32).reshape(-1)
+            piece = audio[(start - first) * per_frame:(keep - first) * per_frame]
+            out[(start - left) * per_frame:(start - left) * per_frame + piece.size] = piece
+            start = keep
+        return np.clip(out, -1.0, 1.0)
 
     def _id_to_token(self, index: int) -> str:
         if not hasattr(self, "_tokens"):

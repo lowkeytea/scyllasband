@@ -1,0 +1,53 @@
+{
+ "text": "two bucks eighty and the ink don't bleed",
+ "bpm": 108,
+ "style": "pop",
+ "notes": [
+  [
+   "two",
+   "C4",
+   0.5
+  ],
+  [
+   "bucks",
+   "D4",
+   0.5
+  ],
+  [
+   "eigh~1",
+   "E4",
+   0.25
+  ],
+  [
+   "ty~2",
+   "D4",
+   0.25
+  ],
+  [
+   "and",
+   "C4",
+   0.5
+  ],
+  [
+   "the",
+   "D4",
+   0.5
+  ],
+  [
+   "ink",
+   "E4",
+   0.5
+  ],
+  [
+   "don't",
+   "F4",
+   0.5
+  ],
+  [
+   "bleed",
+   "G4",
+   1.5
+  ]
+ ],
+ "source": "example"
+}

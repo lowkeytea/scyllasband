@@ -1,0 +1,43 @@
+{
+ "text": "count the stars and call them mine",
+ "bpm": 106,
+ "style": "pop",
+ "notes": [
+  [
+   "count",
+   "C4",
+   0.5
+  ],
+  [
+   "the",
+   "D4",
+   0.5
+  ],
+  [
+   "stars",
+   "E4",
+   1
+  ],
+  [
+   "and",
+   "E4",
+   0.5
+  ],
+  [
+   "call",
+   "G4",
+   0.5
+  ],
+  [
+   "them",
+   "F4",
+   0.5
+  ],
+  [
+   "mine",
+   "D4",
+   1.5
+  ]
+ ],
+ "source": "example"
+}

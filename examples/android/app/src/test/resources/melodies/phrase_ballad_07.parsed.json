@@ -1,0 +1,172 @@
+{
+ "bpm": 104.0,
+ "lines": [
+  {
+   "first": 0,
+   "last": 8
+  }
+ ],
+ "mode": "ballad",
+ "notes": [
+  {
+   "beats": 1.0,
+   "end": 0.5769,
+   "index": 0,
+   "label": "two",
+   "midi": 60,
+   "note": "C4",
+   "part": 1,
+   "start": 0.0,
+   "word_index": 0
+  },
+  {
+   "beats": 1.0,
+   "end": 1.1538,
+   "index": 1,
+   "label": "bucks",
+   "midi": 62,
+   "note": "D4",
+   "part": 1,
+   "start": 0.5769,
+   "word_index": 1
+  },
+  {
+   "beats": 0.5,
+   "end": 1.4423,
+   "index": 2,
+   "label": "eigh~1",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 1.1538,
+   "word_index": 2
+  },
+  {
+   "beats": 0.5,
+   "end": 1.7308,
+   "index": 3,
+   "label": "ty~2",
+   "midi": 62,
+   "note": "D4",
+   "part": 2,
+   "start": 1.4423,
+   "word_index": 2
+  },
+  {
+   "beats": 0.5,
+   "end": 2.0192,
+   "index": 4,
+   "label": "and",
+   "midi": 60,
+   "note": "C4",
+   "part": 1,
+   "start": 1.7308,
+   "word_index": 3
+  },
+  {
+   "beats": 0.5,
+   "end": 2.3077,
+   "index": 5,
+   "label": "the",
+   "midi": 62,
+   "note": "D4",
+   "part": 1,
+   "start": 2.0192,
+   "word_index": 4
+  },
+  {
+   "beats": 1.5,
+   "end": 3.1731,
+   "index": 6,
+   "label": "ink",
+   "midi": 64,
+   "note": "E4",
+   "part": 1,
+   "start": 2.3077,
+   "word_index": 5
+  },
+  {
+   "beats": 0.5,
+   "end": 3.4615,
+   "index": 7,
+   "label": "don't",
+   "midi": 65,
+   "note": "F4",
+   "part": 1,
+   "start": 3.1731,
+   "word_index": 6
+  },
+  {
+   "beats": 3.0,
+   "end": 5.1923,
+   "index": 8,
+   "label": "bleed",
+   "midi": 67,
+   "note": "G4",
+   "part": 1,
+   "start": 3.4615,
+   "word_index": 7
+  }
+ ],
+ "range": {
+  "high": 67,
+  "high_note": "G4",
+  "low": 60,
+  "low_note": "C4",
+  "mean": 62.889
+ },
+ "seconds": 5.1923,
+ "style": "ballad",
+ "text": "two bucks eighty and the ink don't bleed",
+ "transpose": 0,
+ "words": [
+  {
+   "end": 0.5769,
+   "parts": 1,
+   "start": 0.0,
+   "word": "two"
+  },
+  {
+   "end": 1.1538,
+   "parts": 1,
+   "start": 0.5769,
+   "word": "bucks"
+  },
+  {
+   "end": 1.7308,
+   "parts": 2,
+   "start": 1.1538,
+   "word": "eighty"
+  },
+  {
+   "end": 2.0192,
+   "parts": 1,
+   "start": 1.7308,
+   "word": "and"
+  },
+  {
+   "end": 2.3077,
+   "parts": 1,
+   "start": 2.0192,
+   "word": "the"
+  },
+  {
+   "end": 3.1731,
+   "parts": 1,
+   "start": 2.3077,
+   "word": "ink"
+  },
+  {
+   "end": 3.4615,
+   "parts": 1,
+   "start": 3.1731,
+   "word": "don't"
+  },
+  {
+   "end": 5.1923,
+   "parts": 1,
+   "start": 3.4615,
+   "word": "bleed"
+  }
+ ]
+}

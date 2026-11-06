@@ -18,7 +18,12 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import android.content.pm.ApplicationInfo
+import android.view.inputmethod.InputMethodManager
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.tabs.TabLayout
+import org.scyllasband.demo.sing.SingHost
+import org.scyllasband.demo.sing.SingScreen
 import org.scyllasband.android.ScyllasBand
 import org.scyllasband.android.ScyllasBandAccelerator
 import org.scyllasband.android.ScyllasBandDelivery
@@ -31,7 +36,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : AppCompatActivity(), SingHost {
     private lateinit var editor: MarkerEditText
     private lateinit var exampleSpinner: Spinner
     private lateinit var defaultSettingsButton: Button
@@ -44,14 +49,19 @@ class MainActivity : AppCompatActivity() {
     private lateinit var playbackText: TextView
 
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val worker: ExecutorService = Executors.newSingleThreadExecutor()
+    override val worker: ExecutorService = Executors.newSingleThreadExecutor()
     private val stopRequested = AtomicBoolean(false)
     private val scyllasband by lazy { ScyllasBand.create(applicationContext) }
+    override val runtime: ScyllasBand get() = scyllasband
+    private lateinit var singScreen: SingScreen
+    /** The Sing screen's claim on the runtime ("singing", "previewing"); speech waits while it holds one. */
+    private var singTask: String? = null
 
     @Volatile
     private var activePlayer: FloatAudioPlayer? = null
 
-    private var bundleInfo: ScyllasBandBundleInfo? = null
+    override var bundleInfo: ScyllasBandBundleInfo? = null
+        private set
     private var initializing = true
     private var playing = false
     private var defaultSettings = FALLBACK_SETTINGS
@@ -75,8 +85,46 @@ class MainActivity : AppCompatActivity() {
         restoreState(savedInstanceState)
         bindInteractions()
         renderPendingSnapshot()
+        singScreen = SingScreen(this, findViewById(R.id.singScreen), this, savedInstanceState)
+        // Debug builds take launch options for the Sing screen (see SingScreen.launchOptions).
+        val debuggable = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+        val launch = intent.extras?.takeIf { debuggable && savedInstanceState == null && it.containsKey("sing_example") }
+        singScreen.launchOptions = launch
+        bindTabs(if (launch != null) 1 else savedInstanceState?.getInt(STATE_TAB) ?: 0)
         updateControls()
         initializeScyllasBand()
+    }
+
+    /** Speak and Sing share the runtime; the tabs only switch which screen shows. */
+    private fun bindTabs(selected: Int) {
+        val tabs = findViewById<TabLayout>(R.id.screenTabs)
+        fun show(position: Int) {
+            findViewById<View>(R.id.speakScreen).visibility = if (position == 0) View.VISIBLE else View.GONE
+            findViewById<View>(R.id.singScreen).visibility = if (position == 1) View.VISIBLE else View.GONE
+            currentFocus?.let { focused ->
+                getSystemService(InputMethodManager::class.java)?.hideSoftInputFromWindow(focused.windowToken, 0)
+            }
+            if (position == 1) singScreen.onShown()
+        }
+        tabs.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
+            override fun onTabSelected(tab: TabLayout.Tab) = show(tab.position)
+            override fun onTabUnselected(tab: TabLayout.Tab) = Unit
+            override fun onTabReselected(tab: TabLayout.Tab) = Unit
+        })
+        tabs.getTabAt(selected)?.select()
+        show(selected)
+    }
+
+    override fun begin(task: String): Boolean {
+        if (playing || singTask != null) return false
+        singTask = task
+        updateControls()
+        return true
+    }
+
+    override fun end(task: String) {
+        if (singTask == task) singTask = null
+        updateControls()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -87,9 +135,12 @@ class MainActivity : AppCompatActivity() {
         }
         outState.putString(STATE_DEFAULTS, settingsToJson(defaultSettings).toString())
         outState.putString(STATE_LAST_POINT, settingsToJson(lastPointSettings).toString())
+        outState.putInt(STATE_TAB, findViewById<TabLayout>(R.id.screenTabs).selectedTabPosition)
+        singScreen.saveState(outState)
     }
 
     override fun onDestroy() {
+        singScreen.close()
         stopRequested.set(true)
         scyllasband.cancel()
         activePlayer?.close()
@@ -168,6 +219,8 @@ class MainActivity : AppCompatActivity() {
                     defaultSettings = validateSettings(defaultSettings, info)
                     lastPointSettings = validateSettings(lastPointSettings, info)
                     renderPendingSnapshot()
+                    singScreen.onRuntimeReady()
+                    if (findViewById<TabLayout>(R.id.screenTabs).selectedTabPosition == 1) singScreen.onShown()
                     setStatus(
                         getString(
                             R.string.status_ready,
@@ -310,6 +363,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun startPlayback() {
         val info = bundleInfo ?: return
+        if (singTask != null) {
+            setStatus(getString(R.string.status_busy_singing))
+            return
+        }
         val segments = SpeakerDocument.segments(snapshotFromEditor(), defaultSettings)
         if (segments.isEmpty()) {
             setStatus(getString(R.string.status_no_text))
@@ -491,7 +548,7 @@ class MainActivity : AppCompatActivity() {
         exampleSpinner.isEnabled = ready && !playing
         defaultSettingsButton.isEnabled = ready && !playing
         clearMarkersButton.isEnabled = !playing
-        playButton.isEnabled = (ready && editor.text?.isNotBlank() == true) || playing
+        playButton.isEnabled = (ready && singTask == null && editor.text?.isNotBlank() == true) || playing
         playButton.setText(if (playing) R.string.stop else R.string.play)
         progress.visibility = if (initializing || playing) View.VISIBLE else View.GONE
     }
@@ -672,10 +729,12 @@ class MainActivity : AppCompatActivity() {
         const val MARKER_TEXT = "\uFFFC"
         const val PLAYBACK_SEED = 31_415L
 
-        // CPU: on the Galaxy Z Fold 8 it runs about 23 times faster than real time, and LiteRT's GPU accelerator either
-        // fails (AUTO falls back to the CPU) or hangs (GPU). See the README.
-        val ACCELERATOR = ScyllasBandAccelerator.CPU
+        // AUTO: the graphs the bundle lists for the GPU run there (a singing bundle lists BigVGAN: the Fold 8 sings the 71 s
+        // example song in 33 s instead of 90 s on the CPU), everything else on the CPU, where speech runs about 27 times
+        // faster than real time; a bundle that lists none runs entirely on the CPU. See the README.
+        val ACCELERATOR = ScyllasBandAccelerator.AUTO
         const val STATE_DOCUMENT = "speaker_document"
+        const val STATE_TAB = "selected_tab"
         const val STATE_DEFAULT_WALKTHROUGH = "default_walkthrough"
         const val STATE_DEFAULTS = "default_settings"
         const val STATE_LAST_POINT = "last_point_settings"

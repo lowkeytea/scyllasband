@@ -207,6 +207,198 @@ def stream_cases() -> dict:
     return dict(bundle=files, cases=cases)
 
 
+def records_cases() -> dict:
+    """Plans of records (planner.plan_records through the runtime: voice and language checks, delivery forms, chains) and a
+    records stream with pause_ms, from the Python runtime on the fake bundle (one voice, scylla / en_us)."""
+    spec = importlib.util.spec_from_file_location("scyllasband_test_runtime", REPO / "tests" / "test_runtime.py")
+    fakes = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fakes)
+    from scyllasband.runtime import ScyllasBandRuntime
+    controls = dict(chunking=dict(min_target_frames=6, max_target_frames=12), span_conditioning=dict(context_max_phones=256, context_phones_each_side=8))
+    S = "scylla"
+    scenarios = [
+        ("one record", [dict(text="ab. ab ab.\n\nab.", voice=S)], True),
+        ("records join one chain", [dict(text="ab.", voice=S), dict(text="ab ab.", voice=S, language="en_us")], True),
+        ("language spellings", [dict(text="ab.", voice=S, language="EN-US"), dict(text="ab.", voice=S, language="english"),
+                                dict(text="ab.", voice=S, language="en"), dict(text="ab.", voice=S, language=" ")], True),
+        ("delivery string", [dict(text="ab.", voice=S, delivery="intensity=1,pace=-0.5"), dict(text="ab.", voice=S, delivery="pace=-0.5,intensity=1")], True),
+        ("delivery default", [dict(text="ab.", voice=S), dict(text="ab.", voice=S, delivery="default"), dict(text="ab.", voice=S, delivery={}),
+                              dict(text="ab.", voice=S, delivery=dict(intensity=None, pace="default", pitch=" Auto "))], True),
+        ("delivery mapping", [dict(text="ab.", voice=S, delivery=dict(intensity=1, pace="-0.5")), dict(text="ab.", voice=S, delivery=dict(pitch=5))], True),
+        ("delivery fields", [dict(text="ab.", voice=S, intensity=1, pace=-0.5), dict(text="ab.", voice=S, delivery="intensity=1,pace=-0.5"),
+                             dict(text="ab.", voice=S, pitch=-9)], True),
+        ("empty record between", [dict(text="ab.", voice=S), dict(text="", voice=S, delivery="intensity=2"), dict(text="ab.", voice=S)], True),
+        ("empty record same key", [dict(text="ab.", voice=S), dict(text=None, voice=S), dict(text="ab.", voice=S)], True),
+        ("voice padded", [dict(text="ab.", voice="  scylla ")], True),
+        ("no normalize", [dict(text="ab 12.", voice=S)], False),
+        ("normalize", [dict(text="ab 12.", voice=S)], True),
+        ("no voice", [dict(text="ab.", voice=S), dict(text="ab.", voice=" ")], True),
+        ("missing voice", [dict(text="ab.")], True),
+        ("unknown voice", [dict(text="ab.", voice="nobody")], True),
+        ("unsupported language", [dict(text="ab.", voice=S, language="fr")], True),
+        ("emotion", [dict(text="ab.", voice=S, emotion="happy")], True),
+        ("fields and delivery", [dict(text="ab.", voice=S, intensity=1, delivery="pace=1")], True),
+        ("old keys", [dict(text="ab.", voice=S, delivery=dict(energy=1))], True),
+        ("old keys string", [dict(text="ab.", voice=S, delivery="valence=1")], True),
+        ("extra keys", [dict(text="ab.", voice=S, delivery=dict(tempo=1, speed=2, intensity=1))], True),
+        ("boolean", [dict(text="ab.", voice=S, delivery=dict(intensity=True))], True),
+        ("not a number", [dict(text="ab.", voice=S, delivery=dict(pace="fast"))], True),
+        ("not finite", [dict(text="ab.", voice=S, delivery=dict(pitch="nan"))], True),
+        ("not finite field", [dict(text="ab.", voice=S, pace="-inf")], True),
+        ("delivery number", [dict(text="ab.", voice=S, delivery=5)], True),
+        ("duplicate string", [dict(text="ab.", voice=S, delivery="intensity=1,intensity=2")], True),
+    ]
+    with tempfile.TemporaryDirectory() as tmp:
+        bundle = fakes._fake_bundle(Path(tmp), controls=controls)
+        files = _bundle_files(bundle)
+        runtime = ScyllasBandRuntime(fakes._fake_engine(1.0, **controls), bundle_dir=bundle, backend="onnx")
+        cases = []
+        for name, records, normalize in scenarios:
+            try:
+                plan = runtime.plan_records(records, normalize=normalize).to_dict()
+                cases.append(dict(name=name, records=records, normalize=normalize, plan=plan))
+            except ValueError as exc:
+                cases.append(dict(name=name, records=records, normalize=normalize, error=str(exc)))
+        records = [dict(text="ab. ab.", voice=S), dict(text="ab.", voice=S, delivery="intensity=1"), dict(text="", voice=S, pace=1),
+                   dict(text="ab ab.", voice=S), dict(text="ab.", voice=S)]
+        targets = []
+        for event in runtime.synthesize_stream(records, pause_ms=100.0, steps=1, seed=0):
+            if event.type == "audio_chunk":
+                zeros = 0
+                while zeros < event.audio.size and event.audio[zeros] == 0.0:
+                    zeros += 1
+                targets.append(dict(chunk_id=event.chunk.chunk_id, chain_id=event.chunk.chain_id, samples=int(event.audio.size), leading_zeros=zeros,
+                                    seed=event.metadata["seed"]))
+    return dict(bundle=files, cases=cases, pause=dict(records=records, pause_ms=100.0, targets=targets))
+
+
+def _bundle_files(bundle: Path) -> dict:
+    return {str(path.relative_to(bundle)): json.loads(path.read_text()) if path.suffix == ".json" else None
+            for path in sorted(bundle.rglob("*")) if path.is_file()}
+
+
+def _run_length(values) -> list:
+    """[[value, count], ...] of a float32 waveform (the fake decoders return constants)."""
+    out = []
+    for value in (float(v) for v in values):
+        if out and out[-1][0] == value:
+            out[-1][1] += 1
+        else:
+            out.append([value, 1])
+    return out
+
+
+def singing_cases() -> dict:
+    """The singing planner and renderer of scyllasband/singing.py on the fake v4 bundle of tests/test_runtime.py: scores, the
+    phrase plan (phones, durations, melody), what a sung phrase feeds the graphs and the song it returns. The fake G2P spells
+    letters (e -> o), so words use a, b, h, l, o, w and e; at 1200 bpm a beat is 0.05 s, so phrases fit the 16-frame buckets."""
+    import numpy as np
+    from scyllasband import singing
+    spec = importlib.util.spec_from_file_location("scyllasband_test_runtime", REPO / "tests" / "test_runtime.py")
+    fakes = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fakes)
+    score = dict(text="hello bob wow", bpm=1200, style="pop",
+                 notes=[["hello", "C4", 2], ["-", "rest", 6], ["bob~1", "D4", 1], ["bob~2", "E4", 1], ["wow", "G4", 2]])
+    scores = dict(
+        basic=score,
+        ballad=dict(score, style="ballad"),
+        syllables=dict(text="hellow how", bpm=1200, style="pop", notes=[["hel~1", "A3", 1], ["low~2", "B3", 1], ["how", "C#4", 2]]),
+        melisma=dict(bpm=1200, style="sung", notes=[["how~1", "Bb3", 1], ["how~2", "F#4", 1], ["-", "rest", 0.5], ["wow", "G5", 1.5]]),
+        continuous=dict(text="how bob wow hello below allow", bpm=1200, style="pop",
+                        notes=[["how", "C4", 1], ["bob", "D4", 1], ["wow", "E4", 1], ["hello", "F4", 1.5], ["below", "G4", 1], ["allow", "A4", 1]]),
+        string_numbers=dict(text=" Bob  WOW ", bpm="1200", style=" Pop ", notes=[["bob", "c4", "2"], ["wow", "d#4", 2.5]]),
+        many_rests=dict(text="bob how wow", bpm=1200, style="ballad",
+                        notes=[["-", "rest", 1], ["bob", "C3", 1], ["-", "r", 2], ["how", "E3", 1], ["-", "", 6], ["wow", "G3", 1], ["-", "rest", 1]]),
+    )
+    errors = [
+        [1, 2], dict(bpm=0, notes=[["a", "C4", 1]]), dict(bpm="fast", notes=[["a", "C4", 1]]), dict(notes=[["a", "C4", 1]]),
+        dict(bpm=100, style="jazz", notes=[["a", "C4", 1]]), dict(bpm=100, notes=[]), dict(bpm=100, notes="abc"),
+        dict(bpm=100, notes=[["a", "C4"]]), dict(bpm=100, notes=[["a", "C4", "long"]]), dict(bpm=100, notes=[["a", "C4", -1]]),
+        dict(bpm=100, notes=[["a", "H4", 1]]), dict(bpm=100, notes=[["a", "C", 1]]), dict(bpm=100, notes=[["a~2", "C4", 1]]),
+        dict(bpm=100, notes=[["a~x", "C4", 1]]), dict(bpm=100, notes=[["~1", "C4", 1]]), dict(bpm=100, notes=[["-", "rest", 1]]),
+        dict(text="other words", bpm=100, notes=[["a", "C4", 1]]), dict(bpm=100, notes=[["a~1", "C4", 1], ["-", "rest", 1], ["a~2", "D4", 1]]),
+    ]
+    parse = []
+    for name, data in scores.items():
+        parse.append(dict(name=name, score=data, expected=singing.parse_score(data).to_dict(), error=False))
+    for data in errors:
+        try:
+            singing.parse_score(data)
+            raise AssertionError(f"expected a ScoreError for {data}")
+        except singing.ScoreError:
+            parse.append(dict(name=json.dumps(data)[:60], score=data, error=True))
+    notes = []
+    for name in ["C4", "c4", "D#4", "Bb3", "bb3", "F#3", "E♭5", "G♯2", "B#3", "Cb4", "A-1", "C10", " G4 ", "rest", "-", "r", "", "REST",
+                 "H4", "C", "4C", "C#", "Cx4", "é4"]:
+        try:
+            notes.append(dict(name=name, midi=singing.note_to_midi(name), error=False))
+        except singing.ScoreError:
+            notes.append(dict(name=name, error=True))
+    names = [dict(midi=m, name=singing.midi_to_note(m)) for m in (-13, -1, 0, 11, 12, 59, 60, 61, 127, 128)]
+    registers = []
+    for pitched in ([60, 62, 64], [48], [72, 76, 79], [36, 40], [84, 88], [55, 67]):
+        for center in (None, 58.35, 50.0, 49.0, 59.0, 63.0):
+            data = dict(bpm=120, notes=[[f"w{i}", singing.midi_to_note(m), 1] for i, m in enumerate(pitched)])
+            registers.append(dict(score=data, center=center, shift=singing.register_shift(singing.parse_score(data), center)))
+    controls = dict(chunking=dict(min_target_frames=6, max_target_frames=12), span_conditioning=dict(context_max_phones=256, context_phones_each_side=8))
+    guided = json.loads(json.dumps(fakes.V4_DELIVERY_MODES))
+    guided["singing"].update(guidance=2.0, voice_midi_center=dict(scylla=63.0))
+    plans = []
+    for name, data in scores.items():
+        for register, transpose, pad, max_seconds in ((True, 0, 0.02, None), (False, 0, 0.02, None), (True, -5, 0.02, None), (True, 0, 0.01, 0.12)):
+            engine = fakes._fake_engine(v4=True)
+            try:
+                plan = singing.plan_song(data, engine, "scylla", "en_us", register=register, transpose=transpose, pad=pad, max_seconds=max_seconds)
+            except Exception as error:   # noqa: BLE001 - a phrase longer than the fake buckets
+                plans.append(dict(score=data, register=register, transpose=transpose, pad=pad, max_seconds=max_seconds, error=type(error).__name__))
+                continue
+            plans.append(dict(score=data, register=register, transpose=transpose, pad=pad, max_seconds=max_seconds, error=None,
+                              register_shift=plan.register_shift, mode_id=plan.mode_id, seconds=plan.seconds,
+                              phrases=[dict(start=p.phrase.start, end=p.phrase.end, text=p.phrase.text, phones=list(p.sentence.phones),
+                                            word_starts=list(p.sentence.word_starts), durations=list(p.durations), frames=p.frames,
+                                            melody=[float(v) for v in np.asarray(p.melody, np.float32).reshape(-1)]) for p in plan.phrases]))
+    sings = []
+    for bundle, data, kwargs in (("v4", score, {}), ("v4", dict(score, style="ballad"), {}), ("v4", score, dict(steps=2, sampler="euler", decoder="vocos")),
+                                 ("v4_guided", score, dict(steps=1, sampler="euler")), ("v4_guided", score, dict(steps=1, sampler="heun", guidance=1.0)),
+                                 ("v4_guided", scores["melisma"], dict(steps=1, sampler="euler", transpose=3))):
+        engine = fakes._fake_engine(v4=True, **({"delivery_modes": guided} if bundle == "v4_guided" else {}))
+        engine._fake.calls.clear()
+        result = singing.sing(engine, data, "scylla", "en_us", seed=5, pad=0.02, **kwargs)
+        calls = []
+        for call in engine._fake.calls:
+            row = dict(name=call["name"])
+            if call["name"].startswith("vector_estimator"):
+                row.update(mode=int(call["delivery_mode_id"][0]), melody_zero=bool((call["expanded_melody"] == 0).all()), time=float(call["time"][0]))
+            calls.append(row)
+        meta = result.metadata
+        sings.append(dict(bundle=bundle, score=data, options=kwargs, calls=calls, audio=_run_length(result.audio),
+                          metadata=dict(decoder=meta["decoder"], steps=meta["steps"], sampler=meta["sampler"], guidance=meta["guidance"],
+                                        mode=meta["mode"], mode_id=meta["mode_id"], register_shift=meta["register_shift"], transpose=meta["transpose"],
+                                        seconds=meta["seconds"], phrases=[dict(text=p["text"], frames=p["frames"], bucket=p["bucket"], seed=p["seed"],
+                                                                               seconds=p["seconds"], durations=p["durations"]) for p in meta["phrases"]])))
+    # Speech on the v4 bundle: the targets of the v3 loop, with delivery_mode_id = 0 on every flow call.
+    speech = []
+    for text, frames_per_phone in (("ab. ab ab ab ab.", 1.0), ("ab ab, ab ab ab; ab ab: ab ab ab, ab.", 1.0)):
+        engine = fakes._fake_engine(frames_per_phone, v4=True, **controls)
+        plan = plan_records(records_from_text(text, voice="scylla", language=None), resolve_language=lambda voice, language: "en_us")
+        targets = []
+        for event in synthesize_plan_stream(engine, plan, StreamOptions(steps=1, seed=0)):
+            if event.type == "audio_chunk":
+                meta = event.metadata
+                targets.append(dict(chunk_id=event.chunk.chunk_id, text=event.chunk.text, phones=meta["phones"], durations=meta["durations"],
+                                    latent_frames=meta["latent_frames"], prefix_frames=meta["prefix_frames"], delivery_mode=meta["delivery_mode"]))
+        modes = sorted({int(c["delivery_mode_id"][0]) for c in engine._fake.calls if c["name"].startswith("vector_estimator")})
+        speech.append(dict(chunks=[dict(chunk.to_dict(), delivery=delivery_spec(chunk.delivery)) for chunk in plan.chunks],
+                           frames_per_phone=frames_per_phone, targets=targets, flow_modes=modes))
+    bundles = {}
+    with tempfile.TemporaryDirectory() as tmp:
+        bundles["v4"] = _bundle_files(fakes._fake_bundle(Path(tmp) / "v4", v4=True))
+        bundles["v4_guided"] = _bundle_files(fakes._fake_bundle(Path(tmp) / "guided", v4=True, controls=dict(delivery_modes=guided)))
+        bundles["v4_speech"] = _bundle_files(fakes._fake_bundle(Path(tmp) / "speech", v4=True, controls=controls))
+        bundles["v3"] = _bundle_files(fakes._fake_bundle(Path(tmp) / "v3"))
+    return dict(bundles=bundles, parse=parse, notes=notes, names=names, registers=registers, plans=plans, sings=sings, speech=speech)
+
+
 def normalizer_cases() -> list[dict]:
     corpus = ["Meet me at 9 a.m. Then we leave.", "It ends at 5 p.m.", "Dr. Smith met Mrs. Jones on Main Dr. today.",
               "I paid $3.50, then £12 and 40€.", "On Jan. 5, 2024 we had 25% more; by 3/4/2025 it was 1/2.", "Call me at 10:30pm or 7:05 AM.",
@@ -233,7 +425,7 @@ def main() -> None:
     fixtures = dict(events=dict(token_to_id=TOKEN_TO_ID, cases=events_cases(rng)), durations=dict(cases=durations_cases(rng)),
                     context=dict(cases=context_cases(rng)), delivery=dict(cases=delivery_cases()), text=text_cases(),
                     normalizer=dict(cases=normalizer_cases()), unicode=dict(cases=unicode_cases()),
-                    targets=dict(choose=choose_cases(rng), streams=stream_cases()))
+                    targets=dict(choose=choose_cases(rng), streams=stream_cases()), singing=singing_cases(), records=records_cases())
     for name, data in fixtures.items():
         (OUT / f"{name}.json").write_text(json.dumps(data, ensure_ascii=False, indent=None, separators=(",", ":")) + "\n", encoding="utf-8")
         print(f"{OUT / name}.json")
