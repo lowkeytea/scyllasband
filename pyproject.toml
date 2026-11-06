@@ -7,7 +7,7 @@ name = "scyllasband"
 version = "3.0.0"
 description = "Inference runtime and bundle contract for Scylla's Band text-to-speech"
 requires-python = ">=3.10"
-dependencies = ["numpy>=1.24", "ai-edge-litert>=2.2", "huggingface_hub>=0.23"]
+dependencies = ["numpy>=1.24", "ai-edge-litert>=2.2,<2.3", "huggingface_hub>=0.23"]
 
 [project.optional-dependencies]
 onnx = ["onnxruntime>=1.18"]

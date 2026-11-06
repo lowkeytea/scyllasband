@@ -106,15 +106,15 @@ python -m scyllasband plan --voice scylla "Print the sentence plan as JSON."
 
 | Bundle | Used on | Download | Runtime package |
 | --- | --- | --- | --- |
-| Core ML | Apple silicon Macs (macOS 15 and later); iOS and iPadOS 18 and visionOS 2 apps | 163 MB | `coremltools`, installed the first time a Core ML bundle runs (or `pip install -e ".[coreml]"`) |
-| Core AI | iOS, iPadOS and visionOS 27 apps; also runs on macOS 27 | 178 MB | `coreai-core`, installed the first time a Core AI bundle runs (or `pip install -e ".[coreai]"`) |
-| LiteRT | Linux, Windows, Android and Intel Macs | 229 MB | `ai-edge-litert` (installed with this package) |
-| ONNX Runtime | anywhere ONNX Runtime runs | 291 MB | `onnxruntime`, installed the first time you use `--backend onnx` (or `pip install -e ".[onnx]"`) |
-| WebGPU (ONNX) | browsers through ONNX Runtime Web; NVIDIA GPUs through ONNX Runtime with CUDA | 291 MB | `onnxruntime-gpu` for NVIDIA GPUs: `pip install -e ".[cuda]"` |
+| Core ML | Apple silicon Macs (macOS 15 and later); iOS and iPadOS 18 and visionOS 2 apps | 406 MB | `coremltools`, installed the first time a Core ML bundle runs (or `pip install -e ".[coreml]"`) |
+| Core AI | iOS, iPadOS and visionOS 27 apps; also runs on macOS 27 | 418 MB | `coreai-core`, installed the first time a Core AI bundle runs (or `pip install -e ".[coreai]"`) |
+| LiteRT | Linux, Windows, Android and Intel Macs | 470 MB | `ai-edge-litert` 2.2 (installed with this package; the native runtime links LiteRT 2.2.0) |
+| ONNX Runtime | anywhere ONNX Runtime runs | 1.1 GB | `onnxruntime`, installed the first time you use `--backend onnx` (or `pip install -e ".[onnx]"`) |
+| WebGPU (ONNX) | browsers through ONNX Runtime Web; NVIDIA GPUs through ONNX Runtime with CUDA | 782 MB | `onnxruntime-gpu` for NVIDIA GPUs: `pip install -e ".[cuda]"` |
 
-`python -m scyllasband download` fetches the Core ML bundle on an Apple silicon Mac and the LiteRT bundle elsewhere. A Mac that can build apps for iOS, iPadOS or visionOS 27 (macOS 27, or an Xcode with those SDKs) is also offered the Core AI bundle those apps use; the Mac itself keeps running Core ML. `--flavor` downloads a particular bundle. Commands use the installed bundle for the machine; `--backend` and `--bundle` select another, for example `--backend coreai` on macOS 27. Every bundle holds INT8 weights for the transformers and the G2P; LiteRT, Core ML and Core AI also quantize the vocoder. `--threads` sets the CPU threads per graph; LiteRT uses the CPUs available, up to four, as the native runtime does. Sampling uses Euler with 4 steps by default (`--sampler`, `--steps`).
+`python -m scyllasband download` fetches the Core ML bundle on an Apple silicon Mac and the LiteRT bundle elsewhere. A Mac that can build apps for iOS, iPadOS or visionOS 27 (macOS 27, or an Xcode with those SDKs) is also offered the Core AI bundle those apps use; the Mac itself keeps running Core ML. `--flavor` downloads a particular bundle. Commands use the installed bundle for the machine; `--backend` and `--bundle` select another, for example `--backend coreai` on macOS 27. The LiteRT, Core ML, Core AI and WebGPU bundles hold 8-bit weights for the transformers and the G2P (the ONNX bundle is full precision); LiteRT, Core ML and Core AI also quantize the speech vocoder, and keep the singing decoder (BigVGAN) in FP16. `--threads` sets the CPU threads per graph; LiteRT uses the CPUs available, up to four, as the native runtime does. Sampling uses Euler with 4 steps by default (`--sampler`, `--steps`).
 
-On an NVIDIA GPU, ONNX Runtime runs the WebGPU bundle, whose 8-bit weights stay on the GPU (the ONNX bundle's dynamic INT8 falls back to the CPU there). Install ONNX Runtime for CUDA in an environment without the CPU-only `onnxruntime` package; the `cuda` extra brings the CUDA and cuDNN libraries it needs:
+On an NVIDIA GPU, ONNX Runtime runs the WebGPU bundle, whose 8-bit weights stay on the GPU (`MatMulNBits`; dynamic INT8 would fall back to the CPU there). Install ONNX Runtime for CUDA in an environment without the CPU-only `onnxruntime` package; the `cuda` extra brings the CUDA and cuDNN libraries it needs:
 
 ```bash
 pip install -e ".[cuda]"

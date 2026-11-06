@@ -252,7 +252,7 @@ def _default_bundle(args: argparse.Namespace) -> Path:
     models_dir = getattr(args, "models_dir", DEFAULT_MODELS_DIR)
     flavor = getattr(args, "backend", None) or default_installed_flavor(models_dir)
     if flavor == "onnx" and wants_gpu(getattr(args, "compute_units", None)):
-        flavor = "webgpu"   # 8-bit weights that run on CUDA; the ONNX bundle's dynamic INT8 falls back to the CPU there
+        flavor = "webgpu"   # 8-bit weights (MatMulNBits) that run on CUDA, smaller than the full-precision ONNX bundle
     if flavor is None:
         raise FileNotFoundError(f"No model installed under {Path(models_dir).resolve()}. Run: python -m scyllasband download")
     path = bundle_dir(models_dir, flavor)

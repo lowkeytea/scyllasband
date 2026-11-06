@@ -90,7 +90,7 @@ def choose_flavors(*, interactive: bool, ask=input, out=sys.stderr) -> list[str]
               "python -m scyllasband download --flavor coreai", file=out)
         return ["coreml"]
     print("This Mac runs the Core ML bundle. It can also build apps for iOS, iPadOS or visionOS 27, which use the Core AI "
-          "bundle (about 155 MB).", file=out)
+          "bundle (about 420 MB).", file=out)
     while True:
         try:
             answer = ask("Download the Core AI bundle too? [y/N] ").strip().lower()
