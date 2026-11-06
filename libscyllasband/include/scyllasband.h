@@ -1,6 +1,6 @@
 /*
  * Scylla's Band native runtime: text-to-speech for scyllasband_measured_controls_v3 and _v4 bundles, and singing from a
- * melody score on v4 bundles (scyllasband_sing).
+ * melody score on v4 bundles (scyllasband_sing, scyllasband_sing_stream).
  *
  * One graph backend is linked into each build: ONNX Runtime (bundle flavor "onnx"), LiteRT ("litert"), or on Apple
  * platforms Core ML and Core AI ("coreml", iOS 18 / macOS 15; "coreai", iOS 27 / macOS 27). scyllasband_backend() names it.

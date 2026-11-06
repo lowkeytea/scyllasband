@@ -165,10 +165,9 @@ scyllasband_sing_stream(runtime, &request, on_event, user_data);
 A score is `{"text", "bpm", "style": "pop" | "ballad", "notes": [[label, note, beats], ...]}`: a note is a pitch name with
 octave (`C4`, `F#3`, `Bb3`) or `rest` (label `-`), and a word over several notes is numbered (`ba~1`, `by~2`). The song is
 split into phrases at rests of 0.25 s or more, moved by octaves into the voice's sung range (`use_register`) after
-`transpose`, and each phrase is sung with the bundle's singing settings (`v4-20261106`: 4 Euler steps without guidance;
-`v4-20261105`: 8 Heun steps, guidance 2) through BigVGAN, or
-Vocos with `decoder = "vocos"`. Phrase *i* draws its noise from `seed + i`. Score parse, fit and preview don't wait for a
-request in progress, so an editor can call them while a song renders.
+`transpose`, and each phrase is sung with the bundle's singing settings (`v4-20261106`: 4 Euler steps without guidance)
+through BigVGAN, or Vocos with `decoder = "vocos"`. Phrase *i* draws its noise from `seed + i`. Score parse, fit and
+preview don't wait for a request in progress, so an editor can call them while a song renders.
 
 On LiteRT each bucket graph a process opens keeps its own working memory, about 2 MB per latent frame for BigVGAN, so a
 song whose phrases fall into several buckets holds several. A decoder window decodes every phrase through one bucket graph
@@ -183,9 +182,9 @@ the LiteRT bundle's BigVGAN as the one 256-frame signature peaks at 1.4 GB on th
 speed. FP16 BigVGAN weights halve the download but cost memory on LiteRT's CPU path: XNNPACK expands them to FP32 when
 it loads them, and its FP16 compute mode cannot use the weight cache in LiteRT 2.2.0. They suit the GPU: a singing LiteRT
 bundle can name BigVGAN as its one GPU graph (`controls.litert.gpu: {"graphs": ["vocoder_bigvgan"], "precision":
-"fp16_fp32_accumulation"}`), so `SCYLLASBAND_ACCELERATOR_AUTO` sings through the GPU and speaks on the CPU. With
-datasetGen's channels-last BigVGAN graph (`full_retrain/bigvgan_nwc.py`; the v4-20261105 graph does not run on the GPU
-delegate) the Fold renders the 71 s song in 33 s at 764 MB, against 90 s on its CPU.
+"fp16_fp32_accumulation"}`), so `SCYLLASBAND_ACCELERATOR_AUTO` sings through the GPU and speaks on the CPU. With the
+release's channels-last BigVGAN graph (BigVGAN's usual channels-first graph does not run on the GPU delegate) the Fold
+renders the 71 s song in 19 s at 764 MB, against 71 s on its CPU.
 
 `ScyllasBandRecordsRequest` and `ScyllasBandSingRequest` start with `struct_size`; initialize requests with their
 init function so a caller built against another layout gets an error instead of misread fields. Every 3.0.0 type and

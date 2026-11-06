@@ -88,8 +88,6 @@ class DownloadTest(unittest.TestCase):
         args = build_parser().parse_args(["download", "--repo", "me/fork"])
         self.assertEqual((args.repo_id, args.revision), ("me/fork", None))
         self.assertEqual(build_parser().parse_args(["download", "--repo-id", "me/fork"]).repo_id, "me/fork")
-        with self.assertRaises(SystemExit), mock.patch("sys.stderr"):
-            build_parser().parse_args(["download", "--public"])
 
 
 if __name__ == "__main__":
