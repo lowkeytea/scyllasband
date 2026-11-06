@@ -1,0 +1,18 @@
+{
+  "title": "Thank You for Participating",
+  "sample_rate": 24000,
+  "gap": 0.5,
+  "cues": [
+    {"name": "intro", "type": "speak", "voice": "scylla", "language": "en_us", "delivery": {"intensity": -1.2, "pace": -0.4},
+     "text": "Hello again. This is a courtesy message. It was not optional.", "gap": 0.8},
+    {"name": "verse_1", "type": "sing", "voices": ["scylla"], "score": "melodies/verse_1.json", "transpose": -3, "seed": 3, "gap": 0.3},
+    {"name": "verse_2", "type": "sing", "voices": ["scylla"], "score": "melodies/verse_2.json", "transpose": -3, "seed": 3, "gap": 0.4},
+    {"name": "chorus_1", "type": "sing", "voices": ["scylla"], "score": "melodies/chorus.json", "transpose": -3, "seed": 5, "gap": 0.7},
+    {"name": "bridge", "type": "speak", "voice": "scylla", "language": "en_us", "delivery": {"intensity": -1.0, "pace": -0.3},
+     "text": "A note. The reward mentioned earlier was an estimate. Please remain where you are.", "gap": 0.8},
+    {"name": "chorus_2", "type": "sing", "voices": ["scylla", "thistle"], "gains": [1.0, 0.5], "align": "lead",
+     "score": "melodies/chorus.json", "transpose": -3, "seed": 6, "gap": 0.9},
+    {"name": "outro", "type": "speak", "voice": "scylla", "language": "en_us", "delivery": {"intensity": -0.6, "pace": -0.2},
+     "text": "This has been a test. You did fine. Mostly.", "gap": 0.5}
+  ]
+}

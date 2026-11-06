@@ -1,0 +1,29 @@
+# Face Down: the sung sections. Compile with: python examples/write_scores.py examples/face_down
+# Written around C4 and transposed -3 in script.json, which puts Poppy and Gwen at their sung centres; Felix doubles the
+# chorus an octave below (the runtime moves each voice into its own octave).
+
+[verse_1] bpm=120 style=pop
+Phone:C4:.5 face:D4:.5 down:E4:1 on:D4:.5 the:C4:.5 ta-ble:D4,C4:.5,.5 to-night:A3,C4:.5,2 |1.5
+No-bo-dy:E4,E4,D4:.5,.5,.5 buzz-ing:C4,D4:.5,1 no-bo-dy:E4,E4,D4:.5,.5,.5 on:C4:.5 the:A3:.5 line:C4:1.5 |1
+Light:C4:.5 in:D4:.5 the:E4:.5 win-dow:G4,E4:.5,1 the:D4:.5 ci-ty's:E4,D4:.5,.5 a-wake:C4,D4:.5,2 |1
+I've:A3:.5 got:C4:.5 no-where:D4,C4:.5,.5 to:A3:.5 be:C4:1 and:D4:.5 that's:E4:.5 o-kay:D4,C4:.5,2 |1
+
+[pre_1] bpm=120 style=pop
+Hands:E4:1 up:E4:1 hands:F4:1 up:F4:1 no-thing:G4,G4:.5,.5 in:G4:.5 my:G4:.5 po-ckets:G4,F4:.5,.5 |1
+Face:F4:1 down:F4:1 face:G4:1 down:G4:1 here:G4:.5 it:F4:.5 comes:E4:2 |1
+
+[chorus] bpm=120 style=pop
+Put:E4:.5 it:E4:.5 face:G4:1 down:E4:1.5 we're:D4:.5 in:E4:.5 the:D4:.5 room:E4:1 now:C4:1 |1
+No:E4:.5 one:E4:.5 to:D4:.5 an-swer:E4,G4:.5,1 no:E4:.5 one:D4:.5 a-round:C4,D4:.5,2.5 |1
+Put:E4:.5 it:E4:.5 face:G4:1 down:E4:1.5 let:D4:.5 the:E4:.5 night:G4:1 get:E4:.5 loud:D4:1 |1
+No-thing:E4,E4:.5,.5 to:D4:.5 up-load:E4,G4:.5,1 I'm:D4:.5 here:E4:.5 right:D4:.5 now:C4:2.5 |1
+
+[verse_2] bpm=120 style=pop
+Some-bo-dy's:C4,D4,E4:.5,.5,.5 dan-cing:D4,C4:.5,1 some-bo-dy's:D4,E4,D4:.5,.5,.5 not:C4:2 |1.5
+I:E4:.5 lost:E4:1 my:D4:.5 coat:C4:1 and:D4:.5 I:E4:.5 like:E4:.5 it:D4:.5 a:C4:.5 lot:A3:1.5 |1
+Three:C4:.5 in:D4:.5 the:E4:.5 mor-ning:G4,E4:.5,1 and:D4:.5 no-bo-dy's:E4,D4,C4:.5,.5,.5 gone:D4:2 |1
+Bat-te-ry's:A3,C4,D4:.5,.5,.5 low:C4:1 but:A3:.5 the:C4:.5 lights:D4:.5 are:E4:.5 still:D4:.5 on:C4:2 |1
+
+[pre_2] bpm=120 style=pop
+Hands:E4:1 up:E4:1 hands:F4:1 up:F4:1 no-thing:G4,G4:.5,.5 in:G4:.5 my:G4:.5 po-ckets:G4,F4:.5,.5 |1
+Face:F4:1 down:F4:1 face:G4:1 down:G4:1 here:G4:.5 it:F4:.5 comes:E4:2 |1

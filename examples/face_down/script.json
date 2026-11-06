@@ -1,0 +1,144 @@
+{
+  "title": "Face Down",
+  "sample_rate": 24000,
+  "gap": 0.45,
+  "cues": [
+    {
+      "name": "intro",
+      "type": "speak",
+      "voice": "ink",
+      "language": "en_gb",
+      "delivery": {
+        "intensity": 0.3,
+        "pace": 0.2
+      },
+      "text": "Right. One rule tonight: phones face down on the table, and nobody checks. Here we go.",
+      "gap": 0.5
+    },
+    {
+      "name": "verse_1",
+      "type": "sing",
+      "voices": [
+        "poppy"
+      ],
+      "score": "melodies/verse_1.json",
+      "transpose": -3,
+      "seed": 4,
+      "gap": 0.2
+    },
+    {
+      "name": "pre_1",
+      "type": "sing",
+      "voices": [
+        "poppy"
+      ],
+      "score": "melodies/pre_1.json",
+      "transpose": -3,
+      "seed": 3,
+      "gap": 0.15
+    },
+    {
+      "name": "chorus_1",
+      "type": "sing",
+      "voices": [
+        "poppy",
+        "gwen",
+        "felix"
+      ],
+      "gains": [
+        1.0,
+        0.5,
+        0.5
+      ],
+      "align": "lead",
+      "score": "melodies/chorus.json",
+      "transpose": -3,
+      "seed": 5,
+      "gap": 0.5
+    },
+    {
+      "name": "verse_2",
+      "type": "sing",
+      "voices": [
+        "gwen"
+      ],
+      "score": "melodies/verse_2.json",
+      "transpose": -3,
+      "seed": 3,
+      "gap": 0.2
+    },
+    {
+      "name": "pre_2",
+      "type": "sing",
+      "voices": [
+        "gwen"
+      ],
+      "score": "melodies/pre_2.json",
+      "transpose": -3,
+      "seed": 4,
+      "gap": 0.15
+    },
+    {
+      "name": "chorus_2",
+      "type": "sing",
+      "voices": [
+        "poppy",
+        "gwen",
+        "felix"
+      ],
+      "gains": [
+        1.0,
+        0.5,
+        0.5
+      ],
+      "align": "lead",
+      "score": "melodies/chorus.json",
+      "transpose": -3,
+      "seed": 6,
+      "gap": 0.5
+    },
+    {
+      "name": "bridge",
+      "type": "speak",
+      "voice": "priya",
+      "language": "en_us",
+      "delivery": {
+        "intensity": 1.0,
+        "pace": 0.3
+      },
+      "text": "Okay, okay, okay. Phones down, hands up, and this time, everybody.",
+      "gap": 0.4
+    },
+    {
+      "name": "chorus_3",
+      "type": "sing",
+      "voices": [
+        "poppy",
+        "gwen",
+        "felix"
+      ],
+      "gains": [
+        1.0,
+        0.5,
+        0.5
+      ],
+      "align": "lead",
+      "score": "melodies/chorus.json",
+      "transpose": -3,
+      "seed": 7,
+      "gap": 0.8
+    },
+    {
+      "name": "outro",
+      "type": "speak",
+      "voice": "ink",
+      "language": "en_gb",
+      "delivery": {
+        "intensity": -0.3,
+        "pace": 0.0
+      },
+      "text": "Nobody checked. I'm as surprised as you are.",
+      "gap": 0.5
+    }
+  ]
+}

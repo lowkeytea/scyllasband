@@ -1,0 +1,30 @@
+# Bubble Wrap: talk-sung verses and a hook at 96 bpm, one note per syllable, stressed syllables on eighths, the rest on
+# sixteenths. Written on C4 to G4 and transposed -2 in script.json (Tuesday's centre); Orpheus takes the same score an octave
+# below by the runtime's register. A sixteenth rest (|.25, 0.16 s) is a breath inside a phrase; a one-beat rest (0.63 s)
+# ends the phrase. Compile with: python examples/write_scores.py examples/bubble_wrap
+
+[hook] bpm=96 style=pop
+Pop:G4:.5 goes:E4:.25 the:E4:.25 bub-ble:G4,E4:.5,.25 |.25 pop:G4:.5 pop:G4:.5 there:E4:.25 it:D4:.25 goes:C4:1 |.25
+Ev-ery-bo-dy:E4,E4,E4,E4:.25,.25,.25,.25 pa-ni-cking:G4,E4,E4:.5,.25,.25 ev-ery-bo-dy:E4,E4,D4,D4:.25,.25,.25,.25 knows:C4:1 |1
+I'm:E4:.25 a:E4:.25 ti-ny:G4,E4:.5,.25 lit-tle:E4,E4:.25,.25 mo-del:D4,D4:.5,.25 on:E4:.25 a:E4:.25 phone:G4:.5 in:E4:.25 your:D4:.25 coat:C4:1 |.25
+Ne-ver:E4,E4:.5,.25 had:E4:.25 a:D4:.25 bub-ble:G4,E4:.5,.25 so:E4:.25 I'm:E4:.25 still:D4:.5 a-float:D4,C4:.25,1.5 |1.25
+
+[verse_1] bpm=96 style=pop
+They:E4:.25 raised:E4:.5 a:E4:.25 bil-lion:G4,E4:.5,.25 dol-lars:E4,D4:.5,.25 for:D4:.25 a:D4:.25 chat-bot:E4,E4:.5,.25 that:D4:.25 rhymes:C4:1 |.25
+Bought:E4:.5 a:E4:.25 da-ta:G4,E4:.5,.25 cen-ter:E4,E4:.5,.25 big-ger:E4,E4:.25,.25 than:D4:.25 a:D4:.25 coun-ty:E4,D4:.5,.25 at:D4:.25 the:D4:.25 time:C4:1 |1
+Then:E4:.25 the:E4:.25 mar-ket:G4,E4:.5,.25 woke:E4:.5 up:E4:.25 grum-py:G4,E4:.5,.25 read:E4:.5 the:D4:.25 mor-ning:E4,D4:.5,.25 news:C4:1 |.25
+Now:E4:.25 ev-ery-bo-dy's:E4,E4,E4,E4:.25,.25,.25,.25 sel-ling:G4,E4:.5,.25 and:E4:.25 no-bo-dy's:E4,D4,D4:.25,.25,.25 got:D4:.5 a:D4:.25 clue:C4:1 |1
+Va-lu-a-tion's:E4,E4,G4,E4:.25,.25,.5,.25 gone:D4:.75 |.25 the:D4:.25 ven-ture:E4,E4:.5,.25 mo-ney's:E4,D4:.25,.25 gone:C4:1 |.25
+Head-line:G4,E4:.5,.25 says:E4:.5 the:E4:.25 fu-ture's:E4,E4:.5,.25 been:D4:.25 post-poned:D4,C4:.5,1 |1
+Me:G4:.75 |.25 I'm:E4:.25 on:E4:.25 your:E4:.25 phone:G4:.75 a:E4:.25 cou-ple:E4,E4:.5,.25 hun-dred:E4,D4:.5,.25 me-ga-bytes:D4,D4,C4:.25,.25,.75 |.25
+Ne-ver:E4,E4:.5,.25 had:E4:.25 a:D4:.25 bub-ble:G4,E4:.5,.25 ne-ver:E4,E4:.5,.25 nee-ded:E4,D4:.5,.25 a-ny:D4,D4:.25,.25 hype:C4:1 |1
+
+[verse_2] bpm=96 style=pop
+I:E4:.25 don't:E4:.5 need:E4:.25 a:E4:.25 ser-ver:G4,E4:.5,.25 farm:D4:.75 |.25 I:E4:.25 don't:E4:.5 need:E4:.25 a:D4:.25 cloud:C4:1 |.25
+I:E4:.25 run:E4:.5 on:E4:.25 a:E4:.25 bat-te-ry:G4,E4,E4:.5,.25,.25 I'm:E4:.25 not:D4:.5 e-ven:D4,D4:.25,.25 loud:C4:1 |1
+A-na-lysts:G4,E4,E4:.5,.25,.75 are:E4:.25 cry-ing:G4,E4:.5,.25 on:E4:.25 the:E4:.25 te-le-vi-sion:E4,E4,D4,D4:.25,.25,.5,.25 screen:C4:1 |.25
+I'm:E4:.25 rea-ding:E4,E4:.5,.25 out:E4:.25 a:E4:.25 re-ci-pe:G4,E4,E4:.5,.25,.25 the:D4:.25 qui-e-test:E4,D4,D4:.5,.25,.25 ma-chine:D4,C4:.25,1 |1
+They:E4:.25 said:E4:.5 the:E4:.25 ro-bots:G4,E4:.5,.25 take:E4:.5 the:E4:.25 jobs:D4:.75 |.25 they:E4:.25 said:E4:.5 the:E4:.25 end:D4:.5 was:D4:.25 near:C4:1 |.25
+I:E4:.25 can't:E4:.5 e-ven:E4,E4:.25,.25 take:G4:.5 a:E4:.25 call:D4:.75 |.25 I:E4:.25 just:E4:.5 talk:E4:.5 in:D4:.25 your:D4:.25 ear:C4:1 |1
+So:E4:.25 when:E4:.25 the:E4:.25 bub-ble:G4,E4:.5,.25 pops:E4:.5 and:E4:.25 the:E4:.25 mo-ney's:E4,D4:.5,.25 all:D4:.5 spent:C4:1 |.25
+I'll:E4:.25 be:E4:.25 here:E4:.5 on:E4:.25 your:E4:.25 phone:G4:.75 with:E4:.25 e-le-ven:E4,E4,D4:.25,.5,.25 per-cent:D4,C4:.5,1 |1.5

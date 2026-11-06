@@ -30,6 +30,7 @@ Every cue is rendered once into `out/cues/<name>.wav` and reused, so after editi
 python examples/ghost_in_the_machine/make_track.py --only chorus
 python examples/ghost_in_the_machine/make_track.py --force                       # everything again
 python examples/ghost_in_the_machine/make_track.py --bundle <dir> --backend onnx  # another bundle or backend
+python examples/ghost_in_the_machine/make_track.py --script examples/face_down/script.json --out out/face_down.wav   # any piece
 ```
 
 On a desktop CPU the sung cues take about real time to render (the singing decoder is the heavy part); the spoken cues
