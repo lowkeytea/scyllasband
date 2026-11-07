@@ -1,0 +1,14 @@
+{
+  "text": "up and down and up and down",
+  "bpm": 108,
+  "style": "pop",
+  "notes": [
+    ["up", "C3", 0.5],
+    ["and", "C5", 0.5],
+    ["down", "C3", 0.5],
+    ["and", "C5", 0.5],
+    ["up", "C3", 0.5],
+    ["and", "C5", 0.5],
+    ["down", "C3", 1.5]
+  ]
+}
