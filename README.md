@@ -8,6 +8,9 @@ Delivery is controlled with **intensity, pace and pitch**. The emotion comes fro
 
 - **[Listen to the voices](https://lowkeytea.dev/scyllasband/samples/)**: every voice saying hello, playing a scene and singing a chorus, four songs built from scores, long-form narration and a nine-voice dialogue in six languages.
 - **[Try it in your browser](https://lowkeytea.dev/scyllasband/demo/)**: the runtime compiled to WebAssembly, with the model downloaded once.
+- **[Watch the launch video](https://youtu.be/GHkj44MaB9Y)**: the voices joking in six languages and then singing, all fourteen in the last chorus; every voice and every sung note is the model.
+- **[Make It Sing](https://youtu.be/e6yHVbkVcTs)**: a three-minute singing tutorial for people who don't read music; its scores are in [examples/make_it_sing](examples/make_it_sing/README.md).
+- More videos and tutorials are on the [Lowkey Tea YouTube channel](https://www.youtube.com/@LowkeyTea-dev).
 - Join the [Scylla's Band Discord](https://discord.gg/mBhpn7WB5N) for release updates, help, and community discussion.
 
 ## Highlights
@@ -241,6 +244,8 @@ An installed package also provides `scyllasband-sing`. A score is the lyric, the
 - Two styles: `pop` (the sung delivery) and `ballad` (slower, sustained). The style picks the delivery mode the model was trained with; the notes set the pitch and the timing.
 - Phrases are split at rests of 0.25 s or more and rendered one at a time, up to about ten seconds each (less when the bundle's largest bucket is shorter), so put a rest between lines. The whole song is moved by octaves into the voice's sung range (`--no-register` keeps the written octave), so write in any octave; `--transpose N` adds N semitones first, to put a song in the voice's key (a voice sings most accurately within about five semitones of its centre, which the bundle lists per voice).
 
+New to music? [Make It Sing](https://youtu.be/e6yHVbkVcTs) builds a score from nothing, shows what bad values do (the runtime's own errors, a long word crammed onto one note, bpm 400) and stretches one tune over a whole song; [examples/make_it_sing](examples/make_it_sing/README.md) has every score from it.
+
 Singing uses the bundle's singing settings (`v4-20261106`: 4 Euler steps without guidance, the flow distilled from guided 8-step Heun sampling, so a phrase costs the flow what a spoken passage does; the BigVGAN decoder where the bundle carries it; `--steps`, `--sampler`, `--guidance` and `--decoder` override them) and the score's timing in place of the duration and pitch predictors. `--turboSing` (same as `--decoder vocos`) decodes with Vocos, the speech decoder: decoding then costs about as much as for speech instead of most of the render, at the price of some harmonic artefacts on sustained notes in some voices. In Python, `runtime.sing(score, voice_id, language=None, seed=None, steps=None, sampler=None, decoder=None)` returns the same `SynthesisResult` as `synthesize`, with the phrase plan in `metadata["phrases"]`; `runtime.supports_singing` tells whether the loaded bundle can sing. Singing requires a v4 bundle (graph contract `scyllasband_measured_controls_v4`); v3 bundles speak exactly as before and report that they cannot sing.
 
 ## Voices and languages
@@ -304,7 +309,7 @@ Latent-length buckets are 128, 256, 384, 512, 768 and 1024 frames (about 2.7 to 
 
 ## Native and mobile integration
 
-`libscyllasband/` is the C++ runtime for the same bundles, built against LiteRT, ONNX Runtime, or Core ML and Core AI on Apple platforms; see [its README](libscyllasband/README.md). The [Android](examples/android/README.md) example runs the LiteRT bundle; the [iOS](examples/ios/README.md) example runs Core AI on iOS 27 and Core ML on iOS 18–26 through the `ScyllasBandKit` pod. Two singing tutorials sit beside them: [Ghost in the Machine](examples/ghost_in_the_machine/README.md) (a spoken-and-sung piece built step by step, with the melody format and how speech and song are merged) and [Kitchen Patter](examples/kitchen_patter/README.md) (fast talk-singing from one score).
+`libscyllasband/` is the C++ runtime for the same bundles, built against LiteRT, ONNX Runtime, or Core ML and Core AI on Apple platforms; see [its README](libscyllasband/README.md). The [Android](examples/android/README.md) example runs the LiteRT bundle; the [iOS](examples/ios/README.md) example runs Core AI on iOS 27 and Core ML on iOS 18–26 through the `ScyllasBandKit` pod. Singing tutorials sit beside them: [Make It Sing](examples/make_it_sing/README.md) (the scores from the beginner's video: what a score means, what breaks it, a longer song), [Ghost in the Machine](examples/ghost_in_the_machine/README.md) (a spoken-and-sung piece built step by step, with the melody format and how speech and song are merged), [Kitchen Patter](examples/kitchen_patter/README.md) (fast talk-singing from one score), and three pieces built from score sources: [Face Down](examples/face_down/README.md) (a pop song, three voices on the chorus), [Bubble Wrap](examples/bubble_wrap/README.md) (talk-singing, two voices trading verses) and [Thank You for Participating](examples/thank_you/README.md) (a ballad).
 
 ## Validation and limitations
 
@@ -319,8 +324,9 @@ See [the model card](MODEL_CARD.md) for the model contract.
 ```text
 scyllasband/          Python API, CLI, first-run setup, download, bundle contract and execution
 libscyllasband/       C++ runtime with a C API, for LiteRT and ONNX Runtime
-examples/             Android and iOS applications; the singing pieces, each a tutorial (ghost_in_the_machine, kitchen_patter,
-                      face_down, bubble_wrap, thank_you) and write_scores.py, which compiles a score source into melody JSON
+examples/             Android and iOS applications; the singing pieces, each a tutorial (make_it_sing, ghost_in_the_machine,
+                      kitchen_patter, face_down, bubble_wrap, thank_you) and write_scores.py, which compiles a score source
+                      into melody JSON
 data/                 example texts and a dialogue script
 tests/                runtime tests (python -m pytest tests)
 MODEL_CARD.md         model card for the current release
