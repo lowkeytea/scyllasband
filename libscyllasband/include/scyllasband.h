@@ -147,7 +147,8 @@ SCYLLASBAND_API void scyllasband_cancel(ScyllasBandRuntime* runtime);
    records_json is a JSON array of {"text", "voice", "language"?, "delivery"?, "intensity"?, "pace"?, "pitch"?} objects: the
    delivery as a control=value string or a {"intensity", "pace", "pitch"} mapping, or the controls as fields (not both);
    omitted controls take the voice's default. Consecutive records with the same voice, language and delivery are spoken as one
-   continuous chain; a change of any starts a new chain (with pause_ms of silence before it). Sentence i of the plan draws its
+   continuous chain; a change of any starts a new chain (with pause_ms of silence before it). A chain that changes only the
+   delivery continues from the previous one's text, acoustics and waveform when pause_ms is 0. Sentence i of the plan draws its
    noise from seed + i, across records. */
 typedef struct {
     uint32_t struct_size;      /* sizeof(ScyllasBandRecordsRequest): set by scyllasband_records_request_init, checked by every call */

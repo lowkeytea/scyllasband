@@ -10,6 +10,7 @@
 #include <map>
 #include <optional>
 #include <random>
+#include <memory>
 #include <set>
 #include <stdexcept>
 
@@ -72,6 +73,37 @@ public:
         return complete() && index + 1 == phones_.size();
     }
 
+    // The chains spoken just before and after this one by the same voice in the same language (only the delivery changes):
+    // their text is context for this chain's targets, and the audio continues across the change.
+    void link(ChainStream* previous, ChainStream* following) {
+        if (previous != nullptr) previous_ = previous;
+        if (following != nullptr) following_ = following;
+    }
+    bool continues() const { return previous_ != nullptr; }
+
+    // The last `count` context phones of this chain (already spoken), reaching into the chains before it.
+    std::vector<int64_t> context_tail(std::size_t count) const {
+        std::vector<int64_t> ids = engine_.context_ids(phones_);
+        if (ids.size() > count) ids.erase(ids.begin(), ids.end() - static_cast<std::ptrdiff_t>(count));
+        if (ids.size() < count && previous_ != nullptr) {
+            std::vector<int64_t> lead = previous_->context_tail(count - ids.size());
+            ids.insert(ids.begin(), lead.begin(), lead.end());
+        }
+        return ids;
+    }
+
+    // The first `count` context phones of this chain, phonemized only as far as needed, reaching into the next.
+    std::vector<int64_t> context_head(std::size_t count) {
+        while (!complete() && spoken_from(0) < count) append(*chunks_[pieces_.size()]);
+        std::vector<int64_t> ids = engine_.context_ids(phones_);
+        if (ids.size() > count) ids.resize(count);
+        if (ids.size() < count && following_ != nullptr) {
+            const std::vector<int64_t> rest = following_->context_head(count - ids.size());
+            ids.insert(ids.end(), rest.begin(), rest.end());
+        }
+        return ids;
+    }
+
     // The target [start, end] (silence to silence) with its context.
     Sentence sentence(std::size_t start, std::size_t end) {
         const std::size_t reach = engine_.context_phones();
@@ -88,8 +120,16 @@ public:
         }
         out.before_ids = engine_.context_ids(slice(start > 3 * reach ? start - 3 * reach : 0, start));
         if (out.before_ids.size() > reach) out.before_ids.erase(out.before_ids.begin(), out.before_ids.end() - static_cast<std::ptrdiff_t>(reach));
+        if (out.before_ids.size() < reach && previous_ != nullptr) {
+            const std::vector<int64_t> lead = previous_->context_tail(reach - out.before_ids.size());
+            out.before_ids.insert(out.before_ids.begin(), lead.begin(), lead.end());
+        }
         out.after_ids = engine_.context_ids(slice(end + 1, end + 1 + 3 * reach));
         if (out.after_ids.size() > reach) out.after_ids.resize(reach);
+        if (out.after_ids.size() < reach && following_ != nullptr) {
+            const std::vector<int64_t> rest = following_->context_head(reach - out.after_ids.size());
+            out.after_ids.insert(out.after_ids.end(), rest.begin(), rest.end());
+        }
         return out;
     }
 
@@ -142,11 +182,12 @@ private:
         return std::vector<std::string>(phones_.begin() + static_cast<std::ptrdiff_t>(from), phones_.begin() + static_cast<std::ptrdiff_t>(to));
     }
 
-    std::size_t spoken_after(std::size_t end) const {
+    std::size_t spoken_from(std::size_t first) const {
         std::size_t count = 0;
-        for (std::size_t i = end + 1; i < phones_.size(); ++i) count += phones_[i] != kSilencePhone;
+        for (std::size_t i = first; i < phones_.size(); ++i) count += phones_[i] != kSilencePhone;
         return count;
     }
+    std::size_t spoken_after(std::size_t end) const { return spoken_from(end + 1); }
 
     void append(const PlanChunk& chunk) {
         const Phonemized result = engine_.phonemize(chunk.text, chunk.language);
@@ -186,6 +227,8 @@ private:
     std::map<std::size_t, TargetCut> cuts_;
     std::set<std::size_t> min_pauses_;      // silences after a dash typed with no spaces around it
     std::vector<Piece> pieces_;
+    ChainStream* previous_ = nullptr;
+    ChainStream* following_ = nullptr;
 };
 
 struct Target {
@@ -345,16 +388,33 @@ Json synthesize_plan_stream(Engine& engine, const Plan& plan, const SynthesisOpt
     Json chunk_metadata{Json::Array{}};
     std::random_device entropy;
 
+    std::vector<std::unique_ptr<ChainStream>> streams;
     for (std::size_t begin = 0; begin < plan.chunks.size();) {
         std::vector<const PlanChunk*> chain;  // consecutive plan sentences that share a chain
         for (; begin < plan.chunks.size() && (chain.empty() || plan.chunks[begin].chain_id == chain.front()->chain_id); ++begin) {
             chain.push_back(&plan.chunks[begin]);
         }
-        ChainStream stream(engine, std::move(chain));
+        streams.push_back(std::make_unique<ChainStream>(engine, std::move(chain)));
+    }
+    // The same voice going on with a new delivery is one passage (unless a pause is asked for between chains).
+    for (std::size_t i = 1; i < streams.size(); ++i) {
+        const PlanChunk& a = streams[i - 1]->front();
+        const PlanChunk& b = streams[i]->front();
+        if (options.pause_ms <= 0.0 && a.voice == b.voice && a.language == b.language) {
+            streams[i]->link(streams[i - 1].get(), nullptr);
+            streams[i - 1]->link(nullptr, streams[i].get());
+        }
+    }
+    std::vector<float> tail;  // [D, tail_frames]: the passage's last latents, the next target's prefix and decode context
+    int64_t tail_frames = 0;
+    for (const std::unique_ptr<ChainStream>& owned : streams) {
+        ChainStream& stream = *owned;
         Json resolved;
         const DeliveryTensors delivery = engine.delivery_tensors(stream.front().voice, stream.front().delivery, &resolved);
-        std::vector<float> tail;  // [D, tail_frames]: the chain's last latents, the next target's prefix and decode context
-        int64_t tail_frames = 0;
+        if (!stream.continues()) {  // a new voice or language, or a requested pause: nothing carries over
+            tail.clear();
+            tail_frames = 0;
+        }
         std::size_t start = 0;
         while (true) {
             Target target = next_target(engine, stream, start, spoken == 0, delivery, options.speed);

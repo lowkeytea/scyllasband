@@ -683,6 +683,38 @@ class StreamingTargetTest(unittest.TestCase):
         self.assertEqual(durations("ab\u2014ab."), (phones, [1, 1, 1, 0, 14, 1, 1, 0, 1]))
         self.assertEqual(durations("ab--ab.")[1], [1, 1, 1, 0, 14, 1, 1, 0, 1])
 
+    def chain_calls(self, records, **options):
+        engine = _fake_engine(1.0, chunking=dict(min_target_frames=6, max_target_frames=12),
+                              span_conditioning=dict(context_max_phones=64, context_phones_each_side=8))
+        plan = plan_records(records, resolve_language=lambda voice, language: "en_us")
+        list(synthesize_plan_stream(engine, plan, StreamOptions(steps=1, seed=0, **options)))
+        calls = engine._fake.calls
+        return ([c for c in calls if c["name"] == "duration_predictor"], [c for c in calls if c["name"].startswith("vector_estimator")],
+                [c for c in calls if c["name"].startswith("vocoder")])
+
+    def test_a_delivery_change_continues_the_passage(self):
+        records = [dict(text="ab ab.", voice="scylla"), dict(text="ab ab.", voice="scylla", delivery="intensity=1")]
+        durations, flows, decodes = self.chain_calls(records)
+        self.assertEqual(len(flows), 2)
+        self.assertFalse(flows[0]["prefix_mask"].any())
+        same_chain = self.chain_calls(records_from_text("ab ab. ab ab.", voice="scylla", language=None))
+        self.assertGreater(int(flows[1]["prefix_mask"].sum()), 0)           # the first target's frames carry over,
+        self.assertEqual(int(flows[1]["prefix_mask"].sum()), int(same_chain[1][1]["prefix_mask"].sum()))   # as inside a chain,
+        self.assertEqual(int(decodes[1]["latent_mask"].sum()), int(same_chain[2][1]["latent_mask"].sum()))  # and to the decoder
+        segments = [c["span_segment_ids"][c["span_mask"]].tolist() for c in durations]
+        self.assertIn([1] * 8 + [2] * 5, segments)    # the next chain's "ab ab." follows the first target as context
+        self.assertIn([0] * 5 + [1] * 8, segments)    # and the first chain's precedes the second
+
+    def test_a_pause_or_a_new_voice_starts_afresh(self):
+        records = [dict(text="ab ab.", voice="scylla"), dict(text="ab ab.", voice="scylla", delivery="intensity=1")]
+        from scyllasband.streaming import _same_speaker
+        flows = self.chain_calls(records, pause_ms=100.0)[1]
+        self.assertEqual(len(flows), 2)
+        self.assertFalse(flows[1]["prefix_mask"].any())
+        plan = plan_records(records + [dict(text="ab.", voice="gwen")], resolve_language=lambda voice, language: "en_us")
+        self.assertTrue(_same_speaker(plan.chunks[0], plan.chunks[1]))
+        self.assertFalse(_same_speaker(plan.chunks[1], plan.chunks[2]))
+
     def test_a_long_enough_paragraph_ends_its_target(self):
         self.assertEqual([text for _, text, _ in self.targets(records_from_text("ab ab. ab ab.\n\nab ab.", voice="scylla",
                                                                                  language=None))],

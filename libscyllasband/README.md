@@ -133,7 +133,9 @@ Each record is `{"text", "voice", "language"?, "delivery"?, "intensity"?, "pace"
 `control=value` string or a `{"intensity", "pace", "pitch"}` object, or the controls as fields, not both. Consecutive
 records with the same voice, language and delivery form one chain, spoken continuously with the previous target's
 acoustics as context; a record that changes any of the three starts a new chain, even when it has no text, and
-`pause_ms` of silence opens every chain after the first (at the start of that target's audio). Chunk *i* of the
+`pause_ms` of silence opens every chain after the first (at the start of that target's audio). A chain that changes
+only the delivery goes on from the one before it (the same voice and language, `pause_ms` 0): each keeps its own
+delivery, while the surrounding text, the acoustics and the waveform carry across the change. Chunk *i* of the
 whole plan, counted across records, draws its noise from `seed + i`. The rules and messages are the Python runtime's (`planner.plan_records`).
 
 ### Singing (ABI 3.1)
