@@ -18,6 +18,8 @@ const char* const kGraphContractV4 = "scyllasband_measured_controls_v4";
 namespace {
 
 const char* const kContractVersion = "1.0.0";
+// A dash typed with no spaces around it ("a\u2014dream") interrupts the word before it: its pause lasts at least this long.
+const double kTightDashPauseSeconds = 0.3;
 const std::vector<std::string> kDurationInputs = {"span_phone_ids", "span_segment_ids", "span_mask", "voice_id", "language_id",
                                                   "delivery_values", "delivery_present"};
 const std::vector<std::string> kContextInputs = {"span_context_phone_ids", "span_context_segment_ids", "span_context_mask"};
@@ -601,7 +603,8 @@ std::vector<int> Engine::durations(const Sentence& sentence, int64_t voice, int6
     std::size_t offset = static_cast<std::size_t>(std::count(segments.begin(), segments.end(), int64_t{0}));
     std::vector<float> predicted(frames.values.begin() + static_cast<std::ptrdiff_t>(offset),
                                  frames.values.begin() + static_cast<std::ptrdiff_t>(offset + target.size()));
-    return frames_to_durations(predicted, sentence.phones, 1.0 / speed, pause_scale(delivery));
+    return frames_to_durations(predicted, sentence.phones, 1.0 / speed, pause_scale(delivery), sentence.min_pauses,
+                               kTightDashPauseSeconds * sample_rate_ / latent_hop_);
 }
 
 SentenceResult Engine::synthesize_sentence(const Sentence& sentence, const SentenceRequest& request) {

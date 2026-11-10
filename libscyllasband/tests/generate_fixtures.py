@@ -16,7 +16,7 @@ from pathlib import Path
 from scyllasband.delivery import delivery_spec, resolve_delivery
 from scyllasband.engine import balanced_context
 from scyllasband.events import frame_events, frames_to_durations, modifier_bits
-from scyllasband.g2p import punctuated_segments
+from scyllasband.g2p import _marked_segments, punctuated_segments
 from scyllasband.g2p_phrases import normalize_g2p_phrase_punctuation
 from scyllasband.planner import _PARAGRAPH_RE, plan_records, records_from_text, split_for_retry, split_sentences
 from scyllasband.streaming import StreamOptions, _choose, synthesize_plan_stream
@@ -37,6 +37,7 @@ TEXTS = [
     "Hello (there). [laughs] Fine!) Next? 'Quoted.' “Curly.” End", "No terminal punctuation here", "...", "Ok!!! Sure?? Yes?!?! Fine..",
     "Para one.\n\nPara two line one.\nline two.\n \n\t\nPara three.", "A -- B - C-D — E – F", "x y z, ‘a’ «b»",
     "one, two; three: four - five", "Dr. Smith arrived at 9 a.m. Then he left.", "",
+    "It was only a\u2014dream, he said. A\u2014B \u2014 c--d e---f g\u2013h 3\u20135 x\u2014\u2014y \u00e9t\u00e9\u2014hiver a\u2e3ab door\u2014\u2019 well-known",
     "Well, the engineer who rebuilt the clockwork orchestra in the basement finally invited everyone to hear it play, at last.",
 ]
 
@@ -81,6 +82,7 @@ def events_cases(rng: random.Random) -> list[dict]:
 
 def durations_cases(rng: random.Random) -> list[dict]:
     cases = []
+    floors = random.Random(20261110)   # its own stream, so the other suites' draws stay as they were
     for _ in range(40):
         phones = [rng.choice(ACOUSTIC + MODIFIERS + PUNCTUATION + ["<sil>"]) for _ in range(rng.randint(1, 20))]
         values = [rng.choice([rng.uniform(-1, 8), float(rng.randint(0, 6)) + 0.5, 2.5, 0.5, 1.5, 0.4999]) for _ in phones]
@@ -89,8 +91,13 @@ def durations_cases(rng: random.Random) -> list[dict]:
         values = np.asarray(values, np.float32).tolist()
         scale = rng.choice([1.0, 1 / 0.75, 1 / 1.25, 1 / 1.1])
         pause_scale = rng.choice([1.0, 1.0, float(np.exp(0.13)), float(np.exp(-0.26)), 1.3])
-        cases.append(dict(phones=phones, values=values, scale=scale, pause_scale=pause_scale,
-                          expected=frames_to_durations(values, phones, scale=scale, pause_scale=pause_scale)))
+        silences = [i for i, p in enumerate(phones) if p == "<sil>"]
+        min_pauses = sorted(floors.sample(silences, floors.randint(0, min(2, len(silences))))) if floors.random() < 0.4 else []
+        min_pause_frames = floors.choice([0.3 * 24000 / 512, 6.5, 3.0])
+        cases.append(dict(phones=phones, values=values, scale=scale, pause_scale=pause_scale, min_pauses=min_pauses,
+                          min_pause_frames=min_pause_frames,
+                          expected=frames_to_durations(values, phones, scale=scale, pause_scale=pause_scale, min_pauses=min_pauses,
+                                                       min_pause_frames=min_pause_frames)))
     return cases
 
 
@@ -129,7 +136,8 @@ def text_cases() -> dict:
         phrase.append(dict(text=text, expected=normalize_g2p_phrase_punctuation(text)))
         for max_chars in (140, 10):
             segments.append(dict(text=text, max_chars=max_chars,
-                                 expected=[[segment, list(tokens)] for segment, tokens in punctuated_segments(text, max_chars=max_chars)]))
+                                 expected=[[segment, list(tokens)] for segment, tokens in punctuated_segments(text, max_chars=max_chars)],
+                                 tight=[tight for _, _, tight in _marked_segments(text, max_chars=max_chars)]))
         for min_share in (0.0, 0.1, 0.3):
             try:
                 retry.append(dict(text=text, min_share=min_share, expected=split_for_retry(text, min_share=min_share)))
@@ -402,7 +410,7 @@ def singing_cases() -> dict:
 def normalizer_cases() -> list[dict]:
     corpus = ["Meet me at 9 a.m. Then we leave.", "It ends at 5 p.m.", "Dr. Smith met Mrs. Jones on Main Dr. today.",
               "I paid $3.50, then £12 and 40€.", "On Jan. 5, 2024 we had 25% more; by 3/4/2025 it was 1/2.", "Call me at 10:30pm or 7:05 AM.",
-              "She came 1st and 22nd.", "Email jane.doe+tts@example.co.uk or ping @scylla.", "Ok... OK?! ok!!", "Well -- that's it - right?",
+              "She came 1st and 22nd.", "Email jane.doe+tts@example.co.uk or ping @scylla.", "Ok... OK?! ok!!", "Well -- that's it - right?", "It was only a\u2014dream. Well--no; \u00e9t\u00e9\u2014hiver, wait\u2014 and a \u2e3a b.",
               "e-mail, X-ray, T-shirt and A - B.", "Café café 2024-03-07.", "It's 3.14159 or 2,718.28 or 1,000,000.", "x = 5 and 20°",
               "12345678901234567890123 and ٣٤", "D.J. Stumpy charged $99.99. I met J.K. Rowling.", "He moved to the U.S. Then he left.",
               "She lives in the U.S.", 'Call me at 9 a.m. "Sure," he said.',

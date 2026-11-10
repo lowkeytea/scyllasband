@@ -49,6 +49,8 @@ _OUTPUT_RULE = re.compile(r"^\s*latent_frames\s*\*\s*(\d+)\s*(?:-\s*(\d+))?\s*$"
 # Target lengths v2 was trained on, in latent frames (about 1.4 to 9 seconds): shorter targets lose their prosody and
 # longer ones their intelligibility. A bundle can state its own as controls.chunking.min/max_target_frames.
 MIN_TARGET_FRAMES, MAX_TARGET_FRAMES = 64, 420
+# A dash typed with no spaces around it ("a—dream") interrupts the word before it: its pause lasts at least this long.
+TIGHT_DASH_PAUSE_SECONDS, LATENT_SAMPLE_RATE = 0.3, 24000
 
 
 def balanced_context(before: Sequence[int], target: Sequence[int], after: Sequence[int], max_phones: int) -> tuple[list[int], list[int]]:
@@ -86,6 +88,7 @@ class Sentence:
     word_starts: list[int]
     before_ids: list[int] = field(default_factory=list)   # preceding passage phones, silences excluded
     after_ids: list[int] = field(default_factory=list)    # following passage phones, silences excluded
+    min_pauses: list[int] = field(default_factory=list)   # silences held at least TIGHT_DASH_PAUSE_SECONDS (unspaced dashes)
 
 
 @dataclass
@@ -376,7 +379,8 @@ class Engine:
                            voice_id=_scalar(voice), language_id=_scalar(language), delivery_values=values, delivery_present=present)
         offset = int(((segs == 0) & mask).sum())
         return frames_to_durations(frames[0, offset:offset + len(target)].tolist(), sentence.phones, scale=1.0 / float(speed),
-                                   pause_scale=self.pause_scale(delivery))
+                                   pause_scale=self.pause_scale(delivery), min_pauses=sentence.min_pauses,
+                                   min_pause_frames=TIGHT_DASH_PAUSE_SECONDS * LATENT_SAMPLE_RATE / LATENT_HOP)
 
     def synthesize_sentence(self, sentence: Sentence, *, voice: str, language: str, delivery: Sequence[Any],
                             prefix: np.ndarray | None = None, steps: int = 8, sampler: str = "heun", speed: float = 1.0,

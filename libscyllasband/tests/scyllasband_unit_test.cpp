@@ -87,7 +87,10 @@ void durations_suite(const Json& fixture) {
     for (const Json& c : fixture.get("cases").elements()) {
         std::vector<float> values;
         for (const Json& v : c.get("values").elements()) values.push_back(static_cast<float>(v.num()));
-        std::vector<int> got = frames_to_durations(values, strings(c.get("phones")), c.get("scale").num(), c.get("pause_scale").num(1.0));
+        std::vector<int> min_pauses;
+        for (int64_t index : ints(c.get("min_pauses"))) min_pauses.push_back(static_cast<int>(index));
+        std::vector<int> got = frames_to_durations(values, strings(c.get("phones")), c.get("scale").num(), c.get("pause_scale").num(1.0),
+                                                   min_pauses, c.get("min_pause_frames").num(0.0));
         std::vector<int64_t> want = ints(c.get("expected"));
         expect(std::vector<int64_t>(got.begin(), got.end()) == want, "durations " + label(c.get("values")));
     }
@@ -154,6 +157,11 @@ void segments_suite(const Json& fixture) {
             same = unicode::encode(got[i].first) == want[i][0].str() && got[i].second == strings(want[i][1]);
         }
         expect(same, "punctuated segments " + label(c.get("text")) + " max " + std::to_string(c.get("max_chars").integer()));
+        auto marked = marked_segments(unicode::decode(c.get("text").str()), static_cast<std::size_t>(c.get("max_chars").integer()));
+        const auto& tight = c.get("tight").elements();
+        bool marks = marked.size() == tight.size();
+        for (std::size_t i = 0; marks && i < marked.size(); ++i) marks = marked[i].tight_dash == tight[i].boolean();
+        expect(marks, "tight dashes " + label(c.get("text")));
     }
 }
 

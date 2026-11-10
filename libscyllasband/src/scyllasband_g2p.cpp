@@ -212,9 +212,9 @@ Phonemized G2P::run(const Text& text, const std::string& language) {
     std::vector<std::string>& phones = out.phones;
     phones.push_back(kSilence);
     std::vector<double> confidences;
-    auto segments = punctuated_segments(text, chunk_max_chars_);
+    auto segments = marked_segments(text, chunk_max_chars_);
     for (std::size_t index = 0; index < segments.size(); ++index) {
-        const auto& [segment, tokens] = segments[index];
+        const auto& [segment, tokens, tight] = segments[index];
         Prediction prediction = predict_segment(segment, language);
         confidences.push_back(prediction.confidence);
         for (const Json& item : prediction.overrides.elements()) out.pronunciation_overrides.push(item);
@@ -249,6 +249,7 @@ Phonemized G2P::run(const Text& text, const std::string& language) {
                 out.punctuation.push(std::move(event));
                 phones.push_back(token);
                 phones.push_back(kSilence);
+                if (tight && token == "<pause_dash>") out.min_pause_phones.push_back(static_cast<int>(phones.size()) - 1);
             }
         }
         out.segments.push_back(encode(segment));

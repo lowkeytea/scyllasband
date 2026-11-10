@@ -12,6 +12,8 @@ import json
 import re
 import unicodedata
 
+from .g2p_phrases import mark_tight_dashes
+
 
 SPOKEN_TEXT_NORMALIZER_CONTRACT = {
     "version": "scyllasband_spoken_text_v2_2026_08_05",
@@ -819,7 +821,7 @@ class SpokenTextNormalizer:
 
     @classmethod
     def _normalize_dash_contract(cls, text: str) -> str:
-        value = str(text or "")
+        value = mark_tight_dashes(text)
         for hyphen in cls._LEXICAL_HYPHENS:
             value = value.replace(hyphen, "-")
         for dash in cls._SYNTACTIC_DASHES:

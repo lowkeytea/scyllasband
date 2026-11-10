@@ -45,6 +45,14 @@ class PunctuationTest(unittest.TestCase):
     def test_a_sentence_end_wins_over_other_stacked_marks(self):
         self.assertEqual(punctuated_segments("Really?! she asked."), [("Really", ["<end_question>"]), ("she asked", ["<end_stmt>"])])
 
+    def test_a_dash_typed_without_spaces_is_marked_for_its_minimum_pause(self):
+        from scyllasband.g2p import _marked_segments
+        self.assertEqual(_marked_segments("only a\u2014dream, he said. A -- dream. a--b 3\u20135"),
+                         [("only a", ["<pause_dash>"], True), ("dream", ["<pause_comma>"], False), ("he said", ["<end_stmt>"], False),
+                          ("A", ["<pause_dash>"], False), ("dream", ["<end_stmt>"], False), ("a", ["<pause_dash>"], True),
+                          ("b 3", ["<pause_dash>"], False), ("5", [], False)])
+        self.assertEqual(punctuated_segments("only a\u2014dream"), [("only a", ["<pause_dash>"]), ("dream", [])])
+
     def test_long_phrases_split_between_words_without_punctuation(self):
         segments = punctuated_segments("one two three four five six.", max_chars=10)
         self.assertEqual([s for s, _ in segments], ["one two", "three four", "five six"])
@@ -74,6 +82,12 @@ class DurationAndEventTest(unittest.TestCase):
         phones = ["<sil>", "a", "<sil>", "b", "<sil>"]
         self.assertEqual(frames_to_durations([4, 4, 0.4, 4, 2], phones, pause_scale=1.3), [5, 4, 1, 4, 3])
         self.assertEqual(frames_to_durations([4, 4, 0.4, 4, 2], phones, pause_scale=0.7), [3, 4, 0, 4, 1])
+
+    def test_a_minimum_pause_holds_only_the_listed_silences(self):
+        phones = ["<sil>", "a", "<pause_dash>", "<sil>", "b", "<sil>"]
+        self.assertEqual(frames_to_durations([2, 4, 0, 2, 4, 2], phones, min_pauses=[3], min_pause_frames=14.06), [2, 4, 0, 14, 4, 2])
+        self.assertEqual(frames_to_durations([2, 4, 0, 20, 4, 2], phones, min_pauses=[3], min_pause_frames=14.06), [2, 4, 0, 20, 4, 2])
+        self.assertEqual(frames_to_durations([2, 4, 0, 2, 4, 2], phones, scale=0.5, min_pauses=[3], min_pause_frames=14.06), [1, 2, 0, 7, 2, 1])
 
     def test_events(self):
         phones = ["<sil>", "ˈ", "a", "b", "<pause_comma>", "<sil>", "h", "ː", "<end_stmt>", "<sil>"]
@@ -650,6 +664,24 @@ class StreamingTargetTest(unittest.TestCase):
         self.assertEqual([text for _, text, _ in self.targets(paragraphs)], ["ab. ab."])
         self.assertEqual([text for _, text, _ in self.targets(records)], ["ab. ab."])
         self.assertEqual([text for _, text, _ in self.targets(chains)], ["ab.", "ab."])
+
+    def test_a_dash_without_spaces_holds_its_pause(self):
+        from scyllasband.streaming import _ChainStream
+        engine = _fake_engine(1.0, chunking=dict(min_target_frames=6, max_target_frames=12),
+                              span_conditioning=dict(context_max_phones=64, context_phones_each_side=8))
+
+        def durations(text):
+            plan = plan_records(records_from_text(text, voice="scylla", language=None), resolve_language=lambda voice, language: "en_us")
+            stream = _ChainStream(engine, plan.chunks)
+            stream.extend(10 ** 6)
+            sentence = stream.sentence(0, len(stream.phones) - 1)
+            values, present = np.zeros((1, 5), np.float32), np.zeros((1, 5), bool)
+            return sentence.phones, engine.durations(sentence, voice=0, language=0, delivery=(values, present))
+        phones, spaced = durations("ab \u2014 ab.")
+        self.assertEqual(phones, ["<sil>", "a", "b", "<pause_dash>", "<sil>", "a", "b", "<end_stmt>", "<sil>"])
+        self.assertEqual(spaced, [1, 1, 1, 0, 1, 1, 1, 0, 1])
+        self.assertEqual(durations("ab\u2014ab."), (phones, [1, 1, 1, 0, 14, 1, 1, 0, 1]))
+        self.assertEqual(durations("ab--ab.")[1], [1, 1, 1, 0, 14, 1, 1, 0, 1])
 
     def test_a_long_enough_paragraph_ends_its_target(self):
         self.assertEqual([text for _, text, _ in self.targets(records_from_text("ab ab. ab ab.\n\nab ab.", voice="scylla",

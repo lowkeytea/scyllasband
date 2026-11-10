@@ -21,6 +21,7 @@ struct Phonemized {
     std::vector<std::string> phones;
     std::vector<int> word_starts;
     std::vector<int> word_boundary_candidates;
+    std::vector<int> min_pause_phones;  // silences after a dash typed with no spaces around it
     Json punctuation{Json::Array{}};
     std::vector<std::string> segments;
     double confidence = 0.0;

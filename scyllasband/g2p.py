@@ -23,13 +23,13 @@ from typing import Any, Callable, Mapping
 
 import numpy as np
 
-from .g2p_phrases import (DEFAULT_G2P_PHRASE_MAX_CHARS, g2p_phrase_segments, normalize_g2p_phrase_punctuation,
+from .g2p_phrases import (DEFAULT_G2P_PHRASE_MAX_CHARS, TIGHT_DASH, g2p_phrase_segments, normalize_g2p_phrase_punctuation,
                           punctuation_run_phone_token)
 from .lexicon import Lexicon, has_lowercase, is_word_token, word_spans
 from .text_normalizer import SPOKEN_TEXT_NORMALIZER_SHA256
 
 CACHE_SIZE = 256
-PUNCTUATION_CHARS = frozenset(",.!?;:-…—")
+PUNCTUATION_CHARS = frozenset(",.!?;:-…—\u2e3a")
 TERMINAL_PRIORITY = ("<end_question>", "<end_exclaim>", "<ellipsis>", "<end_stmt>")
 _BRACKETED_NOTE_RE = re.compile(r"\[[^\[\]\n]{1,80}\]")
 WORD_BOUNDARY_MARKER = "<word_boundary>"
@@ -95,16 +95,17 @@ class G2PFrontend:
             return result
 
     def _phonemize(self, text: str, *, language: str) -> dict[str, Any]:
-        segments = punctuated_segments(text, max_chars=int(self.segment_config["chunk_max_chars"]))
+        segments = _marked_segments(text, max_chars=int(self.segment_config["chunk_max_chars"]))
         phones: list[str] = [SILENCE]
         word_starts: list[int] = []
         candidates: list[int] = []
         punctuation: list[dict[str, Any]] = []
+        min_pauses: list[int] = []
         repairs: list[dict[str, Any]] = []
         applied_overrides: list[dict[str, Any]] = []
         lexicon_entries: list[dict[str, Any]] = []
         confidences: list[float] = []
-        for index, (segment, tokens) in enumerate(segments):
+        for index, (segment, tokens, tight) in enumerate(segments):
             prediction = self._predict_segment(segment, language=language)
             confidences.append(float(prediction.get("confidence", 0.0)))
             applied_overrides.extend(prediction.get("pronunciation_overrides", []))
@@ -133,6 +134,8 @@ class G2PFrontend:
                         punctuation.append(dict(segment_index=index, phone_index=len(phones), phone=token))
                         phones.append(token)
                         phones.append(SILENCE)
+                        if tight and token == "<pause_dash>":
+                            min_pauses.append(len(phones) - 1)
         if phones[-1] != SILENCE:
             phones.append(SILENCE)
         if len(phones) <= 2 and not any(p not in SILENCE_PHONES for p in phones):
@@ -141,7 +144,8 @@ class G2PFrontend:
         if unknown:
             raise ValueError(f"G2P produced symbols outside the phone vocabulary: {', '.join(unknown[:20])}")
         result = dict(phones=phones, word_starts=word_starts, word_boundary_candidates=candidates, punctuation=punctuation,
-                      g2p_segments=[segment for segment, _ in segments], g2p_confidence=min(confidences) if confidences else 0.0)
+                      min_pause_phones=min_pauses,
+                      g2p_segments=[segment for segment, _, _ in segments], g2p_confidence=min(confidences) if confidences else 0.0)
         if applied_overrides:
             result["pronunciation_overrides"] = applied_overrides
         if lexicon_entries:
@@ -319,9 +323,14 @@ def punctuated_segments(text: str, *, max_chars: int = DEFAULT_G2P_PHRASE_MAX_CH
     sentence end keeps only that end. Phrases longer than ``max_chars`` (the G2P input budget) are split between
     words, with no punctuation between the parts.
     """
+    return [(segment, tokens) for segment, tokens, _ in _marked_segments(text, max_chars=max_chars)]
+
+
+def _marked_segments(text: str, *, max_chars: int = DEFAULT_G2P_PHRASE_MAX_CHARS) -> list[tuple[str, list[str], bool]]:
+    """``punctuated_segments`` plus, per segment, whether its punctuation holds a dash typed with no spaces around it."""
     value = _BRACKETED_NOTE_RE.sub(" ", normalize_g2p_phrase_punctuation(text))
     value = re.sub(r"\s+", " ", value).strip()
-    out: list[tuple[str, list[str]]] = []
+    out: list[list[Any]] = []
     current: list[str] = []
     index = 0
     while index < len(value):
@@ -330,24 +339,26 @@ def punctuated_segments(text: str, *, max_chars: int = DEFAULT_G2P_PHRASE_MAX_CH
             while end < len(value) and value[end] in PUNCTUATION_CHARS:
                 end += 1
             token = punctuation_run_phone_token(value[index:end])
+            tight = TIGHT_DASH in value[index:end]
             segment = "".join(current).strip()
             if _has_word(segment):
-                out.append((segment, [token] if token else []))
+                out.append([segment, [token] if token else [], tight])
             elif out and token:
                 out[-1][1].append(token)
+                out[-1][2] = out[-1][2] or tight
             current, index = [], end
             continue
         current.append(value[index])
         index += 1
     if _has_word("".join(current)):
-        out.append(("".join(current).strip(), []))
-    result: list[tuple[str, list[str]]] = []
-    for segment, tokens in out:
+        out.append(["".join(current).strip(), [], False])
+    result: list[tuple[str, list[str], bool]] = []
+    for segment, tokens, tight in out:
         terminal = next((t for t in TERMINAL_PRIORITY if t in tokens), None)
         tokens = [terminal] if terminal else tokens
         parts = _split_words(segment, max_chars)
-        result.extend((part, []) for part in parts[:-1])
-        result.append((parts[-1], tokens))
+        result.extend((part, [], False) for part in parts[:-1])
+        result.append((parts[-1], tokens, tight))
     return result
 
 

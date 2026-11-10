@@ -99,13 +99,16 @@ bool is_punctuation_pause(const std::string& phone) {
 bool is_punctuation_phone(const std::string& phone) { return punctuation_phones().count(phone) > 0; }
 
 std::vector<int> frames_to_durations(const std::vector<float>& values, const std::vector<std::string>& phones, double scale,
-                                     double pause_scale) {
+                                     double pause_scale, const std::vector<int>& min_pauses, double min_pause_frames) {
     std::vector<int> durations;
     durations.reserve(phones.size());
+    const std::set<int> floored(min_pauses.begin(), min_pauses.end());
+    const int floor = static_cast<int>(std::nearbyint(std::max(0.0, min_pause_frames) * scale));
     for (std::size_t i = 0; i < phones.size() && i < values.size(); ++i) {
         const double factor = scale * (phones[i] == kSilencePhone ? pause_scale : 1.0);
         int frames = static_cast<int>(std::nearbyint(std::max(0.0, static_cast<double>(values[i])) * factor));
         if (phones[i] == kSilencePhone) {
+            if (floored.count(static_cast<int>(i))) frames = std::max(frames, floor);
         } else if (is_non_acoustic_modifier(phones[i]) || is_punctuation_pause(phones[i])) {
             frames = 0;
         } else {

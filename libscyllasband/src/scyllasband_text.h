@@ -29,6 +29,17 @@ std::string punctuation_run_phone_token(const Text& run);
 // g2p.punctuated_segments: phrases with the punctuation tokens that follow them.
 std::vector<std::pair<Text, std::vector<std::string>>> punctuated_segments(const Text& text, std::size_t max_chars);
 
+// The marker the normalizers write for a dash typed with a letter directly on each side ("a\u2014dream").
+constexpr char32_t kTightDash = 0x2E3A;
+
+// punctuated_segments plus whether the segment's punctuation holds such a dash (g2p._marked_segments).
+struct MarkedSegment {
+    Text text;
+    std::vector<std::string> tokens;
+    bool tight_dash = false;
+};
+std::vector<MarkedSegment> marked_segments(const Text& text, std::size_t max_chars);
+
 // planner.split_sentences / split_for_retry / paragraph split
 std::vector<Text> split_sentences(const Text& text);
 std::vector<Text> split_for_retry(const Text& text, double min_share = 0.0);

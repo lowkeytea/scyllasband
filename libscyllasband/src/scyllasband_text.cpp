@@ -89,6 +89,31 @@ bool ci_literal(const Text& s, std::size_t pos, std::string_view literal) {
     return true;
 }
 
+// g2p_phrases.mark_tight_dashes: (?<=[^\W\d_])(?:[\u2012-\u2015\u2212\ufe58\ufe63\uff0d]|-{2,})(?=[^\W\d_]) -> " \u2e3a "
+// (a dash typed with a letter directly on each side, "a\u2014dream": an interruption, always paused).
+Text mark_tight_dashes(const Text& value) {
+    auto letter = [](char32_t c) { return c != 0 && c != '_' && is_word(c) && !is_decimal(c); };
+    auto dash = [](char32_t c) { return (c >= 0x2012 && c <= 0x2015) || c == 0x2212 || c == 0xFE58 || c == 0xFE63 || c == 0xFF0D; };
+    Text out;
+    std::size_t i = 0;
+    while (i < value.size()) {
+        std::size_t end = i;
+        if (dash(value[i])) end = i + 1;
+        else if (value[i] == '-') end = run_end(value, i, [](char32_t c) { return c == '-'; });
+        const bool run = end > i && (dash(value[i]) || end - i >= 2);
+        if (run && i > 0 && letter(value[i - 1]) && end < value.size() && letter(value[end])) {
+            out += U" \u2e3a ";
+            i = end;
+        } else if (end > i) {
+            out.append(value, i, end - i);
+            i = end;
+        } else {
+            out.push_back(value[i++]);
+        }
+    }
+    return out;
+}
+
 Text dashes_to_pause(const Text& value) {
     Text out;
     for (char32_t cp : value) {
@@ -469,7 +494,7 @@ Text normalize_punctuation_step(const Text& input, const std::string& lang) {
         if (!((cp >= 0x200B && cp <= 0x200D) || cp == 0xFEFF)) value.push_back(cp);
     }
     // _normalize_dash_contract
-    value = collapse_spaces(hyphen_runs_to_pause(dashes_to_pause(value)));
+    value = collapse_spaces(hyphen_runs_to_pause(dashes_to_pause(mark_tight_dashes(value))));
     // _UNICODE_TRANSLATION
     Text translated;
     for (char32_t cp : value) {
@@ -1177,7 +1202,7 @@ std::string normalize_spoken_text(const std::string& text, const std::string& la
 // G2P phrase punctuation and segmentation.
 
 Text normalize_phrase_punctuation(const Text& text) {
-    Text value = hyphen_runs_to_pause(dashes_to_pause(text));
+    Text value = hyphen_runs_to_pause(dashes_to_pause(mark_tight_dashes(text)));
     Text folded;
     for (char32_t cp : value) {
         switch (cp) {
@@ -1209,12 +1234,18 @@ std::string punctuation_run_phone_token(const Text& run) {
     if (run.find(',') != npos) return "<pause_comma>";
     if (run.find(';') != npos) return "<pause_semicolon>";
     if (run.find(':') != npos) return "<pause_colon>";
-    if (run.find('-') != npos || run.find(0x2014) != npos) return "<pause_dash>";
+    if (run.find('-') != npos || run.find(0x2014) != npos || run.find(kTightDash) != npos) return "<pause_dash>";
     return {};
 }
 
 std::vector<std::pair<Text, std::vector<std::string>>> punctuated_segments(const Text& text, std::size_t max_chars) {
-    static const std::u32string_view punctuation = U",.!?;:-…—";
+    std::vector<std::pair<Text, std::vector<std::string>>> out;
+    for (auto& segment : marked_segments(text, max_chars)) out.emplace_back(std::move(segment.text), std::move(segment.tokens));
+    return out;
+}
+
+std::vector<MarkedSegment> marked_segments(const Text& text, std::size_t max_chars) {
+    static const std::u32string_view punctuation = U",.!?;:-…—\u2e3a";
     // _BRACKETED_NOTE_RE = \[[^\[\]\n]{1,80}\]
     Text value = substitute(normalize_phrase_punctuation(text), [](const Text& s, std::size_t p) -> std::optional<Match> {
         if (s[p] != '[') return std::nullopt;
@@ -1225,18 +1256,21 @@ std::vector<std::pair<Text, std::vector<std::string>>> punctuated_segments(const
     }, [](const Text&, const Match&) { return Text(U" "); });
     value = collapse_spaces(value);
 
-    std::vector<std::pair<Text, std::vector<std::string>>> out;
+    std::vector<MarkedSegment> out;
     Text current;
     std::size_t index = 0;
     while (index < value.size()) {
         if (in_set(value[index], punctuation)) {
             std::size_t end = run_end(value, index, [](char32_t c) { return in_set(c, punctuation); });
-            std::string token = punctuation_run_phone_token(value.substr(index, end - index));
+            const Text run = value.substr(index, end - index);
+            std::string token = punctuation_run_phone_token(run);
+            const bool tight = run.find(kTightDash) != npos;
             Text segment = strip(current);
             if (has_alnum(segment)) {
-                out.emplace_back(segment, token.empty() ? std::vector<std::string>{} : std::vector<std::string>{token});
+                out.push_back({segment, token.empty() ? std::vector<std::string>{} : std::vector<std::string>{token}, tight});
             } else if (!out.empty() && !token.empty()) {
-                out.back().second.push_back(token);
+                out.back().tokens.push_back(token);
+                out.back().tight_dash = out.back().tight_dash || tight;
             }
             current.clear();
             index = end;
@@ -1245,11 +1279,11 @@ std::vector<std::pair<Text, std::vector<std::string>>> punctuated_segments(const
         current.push_back(value[index]);
         ++index;
     }
-    if (has_alnum(current)) out.emplace_back(strip(current), std::vector<std::string>{});
+    if (has_alnum(current)) out.push_back({strip(current), {}, false});
 
-    std::vector<std::pair<Text, std::vector<std::string>>> result;
+    std::vector<MarkedSegment> result;
     static const char* const terminal_priority[] = {"<end_question>", "<end_exclaim>", "<ellipsis>", "<end_stmt>"};
-    for (auto& [segment, tokens] : out) {
+    for (auto& [segment, tokens, tight] : out) {
         for (const char* terminal : terminal_priority) {
             if (std::find(tokens.begin(), tokens.end(), terminal) != tokens.end()) {
                 tokens = {terminal};
@@ -1272,8 +1306,8 @@ std::vector<std::pair<Text, std::vector<std::string>>> punctuated_segments(const
             }
             if (!part.empty()) parts.push_back(part);
         }
-        for (std::size_t i = 0; i + 1 < parts.size(); ++i) result.emplace_back(parts[i], std::vector<std::string>{});
-        result.emplace_back(parts.back(), tokens);
+        for (std::size_t i = 0; i + 1 < parts.size(); ++i) result.push_back({parts[i], {}, false});
+        result.push_back({parts.back(), tokens, tight});
     }
     return result;
 }

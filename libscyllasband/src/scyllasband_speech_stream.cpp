@@ -83,6 +83,9 @@ public:
         for (std::size_t word : word_starts_) {
             if (start < word && word <= end && word != first_word) out.word_starts.push_back(static_cast<int>(word - start));
         }
+        for (auto pause = min_pauses_.upper_bound(start); pause != min_pauses_.end() && *pause <= end; ++pause) {
+            out.min_pauses.push_back(static_cast<int>(*pause - start));
+        }
         out.before_ids = engine_.context_ids(slice(start > 3 * reach ? start - 3 * reach : 0, start));
         if (out.before_ids.size() > reach) out.before_ids.erase(out.before_ids.begin(), out.before_ids.end() - static_cast<std::ptrdiff_t>(reach));
         out.after_ids = engine_.context_ids(slice(end + 1, end + 1 + 3 * reach));
@@ -165,6 +168,7 @@ private:
             piece.word_phones.push_back(base + static_cast<std::size_t>(word));
         }
         const std::set<int> candidates(result.word_boundary_candidates.begin(), result.word_boundary_candidates.end());
+        for (int pause : result.min_pause_phones) min_pauses_.insert(base + static_cast<std::size_t>(pause));
         for (std::size_t j = 1; j + 1 < phones.size(); ++j) {
             if (phones[j] != kSilencePhone) continue;
             if (kSentenceEnd.count(phones[j - 1])) cuts_[base + j] = TargetCut::kSentence;
@@ -180,6 +184,7 @@ private:
     std::vector<std::string> phones_;
     std::vector<std::size_t> word_starts_;  // every word's first phone but the chain's first
     std::map<std::size_t, TargetCut> cuts_;
+    std::set<std::size_t> min_pauses_;      // silences after a dash typed with no spaces around it
     std::vector<Piece> pieces_;
 };
 

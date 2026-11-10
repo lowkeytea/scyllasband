@@ -32,15 +32,20 @@ def is_punctuation_pause_phone(phone: str) -> bool:
     return phone.startswith("<pause") or phone.startswith("<end_") or phone == "<ellipsis>"
 
 
-def frames_to_durations(values: Sequence[float], phones: Sequence[str], *, scale: float = 1.0, pause_scale: float = 1.0) -> list[int]:
+def frames_to_durations(values: Sequence[float], phones: Sequence[str], *, scale: float = 1.0, pause_scale: float = 1.0,
+                        min_pauses: Sequence[int] = (), min_pause_frames: float = 0.0) -> list[int]:
     """Rounded frames: punctuation and modifiers 0; ``<sil>`` may be 0; every other phone at least 1. ``pause_scale``
-    multiplies ``<sil>`` frames on top of ``scale`` (pace moves pauses with the words)."""
+    multiplies ``<sil>`` frames on top of ``scale`` (pace moves pauses with the words). The ``<sil>`` at each index in
+    ``min_pauses`` lasts at least ``min_pause_frames`` x ``scale`` frames."""
     durations = []
-    for value, phone in zip(values, phones):
+    floored = set(min_pauses)
+    floor = int(round(max(0.0, float(min_pause_frames)) * float(scale)))
+    for index, (value, phone) in enumerate(zip(values, phones)):
         factor = float(scale) * (float(pause_scale) if phone == SILENCE else 1.0)
         frames = int(round(max(0.0, float(value)) * factor))
         if phone == SILENCE:
-            pass
+            if index in floored:
+                frames = max(frames, floor)
         elif is_non_acoustic_phone_modifier(phone) or is_punctuation_pause_phone(phone):
             frames = 0
         else:

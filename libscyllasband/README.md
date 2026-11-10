@@ -31,7 +31,8 @@ to another. For each target:
 
 1. the duration graph predicts frames for a 512-phone span of the target plus up to 180 context phones on
    each side from the neighbouring text, and the target's frames are rounded to integers, with pauses scaled
-   by the requested pace (`controls.pace_pauses`);
+   by the requested pace (`controls.pace_pauses`) and the pause after a dash typed with no spaces around it held
+   for at least 0.3 seconds;
 2. per-frame phone ids and text events (punctuation, word starts, stress and length marks, phone phase,
    sentence type) are built;
 3. the pitch predictor integrates noise to a pitch and voicing contour for those frames (its sampler and steps

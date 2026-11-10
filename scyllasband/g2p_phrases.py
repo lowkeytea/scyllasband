@@ -18,6 +18,7 @@ PUNCTUATION_PHONE_TOKENS = {
     ":": "<pause_colon>",
     "-": "<pause_dash>",
     "\u2014": "<pause_dash>",
+    "\u2e3a": "<pause_dash>",
     "\u2026": "<ellipsis>",
     "...": "<ellipsis>",
     ".": "<end_stmt>",
@@ -51,7 +52,7 @@ _WHITESPACE_ONLY_RE = re.compile(r"^\s*$")
 _BRACKETED_NOTE_RE = re.compile(r"\[[^\[\]\n]{1,80}\]")
 _BOUNDARY_PUNCTUATION = frozenset(".!?;:…")
 _SOFT_BOUNDARY_PUNCTUATION = frozenset(",")
-_PHONE_BOUNDARY_PUNCTUATION = frozenset(",.!?;:-\u2026\u2014")
+_PHONE_BOUNDARY_PUNCTUATION = frozenset(",.!?;:-\u2026\u2014\u2e3a")
 _CLOSING_BOUNDARY_CHARS = frozenset("\"')]}»”’")
 _PUNCTUATION_FOLD = str.maketrans(
     {
@@ -89,8 +90,17 @@ _PUNCTUATION_FOLD = str.maketrans(
 )
 
 
+TIGHT_DASH = "\u2e3a"   # a dash typed with a letter directly on each side ("a\u2014dream"): an interruption, always paused
+_TIGHT_DASH_RE = re.compile(r"(?<=[^\W\d_])(?:[\u2012-\u2015\u2212\ufe58\ufe63\uff0d]|-{2,})(?=[^\W\d_])")
+
+
+def mark_tight_dashes(text: str) -> str:
+    """Dashes with a letter directly on each side become ``TIGHT_DASH`` (spaced); every other dash is left alone."""
+    return _TIGHT_DASH_RE.sub(f" {TIGHT_DASH} ", str(text or ""))
+
+
 def normalize_g2p_phrase_punctuation(text: str) -> str:
-    value = str(text or "")
+    value = mark_tight_dashes(text)
     for hyphen in ("\u2010", "\u2011"):
         value = value.replace(hyphen, "-")
     for dash in ("\u2012", "\u2013", "\u2014", "\u2015", "\u2212", "\ufe58", "\ufe63", "\uff0d"):
@@ -132,7 +142,7 @@ def punctuation_run_phone_token(punctuation: str) -> str | None:
         return "<pause_semicolon>"
     if ":" in run:
         return "<pause_colon>"
-    if "-" in run or "\u2014" in run:
+    if "-" in run or "\u2014" in run or "\u2e3a" in run:
         return "<pause_dash>"
     return None
 

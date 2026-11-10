@@ -22,6 +22,7 @@ struct Sentence {
     std::vector<int> word_starts;
     std::vector<int64_t> before_ids;  // preceding passage phones, silences excluded
     std::vector<int64_t> after_ids;   // following passage phones, silences excluded
+    std::vector<int> min_pauses;      // silences held at least the tight-dash pause (dashes typed with no spaces)
 };
 
 bool is_non_acoustic_modifier(const std::string& phone);  // stress, length and combining marks own no frames
@@ -29,9 +30,11 @@ bool is_punctuation_pause(const std::string& phone);
 bool is_punctuation_phone(const std::string& phone);
 
 // Rounded frames (half to even): punctuation and modifiers 0, <sil> may be 0, every other phone at least 1. `pause_scale`
-// multiplies <sil> frames on top of `scale` (pace moves pauses with the words).
+// multiplies <sil> frames on top of `scale` (pace moves pauses with the words). The <sil> at each index in `min_pauses`
+// lasts at least `min_pause_frames` x `scale` frames.
 std::vector<int> frames_to_durations(const std::vector<float>& values, const std::vector<std::string>& phones, double scale,
-                                     double pause_scale = 1.0);
+                                     double pause_scale = 1.0, const std::vector<int>& min_pauses = {},
+                                     double min_pause_frames = 0.0);
 
 // Modifier tokens in id order, each with its own bit.
 std::map<std::string, int64_t> modifier_bits(const std::map<std::string, int>& token_to_id);

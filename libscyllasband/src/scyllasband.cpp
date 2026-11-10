@@ -336,6 +336,7 @@ int32_t scyllasband_test_phonemize(ScyllasBandRuntime* runtime, const char* text
         out.set("phones", Json::array_of(result.phones));
         out.set("word_starts", Json::array_of(result.word_starts));
         out.set("word_boundary_candidates", Json::array_of(result.word_boundary_candidates));
+        out.set("min_pause_phones", Json::array_of(result.min_pause_phones));
         out.set("punctuation", result.punctuation);
         out.set("g2p_segments", Json::array_of(result.segments));
         *out_json = copy_string(out.dump());

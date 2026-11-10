@@ -144,6 +144,7 @@ class _ChainStream:
         self.phones: list[str] = []
         self.word_starts: list[int] = []
         self.cuts: dict[int, str] = {}
+        self.min_pauses: set[int] = set()   # silences after a dash typed with no spaces around it
         self.pieces: list[_Piece] = []
 
     @property
@@ -177,6 +178,7 @@ class _ChainStream:
         starts = [base + j for j in result["word_starts"]]
         self.word_starts.extend(([first_word] if self.pieces else []) + starts)
         candidates = set(result["word_boundary_candidates"])
+        self.min_pauses.update(base + j for j in result.get("min_pause_phones", ()))
         for j in range(1, len(phones) - 1):
             if phones[j] == SILENCE:
                 kind = ("sentence" if phones[j - 1] in SENTENCE_END else "clause" if phones[j - 1] in CLAUSE_PAUSE
@@ -194,7 +196,8 @@ class _ChainStream:
         word_starts = [w - start for w in self.word_starts if start < w <= end and w != first_word]
         before = self.engine.context_ids(self.phones[max(0, start - 3 * reach):start])[-reach:]
         after = self.engine.context_ids(self.phones[end + 1:end + 1 + 3 * reach])[:reach]
-        return Sentence(phones=self.phones[start:end + 1], word_starts=word_starts, before_ids=before, after_ids=after)
+        return Sentence(phones=self.phones[start:end + 1], word_starts=word_starts, before_ids=before, after_ids=after,
+                        min_pauses=[i - start for i in sorted(self.min_pauses) if start < i <= end])
 
     def target_chunk(self, start: int, end: int) -> PlanChunk:
         """A plan chunk describing the target: its sentences' ids and text (part of a sentence gets ``id.n``)."""
