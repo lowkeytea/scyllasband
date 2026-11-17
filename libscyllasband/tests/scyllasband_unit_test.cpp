@@ -176,6 +176,7 @@ void unicode_suite(const Json& fixture) {
     for (const Json& c : fixture.get("cases").elements()) {
         unicode::Text text = unicode::decode(c.get("text").str());
         expect(unicode::encode(unicode::lower(text)) == c.get("lower").str(), "lower " + label(c.get("text")));
+        expect(unicode::encode(unicode::upper(text)) == c.get("upper").str(), "upper " + label(c.get("text")));
         expect(unicode::encode(unicode::nfc(text)) == c.get("nfc").str(), "nfc " + label(c.get("text")));
     }
 }

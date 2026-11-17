@@ -11,6 +11,7 @@
 #include <list>
 #include <map>
 #include <mutex>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -53,8 +54,8 @@ private:
     Prediction predict_repaired(const Text& text, const std::string& language);
     Prediction predict_raw(const Text& text, const std::string& language);
     void apply_overrides(Prediction& prediction, const Text& text, const std::string& language) const;
-    // The runtime lexicon (lexicon.py): an entry's phones, or empty.
-    std::vector<std::string> lexicon_entry(const Text& token, const std::string& language, bool initialisms) const;
+    // The runtime lexicon (lexicon.py): an entry's phones, or empty. `mixed_case` is false inside text written all in capitals.
+    std::vector<std::string> lexicon_entry(const Text& token, const std::string& language, bool mixed_case) const;
     void apply_lexicon(Prediction& prediction, const Text& text, const std::string& language);
     std::vector<int64_t> encode_text(const Text& text, const std::string& language) const;
 
@@ -63,6 +64,7 @@ private:
     Json language_map_;
     Json overrides_;
     std::map<std::string, std::map<std::string, std::vector<std::string>>> lexicon_words_, lexicon_initialisms_;
+    std::map<std::string, std::set<std::string>> lexicon_capitals_only_;
     std::map<std::string, int64_t> text_symbols_;
     std::map<int64_t, std::string> phoneme_symbols_;
     std::string word_boundary_symbol_ = " ";

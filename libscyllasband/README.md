@@ -281,11 +281,13 @@ change:
 PYTHONPATH=.. python tests/generate_fixtures.py
 ```
 
-The pronunciation lexicon is embedded from `scyllasband/lexicon.py` as `src/scyllasband_lexicon.inc`; regenerate it
-after a lexicon change (the Python tests fail while it is out of date):
+The pronunciation lexicon is embedded from `scyllasband/lexicon.py` as `src/scyllasband_lexicon.inc`, and the text
+normalizer's spoken-form tables from `scyllasband/text_data/*.json` as `src/scyllasband_text_data.inc`; regenerate them
+after a change (the Python tests fail while either is out of date):
 
 ```bash
 python tools/generate_lexicon.py
+python tools/generate_text_data.py
 ```
 
 `tests/parity_harness.py` compares the built library with the Python runtime on a bundle of the build's

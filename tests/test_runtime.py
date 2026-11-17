@@ -157,6 +157,157 @@ class NormalizerTest(unittest.TestCase):
         self.assertEqual(normalize_spoken_text("On March 4, 1990 and 3/4/2005.", language="en_us"),
                          "On March fourth, nineteen ninety and March fourth, two thousand five.")
 
+    def test_initials_slashes_ranges_and_speeds(self):
+        from scyllasband.text_normalizer import normalize_spoken_text
+        self.assertEqual(normalize_spoken_text("Kenneth A. Schmied met W. C. Handy in Washington D. C. in 1939-1945.", language="en_us"),
+                         "Kenneth ay Schmied met double you see Handy in Washington dee see in nineteen thirty nine to nineteen "
+                         "forty five.")
+        self.assertEqual(normalize_spoken_text("He chose plan B. The others left 3-2.", language="en_us"),
+                         "He chose plan B. The others left three two.")
+        self.assertEqual(normalize_spoken_text("Drive to/from work at 40 mph (64 km/h) in 30 °C heat.", language="en_us"),
+                         "Drive to from work at forty miles per hour (sixty four kilometers per hour) in thirty degrees Celsius heat.")
+
+    def test_roman_numerals_and_letter_r_in_english(self):
+        from scyllasband.text_normalizer import normalize_spoken_text
+        self.assertEqual(normalize_spoken_text("World War II ended in Queen Elizabeth II's youth; Gordon R. Dickson, Malcolm X.", language="en_us"),
+                         "World War two ended in Queen Elizabeth the second's youth; Gordon arr Dickson, Malcolm X.")
+        self.assertEqual(normalize_spoken_text("Pagine 21, 38 e 45.", language="it"), "Pagine ventuno, trentotto e quarantacinque.")
+        self.assertEqual(normalize_spoken_text("Anni 108, 180, 1880 e il 0º.", language="it"),
+                         "Anni centotto, centottanta, milleottocentottanta e il zero.")
+
+    def test_abbreviated_given_names(self):
+        from scyllasband.text_normalizer import normalize_spoken_text
+        self.assertEqual(normalize_spoken_text("Signed by Wm. Penn and Chas. Darwin.", language="en_us"),
+                         "Signed by William Penn and Charles Darwin.")
+        self.assertEqual(normalize_spoken_text("WM. PENN", language="en_us"), "WILLIAM PENN")
+        self.assertEqual(normalize_spoken_text("The geo. survey and Geo. the cat.", language="en_us"),
+                         "The geo. survey and Geo. the cat.")
+
+    def test_units_never_take_a_word(self):
+        from scyllasband.text_normalizer import normalize_spoken_text
+        self.assertEqual(normalize_spoken_text("Negli anni '80 ha collaborato.", language="it"), "Negli anni 'ottanta ha collaborato.")
+        self.assertEqual(normalize_spoken_text("En 2020 ha sido así.", language="es"), "En dos mil veinte ha sido así.")
+
+    def test_german_abbreviations_initialisms_and_units(self):
+        from scyllasband.text_normalizer import normalize_spoken_text
+        self.assertEqual(normalize_spoken_text("Dr. Lee und John Baldwin Jr. fuhren nach St. Louis.", language="de"),
+                         "Doktor Lee und John Baldwin Junior fuhren nach Sankt Louis.")
+        self.assertEqual(normalize_spoken_text("Das UN-Mitgliedsland nutzt z.B. UMTS bzw. LTE usw. Der NDR und die NATO senden.", language="de"),
+                         "Das uh enn Mitgliedsland nutzt zum Beispiel uh emm teh ess beziehungsweise LTE und so weiter. "
+                         "Der enn deh err und die NATO senden.")
+        self.assertEqual(normalize_spoken_text("Inspekteur D. K. Arya fuhr 480 km/h, 1 km weit, mit 90 kg und 30 % Last.", language="de"),
+                         "Inspekteur deh kah Arya fuhr vierhundertachtzig Kilometer pro Stunde, ein Kilometer weit, mit neunzig "
+                         "Kilogramm und dreißig Prozent Last.")
+        self.assertEqual(normalize_spoken_text("ACHTUNG, DIE SPD TAGT.", language="de"), "ACHTUNG, DIE SPD TAGT.")
+
+    def test_french_numbers_clock_centuries_and_titles(self):
+        from scyllasband.text_normalizer import normalize_spoken_text
+        self.assertEqual(normalize_spoken_text("Selon M. Pittman, 31 % des 5 000 000 de visiteurs partent à 7 h 19 ou 21 h.", language="fr"),
+                         "Selon Monsieur Pittman, trente et un pour cent des cinq millions de visiteurs partent à sept heures dix neuf "
+                         "ou vingt et une heures.")
+        self.assertEqual(normalize_spoken_text("Au XVIIIe siècle, François Ier et Elizabeth II roulaient à 56-64 km/h, etc.", language="fr"),
+                         "Au dix huitième siècle, François premier et Elizabeth deux roulaient à cinquante six à soixante quatre "
+                         "kilomètres par heure, et cetera.")
+        self.assertEqual(normalize_spoken_text("La SNCF et le Dr. Damadian, 5 000 ans av. J.-C.", language="fr"),
+                         "La esse enne cé èf et le Docteur Damadian, cinq mille ans avant Jésus Kri.")
+        self.assertEqual(normalize_spoken_text("Le TGV, une ONG et le NPWS.", language="fr"),
+                         "Le TGV, une o enne gé et le enne pé double vé esse.")
+
+    def test_spanish_and_italian_abbreviations_and_roman_numerals(self):
+        from scyllasband.text_normalizer import normalize_spoken_text
+        self.assertEqual(normalize_spoken_text("En los EE. UU. del siglo XX, la reina Isabel II y Alfonso XIII, etc.", language="es"),
+                         "En los Estados Unidos del siglo veinte, la reina Isabel segunda y Alfonso trece, etcétera.")
+        self.assertEqual(normalize_spoken_text("J. C. Bach y el NDP: 104 500 barriles a 11 km/h, el n.º 11.", language="es"),
+                         "jota ce Bach y el ene de pe: ciento cuatro mil quinientos barriles a once kilómetros por hora, el número once.")
+        self.assertEqual(normalize_spoken_text("Nel XV secolo Elisabetta II, e/o Kier Starmer QC, a 11 km/h, ecc.", language="it"),
+                         "Nel quindicesimo secolo Elisabetta seconda, e o Kier Starmer cu ci, a undici chilometri orari, eccetera.")
+
+
+
+class TextDataTest(unittest.TestCase):
+    """Every entry of every language's tables (scyllasband/text_data), in each casing its ``case`` policy accepts."""
+
+    SECTIONS = {"abbreviations": "sentence", "titles": "sentence", "before_number": "any", "units": "any"}
+
+    @staticmethod
+    def _sentence(section: str, form: str) -> str:
+        return {"abbreviations": f"aa {form} bb", "titles": f"aa {form} Zorro bb", "before_number": f"aa {form} 7 bb",
+                "units": f"aa 7 {form} bb"}[section]
+
+    @staticmethod
+    def _spoken(section: str, entry) -> str:
+        return entry["many"] if section == "units" else entry["spoken"]
+
+    def _expanded(self, output: str, spoken: str) -> bool:
+        return spoken.casefold().replace("-", " ") in output.casefold()
+
+    def test_every_entry_in_every_accepted_casing(self):
+        from scyllasband.text_data import TEXT_DATA, forms
+        from scyllasband.text_normalizer import normalize_spoken_text
+        failures = []
+        for lang, data in TEXT_DATA.items():
+            for section, default_case in self.SECTIONS.items():
+                shared = {}
+                for entry in data.get(section, ()):
+                    for form in forms(entry["written"]):
+                        shared.setdefault(form.replace(" ", "").lower(), set()).add(id(entry))
+                for entry in data.get(section, ()):
+                    case = entry.get("case", default_case)
+                    spoken = self._spoken(section, entry)
+                    for form in forms(entry["written"]):
+                        shapes = [(self._sentence(section, form), True)]
+                        if len(shared[form.replace(" ", "").lower()]) > 1:
+                            shapes.append((self._sentence(section, form), True))   # "GB"/"Gb": casing is all that tells them apart
+                            for text, expected in shapes:
+                                if not self._expanded(normalize_spoken_text(text, language=lang), spoken):
+                                    failures.append(f"{lang} {section} {form!r}: {text!r}")
+                            continue
+                        shapes.append((self._sentence(section, form).upper(), True))   # text written in capitals
+                        if ". " in form:
+                            shapes.append((self._sentence(section, form.replace(". ", ".")), True))
+                        if form.lower() != form:
+                            shapes.append((self._sentence(section, form.lower()), case != "exact"))
+                        if form.upper() != form and section in ("before_number", "units"):
+                            shapes.append((self._sentence(section, form.upper()), case == "any"))
+                        if section in ("abbreviations", "titles") and form[:1].islower():
+                            capital = form[:1].upper() + form[1:]
+                            starts = {"abbreviations": f"{capital} bb", "titles": f"{capital} Zorro bb"}[section]
+                            shapes.append((starts, case != "exact"))
+                        for text, expected in shapes:
+                            output = normalize_spoken_text(text, language=lang)
+                            if expected and not self._expanded(output, spoken):
+                                failures.append(f"{lang} {section} {form!r}: {text!r} -> {output!r}")
+        self.assertEqual(failures, [], "\n".join(failures[:400]))
+
+    def test_exact_entries_leave_other_casings_alone(self):
+        from scyllasband.text_data import TEXT_DATA, forms
+        from scyllasband.text_normalizer import normalize_spoken_text
+        failures = []
+        for lang, data in TEXT_DATA.items():
+            for section, default_case in self.SECTIONS.items():
+                keys = {}
+                for entry in data.get(section, ()):
+                    for form in forms(entry["written"]):
+                        keys.setdefault(form.replace(" ", "").lower(), []).append(entry.get("case", default_case))
+                for entry in data.get(section, ()):
+                    if entry.get("case", default_case) != "exact":
+                        continue
+                    for form in forms(entry["written"]):
+                        other = form.lower() if form.lower() != form else form.upper()
+                        if other == form or len(keys[form.replace(" ", "").lower()]) > 1 or form == "EUR":
+                            continue   # "EUR" after an amount is read by the currency rule in any casing
+                        output = normalize_spoken_text(self._sentence(section, other), language=lang)
+                        if self._expanded(output, self._spoken(section, entry)):
+                            failures.append(f"{lang} {section} {form!r} also matched {other!r}: {output!r}")
+        self.assertEqual(failures, [], "\n".join(failures[:400]))
+
+    def test_native_text_data_is_current(self):
+        import importlib.util
+        path = Path(__file__).resolve().parents[1] / "libscyllasband" / "tools" / "generate_text_data.py"
+        spec = importlib.util.spec_from_file_location("generate_text_data", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.assertEqual(module.OUT.read_text(encoding="utf-8"), module.render())
 
 class LexiconTest(unittest.TestCase):
     def test_entries_and_matching(self):
@@ -170,8 +321,29 @@ class LexiconTest(unittest.TestCase):
         self.assertEqual("".join(lexicon.lookup("GPUs", "en_us", initialisms=True)), "dʒˌiːpˌiːjˈuːz")
         self.assertEqual("".join(lexicon.lookup("Git", "en_us", initialisms=True)), "ɡˈɪt")
         self.assertEqual("".join(lexicon.lookup("scylla", "en_us", initialisms=True)), "sˈɪlə")
-        self.assertIsNone(lexicon.lookup("GPU", "en_us", initialisms=False))   # text written all in capitals
-        self.assertIsNone(lexicon.lookup("US", "en_us", initialisms=True))
+        self.assertEqual("".join(lexicon.lookup("GPU", "en_us", initialisms=False)), "dʒˌiːpˌiːjˈuː")   # all-capitals text
+        self.assertEqual("".join(lexicon.lookup("gpus", "en_us", initialisms=True)), "dʒˌiːpˌiːjˈuːz")   # never a word
+        self.assertIsNone(lexicon.lookup("Gpu", "en_us", initialisms=True))
+        self.assertIsNotNone(lexicon.lookup("US", "en_us", initialisms=True))   # capitals_only: capitals in mixed text
+        self.assertIsNone(lexicon.lookup("US", "en_us", initialisms=False))
+        self.assertIsNone(lexicon.lookup("us", "en_us", initialisms=True))
+        self.assertIsNone(lexicon.lookup("PTWC", "en_us", initialisms=False))   # unlisted: not in all-capitals text
+        self.assertEqual("".join(lexicon.lookup("PTWC", "en_us", initialisms=True)), "pˌiːtˌiːdˌʌbəljuːsˈiː")   # capitals, no vowel
+        self.assertIsNone(lexicon.lookup("NASA", "en_us", initialisms=True))
+
+    def test_names_and_possessives(self):
+        from scyllasband.lexicon import WORDS, Lexicon
+        vocabulary = {ch: 1 for ch in "".join(p for w in WORDS.values() for p in w.values()) + "ɪz"}
+        lexicon = Lexicon(vocabulary)
+        garcia = "".join(lexicon.lookup("Garcia", "en_us", initialisms=True))
+        self.assertEqual(garcia, "ɡɑːɹsˈiːə")
+        self.assertEqual("".join(lexicon.lookup("García", "en_us", initialisms=True)), garcia)
+        self.assertEqual("".join(lexicon.lookup("Garcia's", "en_us", initialisms=True)), garcia + "z")
+        self.assertEqual("".join(lexicon.lookup("Diaz’s", "en_us", initialisms=True)), "dˈiːæzɪz")
+        self.assertEqual("".join(lexicon.lookup("Okonkwo's", "en_gb", initialisms=True)), "əʊkˈɒŋkwəʊz")
+        self.assertEqual("".join(lexicon.lookup("Isaac", "en_us", initialisms=True)), "ˈaɪsək")
+        self.assertEqual("".join(lexicon.lookup("Zoë's", "en_gb", initialisms=True)), "zˈəʊiz")
+        self.assertIsNone(lexicon.lookup("Eli", "en_gb", initialisms=True))
         self.assertIsNone(lexicon.lookup("GPU", "es", initialisms=True))
 
     def test_native_lexicon_table_is_current(self):

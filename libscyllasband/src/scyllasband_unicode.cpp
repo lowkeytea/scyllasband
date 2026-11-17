@@ -10,14 +10,17 @@ namespace {
 struct CodepointRange {
     char32_t lo, hi;
 };
-struct LowerRun {
+struct CaseRun {
     char32_t lo, hi;
     int stride;
     int delta;
 };
-struct LowerSpecial {
+struct CaseSpecial {
     char32_t cp;
     const char* utf8;
+};
+struct CasePair {
+    char32_t lo, other;
 };
 struct Decomposition {
     char32_t cp, first, second;
@@ -177,6 +180,11 @@ bool is_alnum(char32_t cp) {
     return in_ranges(kAlnum, cp);
 }
 
+bool is_alpha(char32_t cp) {
+    if (cp < 0x80) return is_ascii_letter(cp);
+    return in_ranges(kAlpha, cp);
+}
+
 bool is_decimal(char32_t cp) {
     if (cp < 0x80) return cp >= '0' && cp <= '9';
     return in_ranges(kDecimal, cp);
@@ -202,6 +210,8 @@ bool is_space(char32_t cp) {
 
 bool is_mark(char32_t cp) { return cp >= 0x300 && in_ranges(kMark, cp); }
 bool is_punct_or_space(char32_t cp) { return in_ranges(kPunctOrSpace, cp); }
+bool is_upper(char32_t cp) { return in_ranges(kUppercase, cp); }
+bool is_lower(char32_t cp) { return in_ranges(kLowercase, cp); }
 bool is_ascii_letter(char32_t cp) { return (cp >= 'a' && cp <= 'z') || (cp >= 'A' && cp <= 'Z'); }
 bool is_ascii_digit(char32_t cp) { return cp >= '0' && cp <= '9'; }
 
@@ -218,6 +228,27 @@ static bool final_sigma(std::u32string_view text, std::size_t index) {
     return k == text.size() || !cased(text[k]);
 }
 
+// One character through str.lower or str.upper (without the final-sigma context): the runs, or a special mapping to
+// several characters.
+template <std::size_t R, std::size_t S>
+static void append_case(char32_t cp, const CaseRun (&runs)[R], const CaseSpecial (&special)[S], Text& out) {
+    auto found = std::lower_bound(std::begin(special), std::end(special), cp,
+                                  [](const CaseSpecial& entry, char32_t value) { return entry.cp < value; });
+    if (found != std::end(special) && found->cp == cp) {
+        out.append(decode(found->utf8));
+        return;
+    }
+    char32_t mapped = cp;
+    auto it = std::upper_bound(std::begin(runs), std::end(runs), cp, [](char32_t value, const CaseRun& run) { return value < run.lo; });
+    if (it != std::begin(runs)) {
+        --it;
+        if (cp <= it->hi && (cp - it->lo) % static_cast<char32_t>(it->stride) == 0) {
+            mapped = static_cast<char32_t>(static_cast<int64_t>(cp) + it->delta);
+        }
+    }
+    out.push_back(mapped);
+}
+
 Text lower(std::u32string_view text) {
     Text out;
     out.reserve(text.size());
@@ -231,27 +262,46 @@ Text lower(std::u32string_view text) {
             out.push_back(cp >= 'A' && cp <= 'Z' ? cp + 32 : cp);
             continue;
         }
-        bool special = false;
-        for (const LowerSpecial& entry : kLowerSpecial) {
-            if (entry.cp == cp) {
-                Text mapped = decode(entry.utf8);
-                out.append(mapped);
-                special = true;
-                break;
-            }
-        }
-        if (special) continue;
-        char32_t mapped = cp;
-        auto it = std::upper_bound(std::begin(kLower), std::end(kLower), cp, [](char32_t value, const LowerRun& run) { return value < run.lo; });
-        if (it != std::begin(kLower)) {
-            --it;
-            if (cp <= it->hi && (cp - it->lo) % static_cast<char32_t>(it->stride) == 0) {
-                mapped = static_cast<char32_t>(static_cast<int64_t>(cp) + it->delta);
-            }
-        }
-        out.push_back(mapped);
+        append_case(cp, kLower, kLowerSpecial, out);
     }
     return out;
+}
+
+Text upper(std::u32string_view text) {
+    Text out;
+    out.reserve(text.size());
+    for (char32_t cp : text) {
+        if (cp < 0x80) out.push_back(cp >= 'a' && cp <= 'z' ? cp - 32 : cp);
+        else append_case(cp, kUpper, kUpperSpecial, out);
+    }
+    return out;
+}
+
+// The lower case re.IGNORECASE compares: the first character of str.lower.
+static char32_t re_lower(char32_t cp) {
+    if (cp < 0x80) return cp >= 'A' && cp <= 'Z' ? cp + 32 : cp;
+    Text out;
+    append_case(cp, kLower, kLowerSpecial, out);
+    return out[0];
+}
+
+// Whether re.IGNORECASE treats a pattern character as cased (its lower or upper case differs from it).
+static bool re_cased(char32_t cp) {
+    if (cp < 0x80) return is_ascii_letter(cp);
+    if (re_lower(cp) != cp) return true;
+    Text out;
+    append_case(cp, kUpper, kUpperSpecial, out);
+    return out[0] != cp;
+}
+
+bool re_ignorecase_equal(char32_t text_cp, char32_t pattern_cp) {
+    if (!re_cased(pattern_cp)) return text_cp == pattern_cp;
+    const char32_t lo = re_lower(pattern_cp), folded = re_lower(text_cp);
+    if (folded == lo) return true;
+    for (const CasePair& pair : kReCaseEquivalents) {
+        if (pair.lo == lo && pair.other == folded) return true;
+    }
+    return false;
 }
 
 Text nfc(std::u32string_view text) {
@@ -338,6 +388,15 @@ std::vector<Text> split_whitespace(std::u32string_view text) {
 
 bool has_alnum(std::u32string_view text) {
     return std::any_of(text.begin(), text.end(), [](char32_t cp) { return is_alnum(cp); });
+}
+
+bool all_lower(std::u32string_view text) {
+    bool lower = false;
+    for (char32_t cp : text) {
+        if (is_lower(cp)) lower = true;
+        else if (in_ranges(kCased, cp)) return false;  // upper case or title case
+    }
+    return lower;
 }
 
 bool word_boundary(std::u32string_view text, std::size_t pos) {

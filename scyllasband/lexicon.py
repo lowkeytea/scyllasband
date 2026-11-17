@@ -3,9 +3,12 @@
 The G2P reads whole phrases, which keeps connected-speech forms (unstressed "to", linking r, French liaison); a full word
 dictionary would undo them. This lexicon is small and targeted:
 
-- initialisms, the G2P's weakest class: in a long phrase it can drop a letter ("GPU" said as "GU"). An initialism matches
-  only when written in capitals (also with a plural or possessive "s"), and not inside text written all in capitals;
-- words it mispronounces (``WORDS``), matched in any case.
+- initialisms, the G2P's weakest class: in a long phrase it can drop a letter ("GPU" said as "GU"). The English list is
+  in scyllasband/text_data/en.json: ``spell`` entries are never words, so they match in capitals or in lower case, also
+  inside text written all in capitals; ``capitals_only`` entries are also words ("US", "IT"), so they match only in
+  capitals inside mixed-case text, as does any other word of capitals with no vowel. A plural or possessive "s" may
+  follow;
+- words it mispronounces (``WORDS``, from text_data/en.json "pronunciations"), matched in any case.
 
 A bundle's ``g2p_phoneme_dict`` asset ({language: {word: phones}}) adds or replaces word entries. The C++ runtime embeds
 the same tables (libscyllasband/tools/generate_lexicon.py writes src/scyllasband_lexicon.inc from this module).
@@ -14,6 +17,8 @@ the same tables (libscyllasband/tools/generate_lexicon.py writes src/scyllasband
 from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
+
+from .text_data import TEXT_DATA
 
 # Letter names as phone templates; "{s}" takes secondary stress, and primary stress on an initialism's last letter, as
 # espeak reads them ("GPU" dʒˌiːpˌiːjˈuː).
@@ -27,22 +32,28 @@ LETTERS: dict[str, dict[str, str]] = {
     "en_us": _EN_LETTERS,
     "en_gb": dict(_EN_LETTERS, O="{s}əʊ", R="{s}ɑː", Z="z{s}ɛd"),
 }
-# Initialisms read letter by letter. Not listed: ones that are also everyday words in capitals ("US", "IT", "AM"), and
-# acronyms read as words ("NASA", "JSON", "ONNX").
-_EN_INITIALISMS = (
-    "AI", "API", "AR", "ASR", "BBC", "CEO", "CLI", "CNN", "CPU", "CSS", "CSV", "DIY", "DNA", "DNS", "EU", "FAQ", "FBI", "GPS",
-    "GPU", "HDMI", "HTML", "HTTP", "HTTPS", "ID", "IDE", "IPA", "IRS", "LLM", "MIT", "MRI", "NBA", "NFL", "NLP", "NPU", "NYC",
-    "PC", "PDF", "RNA", "SDK", "SQL", "SSD", "TDT", "TPU", "TTS", "TV", "UI", "UK", "URI", "URL", "USA", "USB", "UX", "VPN",
-    "VR", "XML",
-)
+_EN_INITIALISM_TABLE = TEXT_DATA["en"]["initialisms"]
+_EN_INITIALISMS = tuple(_EN_INITIALISM_TABLE["spell"]) + tuple(_EN_INITIALISM_TABLE["capitals_only"])
+_EN_CAPITALS_ONLY = frozenset(_EN_INITIALISM_TABLE["capitals_only"])
+# Any other word in capitals with no vowel letter is read letter by letter ("PTWC", "MS", "NPR"), up to this length.
+SPELLED_MAX_LETTERS = int(TEXT_DATA["en"]["spell_unlisted"]["max"])
+_VOWEL_LETTERS = frozenset(TEXT_DATA["en"]["spell_unlisted"]["vowels"])
 INITIALISMS: dict[str, tuple[str, ...]] = {"en_us": _EN_INITIALISMS, "en_gb": _EN_INITIALISMS}
-_EN_WORDS = {
-    "git": "ɡˈɪt",                        # unstressed after "new" in a phrase, heard as "NuGet"
-    "librispeech": "lˈɪbɹiːspˌiːtʃ",      # G2P: lˈaɪbɹɪspiːtʃ ("LibreSpeech")
-    "pytest": "pˈaɪtˌɛst",                # G2P: pˈaɪɾɪst ("pytis")
-}
-WORDS: dict[str, dict[str, str]] = {"en_us": _EN_WORDS, "en_gb": _EN_WORDS}
+CAPITALS_ONLY: dict[str, frozenset[str]] = {"en_us": _EN_CAPITALS_ONLY, "en_gb": _EN_CAPITALS_ONLY}
+# Words the G2P mispronounces, by English dialect (scyllasband/text_data/en.json "pronunciations"), matched in any case:
+# "ay" and "eff" (letter names the G2P reads as "eye" and "ee eff eff"), "git" (heard as "NuGet" after "new"),
+# "librispeech", "pytest".
+WORDS: dict[str, dict[str, str]] = {dialect: dict(entries) for dialect, entries in TEXT_DATA["en"]["pronunciations"].items()}
 PLURAL_SUFFIXES = ("'s", "’s", "s")
+POSSESSIVE_SUFFIXES = ("'s", "’s")
+_SIBILANTS = frozenset("szʃʒ")
+_VOICELESS = frozenset("ptkfθ")
+
+
+def possessive_phones(entry: Sequence[str]) -> tuple[str, ...]:
+    """The possessive ending after a word's phones: "ɪz" after a sibilant, "s" after a voiceless consonant, else "z"."""
+    last = next((phone for phone in reversed(entry) if phone not in ("ˈ", "ˌ", "ː")), "")
+    return ("ɪ", "z") if last in _SIBILANTS else ("s",) if last in _VOICELESS else ("z",)
 PLURAL_PHONE = "z"
 
 
@@ -75,6 +86,7 @@ class Lexicon:
     def __init__(self, vocabulary: Mapping[str, Any], bundle_words: Mapping[str, Any] | None = None) -> None:
         self.words: dict[str, dict[str, tuple[str, ...]]] = {}
         self.initialisms: dict[str, dict[str, tuple[str, ...]]] = {}
+        self._vocabulary = vocabulary
         for language, letters in LETTERS.items():
             table = {}
             for word in INITIALISMS.get(language, ()):
@@ -99,19 +111,43 @@ class Lexicon:
         return table
 
     def lookup(self, token: str, language: str, *, initialisms: bool) -> tuple[str, ...] | None:
-        """The entry for one whitespace token, or None. ``initialisms`` is False inside text written all in capitals."""
+        """The entry for one whitespace token, or None. ``initialisms`` is False inside text written all in capitals, where
+        only initialisms that are never words are spelled."""
         words = self.words.get(language)
         if words:
             entry = words.get(token.lower())
             if entry:
                 return entry
-        table = self.initialisms.get(language) if initialisms else None
+            for suffix in POSSESSIVE_SUFFIXES:
+                if token.lower().endswith(suffix):
+                    entry = words.get(token.lower()[:-len(suffix)])
+                    if entry:
+                        return entry + possessive_phones(entry)   # "Garcia's"
+        table = self.initialisms.get(language)
         if table:
-            if token in table:
-                return table[token]
+            entry = self._initialism(token, language, table, initialisms)
+            if entry:
+                return entry
             for suffix in PLURAL_SUFFIXES:
-                if token.endswith(suffix) and token[:-len(suffix)] in table:
-                    return table[token[:-len(suffix)]] + (PLURAL_PHONE,)
+                if token.endswith(suffix):
+                    entry = self._initialism(token[:-len(suffix)], language, table, initialisms)
+                    if entry:
+                        return entry + (PLURAL_PHONE,)
+        return None
+
+    def _initialism(self, token: str, language: str, table: Mapping[str, tuple[str, ...]],
+                    mixed_case: bool) -> tuple[str, ...] | None:
+        upper = token.upper()
+        if upper in table and upper not in CAPITALS_ONLY.get(language, ()) and token in (upper, token.lower()):
+            return table[upper]   # never a word: capitals or lower case, also in text written all in capitals
+        if not mixed_case or token != upper:
+            return None
+        if token in table:
+            return table[token]
+        letters = LETTERS.get(language)
+        if (letters and 2 <= len(token) <= SPELLED_MAX_LETTERS and token.isascii() and token.isalpha() and token.isupper()
+                and not _VOWEL_LETTERS.intersection(token)):
+            return split_phones(initialism_phones(token, letters), self._vocabulary)
         return None
 
 

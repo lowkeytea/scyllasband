@@ -24,3 +24,6 @@ scyllasband-sing = "scyllasband.cli:sing_main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["scyllasband*"]
+
+[tool.setuptools.package-data]
+"scyllasband.text_data" = ["*.json", "README.md"]

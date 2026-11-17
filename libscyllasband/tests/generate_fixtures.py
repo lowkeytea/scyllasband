@@ -20,6 +20,7 @@ from scyllasband.g2p import _marked_segments, punctuated_segments
 from scyllasband.g2p_phrases import normalize_g2p_phrase_punctuation
 from scyllasband.planner import _PARAGRAPH_RE, plan_records, records_from_text, split_for_retry, split_sentences
 from scyllasband.streaming import StreamOptions, _choose, synthesize_plan_stream
+from scyllasband.text_data import TEXT_DATA, forms
 from scyllasband.text_normalizer import normalize_spoken_text
 
 OUT = Path(__file__).resolve().parent / "fixtures"
@@ -414,17 +415,78 @@ def normalizer_cases() -> list[dict]:
               "e-mail, X-ray, T-shirt and A - B.", "Café café 2024-03-07.", "It's 3.14159 or 2,718.28 or 1,000,000.", "x = 5 and 20°",
               "12345678901234567890123 and ٣٤", "D.J. Stumpy charged $99.99. I met J.K. Rowling.", "He moved to the U.S. Then he left.",
               "She lives in the U.S.", 'Call me at 9 a.m. "Sure," he said.',
-              "Whisper Large V3 beat v3.5 and v2.", "Play the MP3 in 4K on a 3D TV; H2O, B2B, 2FA and e2e.", "GPT4 on an RTX4090 and an A100, Python3, COVID19, iPhone15, x86 at 1080p and 60fps.", "Run it at 10am or 5 PM; the 1990s, the '80s, her 20s, the 2000s; wait 30s.", "On March 4, 1990 and 3/4/2005; test_voice2.py, user_42 and 3.5GB of 16GB.", "100s of 4s, two MP3s, Route 66's history, the 1500s and 1.5s; 68x faster on a 4x4 grid at 1920x1080, 1.5x, 100ms, 24 kHz, 1 GB, 5 mins and 30 mph.", "Edge cases: 4x4.5, 4x45a, 2X, 1.5.s, '1.5s, '1990s, 6's, 0x1F, 1,000s, 10 ms. and 1 fps.", "1,000s of people and 10,000s more, 1,000 ms, 1,500.5x and 1,0005s."]
+              "Anni 108, 180, 1880 e il 0º; el 0.º y 0ª.", "Whisper Large V3 beat v3.5 and v2.", "Play the MP3 in 4K on a 3D TV; H2O, B2B, 2FA and e2e.", "GPT4 on an RTX4090 and an A100, Python3, COVID19, iPhone15, x86 at 1080p and 60fps.", "Run it at 10am or 5 PM; the 1990s, the '80s, her 20s, the 2000s; wait 30s.", "On March 4, 1990 and 3/4/2005; test_voice2.py, user_42 and 3.5GB of 16GB.", "100s of 4s, two MP3s, Route 66's history, the 1500s and 1.5s; 68x faster on a 4x4 grid at 1920x1080, 1.5x, 100ms, 24 kHz, 1 GB, 5 mins and 30 mph.", "Edge cases: 4x4.5, 4x45a, 2X, 1.5.s, '1.5s, '1990s, 6's, 0x1F, 1,000s, 10 ms. and 1 fps.", "1,000s of people and 10,000s more, 1,000 ms, 1,500.5x and 1,0005s.",
+              # Initials, abbreviations and titles.
+              "Kenneth A. Schmied met W. C. Handy in Washington D. C. in 1939-1945.", "He chose plan B. The others left 3-2.",
+              "Er kam in Gruppe B. Die anderen gingen.", "Washington D. C. debe su nombre", "J. C. Bach.", "D. K. Arya sagte", "Selon M. Pittman",
+              "Inspekteur D. K. Arya fuhr 480 km/h, 1 km weit, mit 90 kg und 30 % Last.", "I. M. Pei and I. Then B. He left. Ask for A. Smith or J. R. R. Tolkien.",
+              "Dr. Lee und John Baldwin Jr. fuhren nach St. Louis.", "Mme Curie, Mlle Dupont, le Dr. Damadian et Prof. Rossi; Dra. Ruiz, Dott. Bianchi e il Sig. Verdi.",
+              "EE. UU.", "EE.UU.", "Los EE UU y EE. UU. Luego", "z.B.", "z. B.", "usw. Der Rest", "etc.", "etc., bzw. ca. 5, Nr. 7, ggf. evtl. inkl. bspw. d. h. u. a. hier",
+              "av. J.-C.", "n.º 11", "le n° 5, nº 6", "Sig.ra Rossi", "En el 44 a. C. y el 14 d. C. Roma, p. ej. Ud. y Uds. con la Srta. Paz, el Sr. Gil y la Sra. Gil.",
+              "Nel 44 a.C. e nel 14 d.C. Roma, ecc. Poi Jr. e Sr.", "La SNCF et le Dr. Damadian, 5 000 ans av. J.-C.", "Metc. etc.x a.etc.",
+              # Initialisms in capitals and Roman numerals.
+              "Das UN-Mitgliedsland nutzt z.B. UMTS bzw. LTE usw. Der NDR und die NATO senden.", "ACHTUNG, DIE SPD TAGT.",
+              "J. C. Bach y el NDP: 104 500 barriles a 11 km/h, el n.º 11.", "La ONU, la UE y el PIB; l'ONG, la TVA, le B-52, FBI-4 et un TGV's.",
+              "papa Giovanni XXIII e Elisabetta II", "el rey Juan Carlos I y Alfonso XIII", "la reina Isabel II.", "François Ier et Napoléon III", "XVe siècle",
+              "siglo IX", "nel XV secolo", "secolo XV", "Au XVIIIe siècle, François Ier et Elizabeth II roulaient à 56-64 km/h, etc.",
+              "En los EE. UU. del siglo XX, la reina Isabel II y Alfonso XIII, etc.", "Nel XV secolo Elisabetta II, e/o Kier Starmer QC, a 11 km/h, ecc.",
+              "La Ire armée, le IIe et la XXIème; Luis XIV, Pío XII, Benedetto XVI, (Carlo V), secolo XXX, MIX, Vitamin XI e Maria I.",
+              "World War II ended in Queen Elizabeth II's youth; Gordon R. Dickson, Malcolm X.", "Le TGV, une ONG et le NPWS.", "Pagine 21, 38 e 45.",
+              "Henry VIII’s six wives, Louis XIV'sx, Rocky IV, Rocky IVs, part II, Apollo XIII. MARK II AND Mark XL, Type XXXIX-b, 28, 81, 88 e 121.",
+              # Grouped numbers, ranges, clock times, percent, units, slashes and degrees.
+              "Appelez le 0800 123 456 vite", "capacidad de 104 500 barriles", "5 000 000 de visiteurs", "1 000 et 12 345 678 mais 1 2345, 1234 567 et 1 000 5",
+              "4,2-3,9 milioni", "(1644-1912)", "1995- 96", "56-64 km/h", "7-2", "pages 10-15", "555-1234", "4.2-3.9 million, 0-5, 5-05, 3 - 4, 1-2-3, 2-3.5.1 and 10-20%",
+              "Selon M. Pittman, 31 % des 5 000 000 de visiteurs partent à 7 h 19 ou 21 h.", "1 h 05", "21 h", "25 h 99", "7h30, 0 h, 7 h 195, 123 h et 7 hommes",
+              "31 %", "31%", "bis zu 480 km/h (133 m/s; 300 MPH)", "1 km", "1 m, 2 m/s, 3 mm, 4 cm, 5 kg, 6 mph, 7 km/hx, 8 m/s2 and 1,5 km",
+              "Drive to/from work at 40 mph (64 km/h) in 30 °C heat.", "5 kph, 1 km/h and 3 m/s", "to/from", "and/or", "e/o", "seiner/ihrer", "a / b, 1/x, x/2 and n/a/b",
+              "30 °C", "90 °F", "20°C, 5 ° F, 30 °Cx and 40 °K", "A *bold* word * and a footnote*.",
+              # Table entries in context: abbreviations, titles, symbols, currency with scales, units, ordinals and dates.
+              "Dr. Smith met Mrs. Jones on Main Dr. today, e.g. at 5 p.m. etc.", "DR. SMITH AND MR JONES, ETC. THE FBI SAID.",
+              "Mr Smith & Co. paid $3.5 billion, £2bn and $5m to Smith Bros. Inc. in 2020.",
+              "See No. 5, pp. 12–15 and § 3; ~5 km away at 40 mph, 1 kg, 1.5 kg, 10 lbs, 3 ft and 5 m.", "Max. 5 people. I saw Max. Then he left.",
+              "Queen Elizabeth II's reign, Henry VIII, World War II, Rocky II and Pope John Paul II; King George V.",
+              "St Paul's and Baker St. The St. Louis arch.", "It was 1939–1945 and the score was 7–2.", "vs. vs VS and aka AKA a.k.a. w/ w/o",
+              "Dr. Lee, z.B. Herr Müller u. a., fuhr am 3. Oktober 1990 mit 120 km/h, 1 t und 1 km. Usw. Der Rest.",
+              "Am 03.10.2026 kamen ca. 5 Mio. Menschen, d. h. 21 % mehr; der 2. Weltkrieg; S. 12; Nr. 5; 1 h.",
+              "Die EU, die USA, die UN, die CDU, die ICE-Strecke und die AfD; die GmbH & Co. KG.", "Er war 5. Danach ging er. 1. Einleitung",
+              "Selon M. Pittman, le Dr Martin et Mme Dupont, n° 5, au XVIIIe siècle, le 1er mai et la 2e fois, 21 h 05.",
+              "Il pèse 1 t, 21 t, 1,5 km, 2 km; c.-à-d. 5 % du PIB, l'UE et les USA, etc. Fin.",
+              "El Sr. García y la Dra. López, en EE. UU., el siglo XX, la reina Isabel II, Alfonso XIII, el 1.º y la 3.ª.",
+              "Pesa 1 t, 21 t, 21 km, 31 km, 1 km; p. ej., 5 % del PIB, n.º 11, pág. 4, C/ Mayor s/n.",
+              "Il Sig. Rossi e la Sig.ra Bianchi, Dott.ssa Verdi, nel XV secolo, papa Giovanni XXIII, 1º maggio, 23, 38, 135, 2023, 103.",
+              "A 11 km/h, 1 t, 21 km, ecc., p. es. il 5 % e 3,5 mln.",
+              "TP.HCM và TP. Hà Nội, UBND, THPT, GS.TS. Nguyễn Văn An, 50.000đ, 5h30, 30°C, Q. 1, v.v.", '" , Carlo VI e ( , Carlos VI']
     cases = []
     for language in ("en_us", "en_gb", "es", "it", "fr", "de", "vi"):
         for text in corpus:
             cases.append(dict(text=text, language=language, expected=normalize_spoken_text(text, language=language)))
+    for language, text in text_data_cases():
+        cases.append(dict(text=text, language=language, expected=normalize_spoken_text(text, language=language)))
+    return cases
+
+
+def text_data_cases() -> list[tuple[str, str]]:
+    """Every written form of every table entry (scyllasband/text_data), in its own language: as written, in lower and upper
+    case, in a sentence written all in capitals, capitalised at the start of a sentence, and without the space after a dot."""
+    sentences = {"abbreviations": lambda form: f"aa {form} bb", "titles": lambda form: f"aa {form} Zorro bb",
+                 "before_number": lambda form: f"aa {form} 7 bb", "units": lambda form: f"aa 7 {form} bb"}
+    openings = {"abbreviations": lambda form: f"{form} bb", "titles": lambda form: f"{form} Zorro bb",
+                "before_number": lambda form: f"{form} 7 bb", "units": lambda form: f"7 {form} bb"}
+    cases = []
+    for lang, data in TEXT_DATA.items():
+        language = "en_us" if lang == "en" else lang
+        for section, sentence in sentences.items():
+            for entry in data.get(section, ()):
+                for form in forms(entry["written"]):
+                    texts = [sentence(form), sentence(form).upper(), sentence(form.lower()), sentence(form.upper()),
+                             openings[section](form[:1].upper() + form[1:]), sentence(form.replace(". ", "."))]
+                    cases.extend((language, text) for text in dict.fromkeys(texts))
     return cases
 
 
 def unicode_cases() -> list[dict]:
-    samples = ["ÀÉÎÕÜ Ñ İstanbul ΣΑΣ Москва ẞ", "é Å Å ẛ̣ q̣̇ 각", "Việt Nam"]
-    return [dict(text=text, lower=text.lower(), nfc=unicodedata.normalize("NFC", text)) for text in samples]
+    samples = ["ÀÉÎÕÜ Ñ İstanbul ΣΑΣ Москва ẞ", "é Å Å ẛ̣ q̣̇ 각", "Việt Nam", "Straße ﬁne ŉ ΐ ǆǅ ı ſ µ ᾳ"]
+    return [dict(text=text, lower=text.lower(), upper=text.upper(), nfc=unicodedata.normalize("NFC", text)) for text in samples]
 
 
 def main() -> None:

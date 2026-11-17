@@ -41,6 +41,7 @@ TEXTS = (
     ("question", "Did you really leave the gate open all night? What were you thinking?"),
     ("statement", "Please put the small blue box beside the kitchen window, then close the door behind you."),
     ("lexicon", "Two GPUs ran pytest on a new git branch, then beat Whisper Large V3 on LibriSpeech in the TV room."),
+    ("spelled", "The PTWC and two more PTWCs told NASA that the NPR feed's down."),
 )
 # Long-form only, as paragraphs of their own: short sentences the streaming loop packs together, one sentence longer
 # than the model was trained on, which it cuts at clauses, and a passage without punctuation, which it cuts between words.

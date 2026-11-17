@@ -141,9 +141,10 @@ G2P::G2P(const std::string& bundle_dir, const Json& manifest, const std::map<std
         }
     }
     // The runtime lexicon (lexicon.py), then the bundle's word entries (g2p_phoneme_dict), which add or replace words.
-    for (const LexiconEntry& entry : kLexiconInitialisms) {
+    for (const LexiconInitialism& entry : kLexiconInitialisms) {
         std::vector<std::string> phones = split_lexicon_phones(entry.phones, phone_to_id_);
         if (!phones.empty()) lexicon_initialisms_[entry.language][entry.word] = phones;
+        if (entry.capitals_only) lexicon_capitals_only_[entry.language].insert(entry.word);
     }
     auto add_word = [&](const std::string& language, const std::string& word, const std::string& phones) {
         std::string key = encode(lower(strip(decode(word))));
@@ -407,23 +408,65 @@ void G2P::apply_overrides(Prediction& prediction, const Text& text, const std::s
     }
 }
 
-std::vector<std::string> G2P::lexicon_entry(const Text& token, const std::string& language, bool initialisms) const {
+std::vector<std::string> G2P::lexicon_entry(const Text& token, const std::string& language, bool mixed_case) const {
     auto words = lexicon_words_.find(language);
     if (words != lexicon_words_.end()) {
-        auto it = words->second.find(encode(lower(token)));
+        const Text lowered = lower(token);
+        auto it = words->second.find(encode(lowered));
         if (it != words->second.end()) return it->second;
+        // A possessive "'s" on a word entry ("Garcia's"): lexicon.possessive_phones.
+        for (const Text& suffix : {Text(U"'s"), Text(U"\u2019s")}) {
+            if (lowered.size() <= suffix.size() || lowered.compare(lowered.size() - suffix.size(), suffix.size(), suffix) != 0) continue;
+            auto base = words->second.find(encode(lowered.substr(0, lowered.size() - suffix.size())));
+            if (base == words->second.end()) continue;
+            std::vector<std::string> phones = base->second;
+            std::string last;
+            for (auto p = phones.rbegin(); p != phones.rend(); ++p) {
+                if (*p != "ˈ" && *p != "ˌ" && *p != "ː") { last = *p; break; }
+            }
+            if (last == "s" || last == "z" || last == "ʃ" || last == "ʒ") { phones.push_back("ɪ"); phones.push_back("z"); }
+            else if (last == "p" || last == "t" || last == "k" || last == "f" || last == "θ") phones.push_back("s");
+            else phones.push_back("z");
+            return phones;
+        }
     }
-    if (!initialisms) return {};
     auto table = lexicon_initialisms_.find(language);
     if (table == lexicon_initialisms_.end()) return {};
-    auto exact = table->second.find(encode(token));
-    if (exact != table->second.end()) return exact->second;
+    auto capitals_only = lexicon_capitals_only_.find(language);
+    // Lexicon._initialism: a listed initialism that is never a word, in capitals or in lower case, also in text written all
+    // in capitals; in capitals inside mixed-case text, one that is also a word ("US") or any other word in capitals with no
+    // vowel letter, read letter by letter.
+    auto initialism = [&](const Text& word) -> std::vector<std::string> {
+        const Text capitals = upper(word);
+        const std::string key = encode(capitals);
+        auto listed = table->second.find(key);
+        bool also_word = capitals_only != lexicon_capitals_only_.end() && capitals_only->second.count(key);
+        if (listed != table->second.end() && !also_word && (word == capitals || word == lower(word))) return listed->second;
+        if (!mixed_case || word != capitals) return {};
+        listed = table->second.find(encode(word));
+        if (listed != table->second.end()) return listed->second;
+        if (word.size() < 2 || word.size() > kLexiconSpelledMaxLetters) return {};
+        std::string phones;
+        for (std::size_t i = 0; i < word.size(); ++i) {
+            if (word[i] < 'A' || word[i] > 'Z' || std::string_view(kLexiconVowelLetters).find(static_cast<char>(word[i])) != std::string_view::npos) return {};
+            std::string letter;
+            for (const LexiconLetter& entry : kLexiconLetters) {
+                if (language == entry.language && word[i] == static_cast<char32_t>(entry.letter)) letter = entry.phones;
+            }
+            if (letter.empty()) return {};
+            std::size_t stress = letter.find("{s}");  // lexicon.initialism_phones: primary stress on the last letter
+            if (stress != std::string::npos) letter.replace(stress, 3, i + 1 < word.size() ? "ˌ" : "ˈ");
+            phones += letter;
+        }
+        return split_lexicon_phones(phones, phone_to_id_);
+    };
+    std::vector<std::string> exact = initialism(token);
+    if (!exact.empty()) return exact;
     for (const char* suffix_utf8 : kLexiconPluralSuffixes) {  // a plural or possessive initialism: "GPUs", "CPU's"
         Text suffix = decode(suffix_utf8);
         if (token.size() < suffix.size() || token.compare(token.size() - suffix.size(), suffix.size(), suffix) != 0) continue;
-        auto base = table->second.find(encode(token.substr(0, token.size() - suffix.size())));
-        if (base == table->second.end()) continue;
-        std::vector<std::string> phones = base->second;
+        std::vector<std::string> phones = initialism(token.substr(0, token.size() - suffix.size()));
+        if (phones.empty()) continue;
         phones.push_back(kLexiconPluralPhone);
         return phones;
     }
@@ -435,10 +478,10 @@ std::vector<std::string> G2P::lexicon_entry(const Text& token, const std::string
 // own and joined with the entries.
 void G2P::apply_lexicon(Prediction& prediction, const Text& text, const std::string& language) {
     std::vector<Text> tokens = split_whitespace(text);
-    bool initialisms = std::any_of(text.begin(), text.end(), [](char32_t c) { return c >= 'a' && c <= 'z'; });
+    bool mixed_case = std::any_of(text.begin(), text.end(), [](char32_t c) { return c >= 'a' && c <= 'z'; });  // lexicon.has_lowercase
     std::map<std::size_t, std::vector<std::string>> hits;
     for (std::size_t i = 0; i < tokens.size(); ++i) {
-        std::vector<std::string> entry = lexicon_entry(tokens[i], language, initialisms);
+        std::vector<std::string> entry = lexicon_entry(tokens[i], language, mixed_case);
         if (!entry.empty()) hits[i] = std::move(entry);
     }
     if (hits.empty()) return;
