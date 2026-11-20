@@ -33,9 +33,12 @@ def _validate(phones, language):
 def _from_say(text, language):
     from scyllasband import ScyllasBandRuntime, SynthesisRequest
     runtime = ScyllasBandRuntime.from_bundle('/models/litert')
+    # The dict format is per-locale, so derive phones once with an English
+    # voice and fan the result out when --language all is used.
+    derive_lang = language if language in ('en_gb', 'en_us') else 'en_gb'
     result = runtime.synthesize(SynthesisRequest(
-        text=text, voice_id='orpheus' if language == 'en_gb' else 'scylla',
-        language=language))
+        text=text, voice_id='orpheus' if derive_lang == 'en_gb' else 'scylla',
+        language=derive_lang))
     phones = result.metadata['chunks'][0]['phones']
     return ''.join(p for p in phones if not p.startswith('<'))
 
@@ -50,6 +53,13 @@ def _save(data):
     # The dict is a bind mount: os.replace on the target fails with EBUSY.
     # Write in place; the runtime reads it only at startup.
     DICT.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + '\n')
+
+
+def _languages(spec, data):
+    """Resolve --language: 'all' means every locale already in the dict."""
+    if spec == 'all':
+        return sorted(data)
+    return [spec]
 
 
 def main():
@@ -74,21 +84,23 @@ def main():
                 print(f'{lang:6s} {word:20s} {phones}')
         return
     if a.cmd == 'remove':
-        lang = a.language
+        langs = _languages(a.language, data)
         word = a.word.strip().lower()
-        if data.get(lang, {}).pop(word, None) is None:
-            print(f'not found: {lang}/{word}', file=sys.stderr)
+        found = [lang for lang in langs if data.get(lang, {}).pop(word, None) is not None]
+        if not found:
+            print(f'not found: {a.language}/{word}', file=sys.stderr)
             return 1
         _save(data)
-        print(f'removed {lang}/{word}')
+        print(f'removed {word} from {", ".join(found)}')
         return
 
-    lang, word = a.language, a.word.strip().lower()
-    phones = _from_say(a.say, lang) if a.say is not None else a.phones
-    phones = _validate(phones, lang)
-    data.setdefault(lang, {})[word] = phones
+    langs, word = _languages(a.language, data), a.word.strip().lower()
+    phones = _from_say(a.say, a.language) if a.say is not None else a.phones
+    phones = _validate(phones, langs[0] if langs else 'en_gb')
+    for lang in langs:
+        data.setdefault(lang, {})[word] = phones
     _save(data)
-    print(f'{lang}/{word} = {phones}  (restart container to apply)')
+    print(f'{word} = {phones} in {", ".join(langs)}  (restart container to apply)')
 
 
 if __name__ == '__main__':

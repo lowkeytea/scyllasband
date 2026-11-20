@@ -84,7 +84,10 @@ docker exec scyllasband-wyoming python /app/pronunciation.py remove jon
 
 `--say` runs the name through the G2P and uses the phones it produces; `--phones`
 takes an exact IPA phone string. Both default to `en_gb`; pass `--language en_us`
-for the American locale. These `docker exec` commands work from any directory;
+for the American locale, or `--language all` to write one entry to every locale
+in the file (handy for names). The dict format is per-locale — upstream's loader
+ignores a global key, so the helper fans the entry out for you. These `docker
+exec` commands work from any directory;
 `docker compose exec` would require the compose project directory. Each change
 writes `phoneme_dict.json.bak` beside the live file on the host (one generation
 of backup). Restart the container after a change (`docker compose restart` from
