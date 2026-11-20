@@ -76,17 +76,19 @@ vocabulary, writes a `phoneme_dict.json.bak` backup first, then saves the file
 in place:
 
 ```bash
-docker compose exec -T scyllasband-wyoming python /app/pronunciation.py add jon --say "JON"
-docker compose exec -T scyllasband-wyoming python /app/pronunciation.py add jon --phones "dʒˈɒn"
-docker compose exec -T scyllasband-wyoming python /app/pronunciation.py list
-docker compose exec -T scyllasband-wyoming python /app/pronunciation.py remove jon
+docker exec scyllasband-wyoming python /app/pronunciation.py add jon --say "JON"
+docker exec scyllasband-wyoming python /app/pronunciation.py add jon --phones "dʒˈɒn"
+docker exec scyllasband-wyoming python /app/pronunciation.py list
+docker exec scyllasband-wyoming python /app/pronunciation.py remove jon
 ```
 
 `--say` runs the name through the G2P and uses the phones it produces; `--phones`
 takes an exact IPA phone string. Both default to `en_gb`; pass `--language en_us`
-for the American locale. Each change writes `phoneme_dict.json.bak` beside the
-live file on the host (one generation of backup). Restart the container after a
-change (`docker compose restart`) so the runtime reloads the file. The raw
+for the American locale. These `docker exec` commands work from any directory;
+`docker compose exec` would require the compose project directory. Each change
+writes `phoneme_dict.json.bak` beside the live file on the host (one generation
+of backup). Restart the container after a change (`docker compose restart` from
+the project directory) so the runtime reloads the file. The raw
 mapping is `{language: {word: phones}}`; keys are lowercased and every phone
 must exist in the bundle vocabulary. Upstream's own corrections live in
 `scyllasband/lexicon.py` (`WORDS`); this file extends them, it does not replace

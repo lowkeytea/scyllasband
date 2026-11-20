@@ -2,10 +2,10 @@
 """Add/list/remove pronunciation overrides in the bind-mounted phoneme_dict.json.
 
 Runs inside the container:
-  docker compose exec -T scyllasband-wyoming python /app/pronunciation.py add pamela --say "PAM uh luh"
-  docker compose exec -T scyllasband-wyoming python /app/pronunciation.py add pamela --phones "pæmˈələ"
-  docker compose exec -T scyllasband-wyoming python /app/pronunciation.py list
-  docker compose exec -T scyllasband-wyoming python /app/pronunciation.py remove pamela
+  docker exec scyllasband-wyoming python /app/pronunciation.py add pamela --say "PAM uh luh"
+  docker exec scyllasband-wyoming python /app/pronunciation.py add pamela --phones "pæmˈələ"
+  docker exec scyllasband-wyoming python /app/pronunciation.py list
+  docker exec scyllasband-wyoming python /app/pronunciation.py remove pamela
 """
 import argparse, json, os, sys
 from pathlib import Path
