@@ -66,6 +66,32 @@ All fourteen voices also support `de`, `es`, `fr`, `it` and `vi`; the other
 eleven use `en_us`. If a pipeline requests a language a voice does not support,
 the server silently uses that voice's own default language instead of failing.
 
+## Pronunciation overrides
+
+`phoneme_dict.json` is bind-mounted into the container and holds word → phones
+entries per language. It starts with the upstream runtime's built-in word fixes
+(`git`, `librispeech`, `pytest`) and `Pamela` (`pæmˈələ`, "PAM-uh-luh").
+Use the helper to add or remove words; it validates phones against the model's
+vocabulary, writes a `phoneme_dict.json.bak` backup first, then saves the file
+in place:
+
+```bash
+docker compose exec -T scyllasband-wyoming python /app/pron_helper.py add jon --say "JON"
+docker compose exec -T scyllasband-wyoming python /app/pron_helper.py add jon --phones "dʒˈɒn"
+docker compose exec -T scyllasband-wyoming python /app/pron_helper.py list
+docker compose exec -T scyllasband-wyoming python /app/pron_helper.py remove jon
+```
+
+`--say` runs the name through the G2P and uses the phones it produces; `--phones`
+takes an exact IPA phone string. Both default to `en_gb`; pass `--language en_us`
+for the American locale. Each change writes `phoneme_dict.json.bak` beside the
+live file on the host (one generation of backup). Restart the container after a
+change (`docker compose restart`) so the runtime reloads the file. The raw
+mapping is `{language: {word: phones}}`; keys are lowercased and every phone
+must exist in the bundle vocabulary. Upstream's own corrections live in
+`scyllasband/lexicon.py` (`WORDS`); this file extends them, it does not replace
+them.
+
 ## Configuration
 
 Environment variables in `docker-compose.yml`:
