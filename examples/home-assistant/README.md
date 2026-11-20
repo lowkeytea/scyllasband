@@ -5,6 +5,10 @@ It occupies the same slot as `kokoro-wyoming` in Home Assistant: add it as a
 **Wyoming Protocol** integration and point any Assist pipeline at the resulting
 `tts.*` entity. No changes to Home Assistant itself are required.
 
+The server advertises Wyoming streaming synthesis. Home Assistant can start
+playing audio after the first complete sentence of a long reply instead of
+waiting for the whole passage.
+
 ## Why a shim
 
 Scylla's Band ships a Python API, a CLI and a C API, but no server. Home
