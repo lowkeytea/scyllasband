@@ -124,9 +124,10 @@ Environment variables in `docker-compose.yml`:
 | `SCYLLASBAND_MAX_CHARS` | `0` (no cap) | Reject requests longer than this many characters |
 | `WYOMING_URI` | `tcp://0.0.0.0:10210` | Wyoming listen URI |
 
-The shipped compose file leaves the delivery variables unset, so each voice's
-own defaults apply. Setting one explicitly is still supported. Intensity and
-pace are measured in the voice's own range; positive intensity is more
+The shipped compose file comments out the three delivery variables, so each
+voice's own defaults apply. To override a default, uncomment that line in
+`docker-compose.yml` and set the value, then recreate the container. Intensity
+and pace are measured in the voice's own range; positive intensity is more
 expressive.
 
 ## Verification
