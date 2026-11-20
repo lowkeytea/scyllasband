@@ -12,8 +12,10 @@ from functools import partial
 from pathlib import Path
 
 import numpy as np
+from importlib.metadata import version
 from scyllasband import ScyllasBandRuntime, SynthesisRequest
 from wyoming.audio import AudioChunk, AudioStart, AudioStop
+from wyoming.error import Error
 from wyoming.event import Event
 from wyoming.info import Attribution, Describe, Info, TtsProgram, TtsVoice
 from wyoming.server import AsyncEventHandler, AsyncServer
@@ -23,11 +25,17 @@ LOG = logging.getLogger("scyllasband-wyoming")
 BUNDLE = Path(os.environ.get("SCYLLASBAND_MODELS", "/models/litert"))
 DEFAULT_VOICE = os.environ.get("SCYLLASBAND_VOICE", "orpheus")
 DEFAULT_LANG = os.environ.get("SCYLLASBAND_LANGUAGE", "en_gb")
+def _delivery(name: str) -> float | None:
+    raw = os.environ.get(f"SCYLLASBAND_{name.upper()}")
+    return float(raw) if raw not in (None, "") else None
+
+
 DELIVERY = {
-    "intensity": float(os.environ.get("SCYLLASBAND_INTENSITY", "0")),
-    "pace": float(os.environ.get("SCYLLASBAND_PACE", "0")),
-    "pitch": float(os.environ.get("SCYLLASBAND_PITCH", "0")),
+    "intensity": _delivery("intensity"),
+    "pace": _delivery("pace"),
+    "pitch": _delivery("pitch"),
 }
+MAX_CHARS = int(os.environ.get("SCYLLASBAND_MAX_CHARS", "0"))
 ATTR = Attribution(name="Scylla's Band", url="https://github.com/lowkeytea/scyllasband")
 _LOCK = asyncio.Lock()
 
@@ -35,6 +43,9 @@ runtime = ScyllasBandRuntime.from_bundle(BUNDLE)
 runtime.warmup()
 MANIFEST = json.loads((BUNDLE / "manifest.json").read_text(encoding="utf-8"))
 VOICES = {v["id"]: v for v in MANIFEST["voices"]}
+LANGUAGE_MAP = json.loads(
+    (BUNDLE / "assets" / "g2p" / "language_map.json").read_text(encoding="utf-8")
+)
 
 
 def _info() -> Info:
@@ -56,17 +67,34 @@ def _info() -> Info:
         attribution=ATTR,
         installed=True,
         voices=voices,
-        version="3.0.0",
+        version=version("scyllasband"),
     )])
 
 
+def _resolve_language(language: str, spec: dict | None) -> str:
+    """Map regional codes to the voice's supported base language.
+
+    Only English variants fall back to the voice's own English: a stale HA
+    pipeline left on en_US must still work with a British voice. A non-English
+    code the voice does not support is passed through so the runtime reports a
+    real error instead of speaking German with English pronunciation.
+    """
+    code = language.strip().lower().replace("-", "_")
+    mapped = LANGUAGE_MAP.get(code, code)
+    supported = set(spec["languages"]) if spec else set()
+    if mapped in supported or mapped == "en":
+        return mapped
+    base = mapped.split("_")[0]
+    if base in supported:
+        return base
+    if mapped.startswith("en") or base == "en":
+        return (spec or {}).get("default_language") or "en"
+    return mapped
+
+
 def _synth(text: str, voice: str, language: str) -> tuple[bytes, int]:
-    # "en" is accepted by scyllasband as the voice's own English. For any other
-    # unsupported code (e.g. HA left on en_US), use the voice's default so a
-    # stale pipeline setting cannot break synthesis.
     spec = VOICES.get(voice)
-    if spec and language != "en" and language not in spec["languages"]:
-        language = spec.get("default_language") or language
+    language = _resolve_language(language, spec)
     result = runtime.synthesize(SynthesisRequest(
         text=text, voice_id=voice, language=language, **DELIVERY
     ))
@@ -82,17 +110,23 @@ class Handler(AsyncEventHandler):
 
         if Synthesize.is_type(event.type):
             request = Synthesize.from_event(event)
-            if not request.text.strip():
-                await self.write_event(AudioStop().event())
-                return True
-
             voice = request.voice.name if request.voice and request.voice.name else DEFAULT_VOICE
             language = request.voice.language if request.voice and request.voice.language else DEFAULT_LANG
-            language = language.lower().replace("-", "_")
-            # HA sends "en"; scyllasband uses "en" for the voice's own English.
             LOG.info("Synthesize voice=%s language=%s chars=%d", voice, language, len(request.text))
-            async with _LOCK:
-                audio, rate = await asyncio.to_thread(_synth, request.text, voice, language)
+            if MAX_CHARS > 0 and len(request.text) > MAX_CHARS:
+                await self.write_event(Error(
+                    text=f"text exceeds SCYLLASBAND_MAX_CHARS ({MAX_CHARS})",
+                    code="text-too-long",
+                ).event())
+                return True
+            try:
+                async with _LOCK:
+                    audio, rate = await asyncio.to_thread(_synth, request.text, voice, language)
+            except Exception as exc:
+                LOG.warning("synthesis failed: %s", exc)
+                await self.write_event(Error(text=str(exc) or type(exc).__name__,
+                                             code="synthesis-failed").event())
+                return True
             await self.write_event(AudioStart(rate=rate, width=2, channels=1).event())
             await self.write_event(AudioChunk(audio=audio, rate=rate, width=2, channels=1).event())
             await self.write_event(AudioStop().event())

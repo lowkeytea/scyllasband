@@ -38,7 +38,7 @@ Useful variants:
 
 | Command | Purpose |
 | --- | --- |
-| `docker compose build --no-cache` | Force a fresh build (upstream `main` can move) |
+| `docker compose build --no-cache` | Force a fresh build (override the pinned commit with `--build-arg SCYLLASBAND_COMMIT=...`) |
 | `docker compose up -d` | Start/recreate using the existing image |
 | `docker compose down` | Stop and remove the container |
 | `docker logs scyllasband-wyoming -f` | Follow startup and synthesis logs |
@@ -51,10 +51,21 @@ edit the `ports` entry in `docker-compose.yml`. To change delivery defaults or
 the listen URI, set the environment variables below — no code change needed.
 First synthesis includes a short model warm-up.
 
+## Security
+
+Wyoming has no authentication. Docker published ports bypass host firewalls
+such as ufw, so keep this port on the local network and do not forward it to
+the internet. Bind it to one host address when possible:
+
+```yaml
+ports:
+  - "192.168.1.10:10211:10210"
+```
+
 ## Home Assistant setup
 
 1. Settings → Devices & services → Add integration → **Wyoming Protocol**.
-2. Host: the Docker host's IP (e.g. `192.168.3.11`), Port: `10211`.
+2. Host: the Docker host's IP (e.g. `<docker-host-ip>`), Port: `10211`.
 3. A new TTS entity appears (for example `tts.scyllasband_...`).
 4. Settings → Voice assistants → your pipeline → Text-to-speech: pick that
    entity, language `en_GB` (or `en`), and a voice from the list below.
@@ -63,8 +74,9 @@ First synthesis includes a short model warm-up.
 British English voices in the current model are `ink`, `orpheus` and `tuesday`;
 `orpheus` is the default.
 All fourteen voices also support `de`, `es`, `fr`, `it` and `vi`; the other
-eleven use `en_us`. If a pipeline requests a language a voice does not support,
-the server silently uses that voice's own default language instead of failing.
+eleven use `en_us`. Regional codes map to the voice's base locale (`de_DE` to
+`de`). Only English variants fall back to the voice's own English; an
+unsupported non-English locale returns an error to Home Assistant.
 
 ## Pronunciation overrides
 
@@ -108,9 +120,11 @@ Environment variables in `docker-compose.yml`:
 | `SCYLLASBAND_INTENSITY` | `0` | Delivery intensity, −2 to 2 |
 | `SCYLLASBAND_PACE` | `0` | Delivery pace, −2 to 2 |
 | `SCYLLASBAND_PITCH` | `0` | Pitch shift in semitones, −2 to 2 |
+| `SCYLLASBAND_MAX_CHARS` | `0` (no cap) | Reject requests longer than this many characters |
 | `WYOMING_URI` | `tcp://0.0.0.0:10210` | Wyoming listen URI |
 
-Delivery defaults of `0` use each voice's own delivery. Intensity and pace are
+Unset delivery variables leave the value as `None`, so the voice's own default
+applies. Explicit `0` is still accepted. Intensity and pace are
 measured in the voice's own range; positive intensity is more expressive.
 
 ## Verification
