@@ -76,10 +76,10 @@ vocabulary, writes a `phoneme_dict.json.bak` backup first, then saves the file
 in place:
 
 ```bash
-docker compose exec -T scyllasband-wyoming python /app/pron_helper.py add jon --say "JON"
-docker compose exec -T scyllasband-wyoming python /app/pron_helper.py add jon --phones "dʒˈɒn"
-docker compose exec -T scyllasband-wyoming python /app/pron_helper.py list
-docker compose exec -T scyllasband-wyoming python /app/pron_helper.py remove jon
+docker compose exec -T scyllasband-wyoming python /app/pronunciation.py add jon --say "JON"
+docker compose exec -T scyllasband-wyoming python /app/pronunciation.py add jon --phones "dʒˈɒn"
+docker compose exec -T scyllasband-wyoming python /app/pronunciation.py list
+docker compose exec -T scyllasband-wyoming python /app/pronunciation.py remove jon
 ```
 
 `--say` runs the name through the G2P and uses the phones it produces; `--phones`

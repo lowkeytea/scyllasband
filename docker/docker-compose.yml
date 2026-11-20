@@ -6,10 +6,10 @@ services:
     ports:
       - "10211:10210"
     volumes:
-      # Editable pronunciation overrides; use pron_helper.py to add words.
+      # Editable pronunciation overrides; use pronunciation.py to add words.
       - ./phoneme_dict.json:/models/litert/assets/g2p/phoneme_dict.json
       - .:/app/pronunciation
-      - ./pron_helper.py:/app/pron_helper.py:ro
+      - ./pronunciation.py:/app/pronunciation.py:ro
     restart: unless-stopped
     environment:
       SCYLLASBAND_VOICE: orpheus
