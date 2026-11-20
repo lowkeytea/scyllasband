@@ -17,11 +17,20 @@ RUN pip install --no-cache-dir \
       "wyoming${WYOMING_SPEC}"
 
 COPY server.py /app/server.py
+COPY pronunciation.py /app/pronunciation.py
 
 # Bake the LiteRT bundle (~470 MB) into the image so runtime needs no network.
 RUN python -m scyllasband download --flavor litert --models-dir /models -y \
- && useradd --create-home --uid 10001 scylla \
- && chown -R scylla:scylla /app /models
+ && useradd --create-home --uid 10001 scylla
+
+# Word list lives in a named volume owned by the container user. The runtime
+# reads it through a symlink at the bundle path; /models stays root-owned.
+COPY phoneme_dict.json /data/phoneme_dict.json
+RUN chown scylla:scylla /data /data/phoneme_dict.json \
+ && rm /models/litert/assets/g2p/phoneme_dict.json \
+ && ln -s /data/phoneme_dict.json /models/litert/assets/g2p/phoneme_dict.json
+
+VOLUME /data
 
 USER scylla
 

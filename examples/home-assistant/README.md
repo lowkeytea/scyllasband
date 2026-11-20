@@ -84,34 +84,31 @@ unsupported non-English locale returns an error to Home Assistant.
 
 ## Pronunciation overrides
 
-`phoneme_dict.json` is bind-mounted into the container and holds word → phones
-entries per language. It starts with the upstream runtime's built-in word fixes
-(`git`, `librispeech`, `pytest`) and `Pamela` (`pæmˈələ`, "PAM-uh-luh").
+The word list lives in a named volume at `/data/phoneme_dict.json`. It starts
+empty and survives image rebuilds. The runtime reads it through a symlink at
+the bundle path, and the helper runs as the container user, so no host file
+permissions need changing.
+
 Use the helper to add or remove words; it validates phones against the model's
 vocabulary, writes a `phoneme_dict.json.bak` backup first, then saves the file
 in place:
 
 ```bash
-docker exec scyllasband-wyoming python /app/pronunciation.py add jon --say "JON"
 docker exec scyllasband-wyoming python /app/pronunciation.py add jon --phones "dʒˈɒn"
 docker exec scyllasband-wyoming python /app/pronunciation.py list
 docker exec scyllasband-wyoming python /app/pronunciation.py remove jon
 ```
 
-`--say` runs the name through the G2P and uses the phones it produces; `--phones`
-takes an exact IPA phone string. Both default to `en_gb`; pass `--language en_us`
-for the American locale, or `--language all` to write one entry to every locale
-in the file (handy for names). The dict format is per-locale — upstream's loader
-ignores a global key, so the helper fans the entry out for you. These `docker
-exec` commands work from any directory;
-`docker compose exec` would require the compose project directory. Each change
-writes `phoneme_dict.json.bak` beside the live file on the host (one generation
-of backup). Restart the container after a change (`docker compose restart` from
-the project directory) so the runtime reloads the file. The raw
-mapping is `{language: {word: phones}}`; keys are lowercased and every phone
-must exist in the bundle vocabulary. Upstream's own corrections live in
-`scyllasband/lexicon.py` (`WORDS`); this file extends them, it does not replace
-them.
+`--phones` takes an exact IPA phone string. `--say` sends a respelling through
+the G2P and prints the phones it produced; treat that as a starting point,
+because the G2P stresses each word of a respelling separately and can get it
+wrong. Check the printed phones and re-add with `--phones` when needed.
+
+Both default to `en_gb`; pass `--language en_us` for the American locale, or
+`--language all` to write one entry to every locale in the file. The dict
+format is per-locale. Upstream's own corrections live in `scyllasband/lexicon.py`
+(`WORDS`) and G2P already reads names such as Pamela correctly, so only add
+words it gets wrong for your voice and text.
 
 ## Configuration
 
@@ -121,15 +118,16 @@ Environment variables in `docker-compose.yml`:
 | --- | --- | --- |
 | `SCYLLASBAND_VOICE` | `orpheus` | Default voice id when a request omits one |
 | `SCYLLASBAND_LANGUAGE` | `en_gb` | Default language id |
-| `SCYLLASBAND_INTENSITY` | `0` | Delivery intensity, −2 to 2 |
-| `SCYLLASBAND_PACE` | `0` | Delivery pace, −2 to 2 |
-| `SCYLLASBAND_PITCH` | `0` | Pitch shift in semitones, −2 to 2 |
+| `SCYLLASBAND_INTENSITY` | unset (voice default) | Delivery intensity, −2 to 2 |
+| `SCYLLASBAND_PACE` | unset (voice default) | Delivery pace, −2 to 2 |
+| `SCYLLASBAND_PITCH` | unset (voice default) | Pitch shift in semitones, −2 to 2 |
 | `SCYLLASBAND_MAX_CHARS` | `0` (no cap) | Reject requests longer than this many characters |
 | `WYOMING_URI` | `tcp://0.0.0.0:10210` | Wyoming listen URI |
 
-Unset delivery variables leave the value as `None`, so the voice's own default
-applies. Explicit `0` is still accepted. Intensity and pace are
-measured in the voice's own range; positive intensity is more expressive.
+The shipped compose file leaves the delivery variables unset, so each voice's
+own defaults apply. Setting one explicitly is still supported. Intensity and
+pace are measured in the voice's own range; positive intensity is more
+expressive.
 
 ## Verification
 
@@ -161,5 +159,6 @@ docker exec scyllasband-wyoming python -m scyllasband list-voices /models/litert
 
 - The Python engine is used (not the optional native C++ engine). It needs no
   compiler in the image and runs many times faster than real time on CPU.
-- The image is built from upstream `main` via `pip install git+...`; pin a tag
-  or commit there for a reproducible production build.
+- The image installs scyllasband from the pinned commit in the Dockerfile's
+  `SCYLLASBAND_COMMIT` build ARG and wyoming from the `WYOMING_SPEC` range;
+  override either build arg to change them.

@@ -1,17 +1,7 @@
 {
   "de": {},
-  "en_gb": {
-    "git": "ɡˈɪt",
-    "librispeech": "lˈɪbɹiːspˌiːtʃ",
-    "pamela": "pæmˈələ",
-    "pytest": "pˈaɪtˌɛst"
-  },
-  "en_us": {
-    "git": "ɡˈɪt",
-    "librispeech": "lˈɪbɹiːspˌiːtʃ",
-    "pamela": "pæmˈələ",
-    "pytest": "pˈaɪtˌɛst"
-  },
+  "en_gb": {},
+  "en_us": {},
   "es": {},
   "fr": {},
   "it": {},

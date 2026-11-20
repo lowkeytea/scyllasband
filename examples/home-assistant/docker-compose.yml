@@ -6,14 +6,16 @@ services:
     ports:
       - "10211:10210"
     volumes:
-      # Editable pronunciation overrides; use pronunciation.py to add words.
-      - ./phoneme_dict.json:/models/litert/assets/g2p/phoneme_dict.json
-      - .:/app/pronunciation
-      - ./pronunciation.py:/app/pronunciation.py:ro
+      # Pronunciation overrides survive rebuilds; the image seeds an empty dict.
+      - pronunciation:/data
     restart: unless-stopped
     environment:
       SCYLLASBAND_VOICE: orpheus
       SCYLLASBAND_LANGUAGE: en_gb
-      SCYLLASBAND_INTENSITY: "0"
-      SCYLLASBAND_PACE: "0"
-      SCYLLASBAND_PITCH: "0"
+      # Leave delivery unset so each voice's own defaults apply.
+      # SCYLLASBAND_INTENSITY: "0"
+      # SCYLLASBAND_PACE: "0"
+      # SCYLLASBAND_PITCH: "0"
+
+volumes:
+  pronunciation:

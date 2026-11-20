@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""Add/list/remove pronunciation overrides in the bind-mounted phoneme_dict.json.
+"""Add/list/remove pronunciation overrides in the named-volume word list.
 
 Runs inside the container:
-  docker exec scyllasband-wyoming python /app/pronunciation.py add pamela --say "PAM uh luh"
-  docker exec scyllasband-wyoming python /app/pronunciation.py add pamela --phones "pæmˈələ"
+  docker exec scyllasband-wyoming python /app/pronunciation.py add jon --phones "dʒˈɒn"
   docker exec scyllasband-wyoming python /app/pronunciation.py list
-  docker exec scyllasband-wyoming python /app/pronunciation.py remove pamela
+  docker exec scyllasband-wyoming python /app/pronunciation.py remove jon
+
+Use --say only as a starting point: its G2P stress can be wrong, so check the
+phones it prints and pass an exact --phones string when needed.
 """
 import argparse, json, os, sys
 from pathlib import Path
 
-DICT = Path('/models/litert/assets/g2p/phoneme_dict.json')
+DICT = Path('/data/phoneme_dict.json')
 VOCAB = Path('/models/litert/assets/phone_vocab.json')
-# The compose file bind-mounts the project directory here, so the backup is
-# visible on the host next to phoneme_dict.json.
-BACKUP = Path('/app/pronunciation/phoneme_dict.json.bak')
+BACKUP = Path('/data/phoneme_dict.json.bak')
 
 
 def _vocab():
@@ -48,10 +48,9 @@ def _load():
 
 
 def _save(data):
-    # Back up the live file first (visible on the host via the directory mount).
+    # Back up the live file first, then write in place. The runtime reads the
+    # dict only at startup, so a restart is needed after a change.
     BACKUP.write_text(DICT.read_text())
-    # The dict is a bind mount: os.replace on the target fails with EBUSY.
-    # Write in place; the runtime reads it only at startup.
     DICT.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + '\n')
 
 
@@ -69,7 +68,7 @@ def main():
     add.add_argument('word')
     add.add_argument('--language', default='en_gb')
     src = add.add_mutually_exclusive_group(required=True)
-    src.add_argument('--say', help='respelling, e.g. "PAM uh luh"')
+    src.add_argument('--say', help='rough respelling; check the phones it produces')
     src.add_argument('--phones', help='IPA phones, e.g. "pæmˈələ"')
     sub.add_parser('list')
     rm = sub.add_parser('remove')
