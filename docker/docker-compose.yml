@@ -1,0 +1,14 @@
+services:
+  scyllasband-wyoming:
+    build: .
+    image: scyllasband-wyoming:local
+    container_name: scyllasband-wyoming
+    ports:
+      - "10211:10210"
+    restart: unless-stopped
+    environment:
+      SCYLLASBAND_VOICE: orpheus
+      SCYLLASBAND_LANGUAGE: en_gb
+      SCYLLASBAND_INTENSITY: "0"
+      SCYLLASBAND_PACE: "0"
+      SCYLLASBAND_PITCH: "0"
