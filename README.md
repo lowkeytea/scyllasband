@@ -7,7 +7,7 @@ Delivery is controlled with **intensity, pace and pitch**. The emotion comes fro
 ## Samples and community
 
 - **[Listen to the voices](https://lowkeytea.dev/scyllasband/samples/)**: every voice saying hello, playing a scene and singing a chorus, four songs built from scores, long-form narration and a nine-voice dialogue in six languages.
-- **[Try it in your browser](https://lowkeytea.dev/scyllasband/demo/)**: the runtime compiled to WebAssembly, with the model downloaded once.
+- **[Try it in your browser](https://lowkeytea.dev/scyllasband/demo/)**: the runtime compiled to WebAssembly, with the model downloaded once. The same demo is on [Hugging Face Spaces](https://huggingface.co/spaces/spybyscript/scyllasband).
 - Join the [Scylla's Band Discord](https://discord.gg/mBhpn7WB5N) for release updates, help, and community discussion.
 
 ## Highlights
