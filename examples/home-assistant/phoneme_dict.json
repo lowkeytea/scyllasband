@@ -5,14 +5,20 @@
     "librispeech": "lˈɪbɹiːspˌiːtʃ",
     "pamela": "pæmˈələ",
     "pytest": "pˈaɪtˌɛst",
-    "scheduled": "skˈɛdʒəld"
+    "schedule": "skˈɛdʒuːl",
+    "scheduled": "skˈɛdʒəld",
+    "schedules": "skˈɛdʒuːlz",
+    "scheduling": "skˈɛdʒuːlɪŋ"
   },
   "en_us": {
     "git": "ɡˈɪt",
     "librispeech": "lˈɪbɹiːspˌiːtʃ",
     "pamela": "pæmˈələ",
     "pytest": "pˈaɪtˌɛst",
-    "scheduled": "skˈɛdʒəld"
+    "schedule": "skˈɛdʒuːl",
+    "scheduled": "skˈɛdʒəld",
+    "schedules": "skˈɛdʒuːlz",
+    "scheduling": "skˈɛdʒuːlɪŋ"
   },
   "es": {},
   "fr": {},
