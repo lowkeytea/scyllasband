@@ -7,7 +7,11 @@ It occupies the same slot as `kokoro-wyoming` in Home Assistant: add it as a
 
 The server advertises Wyoming streaming synthesis. Home Assistant can start
 playing audio after the first complete sentence of a long reply instead of
-waiting for the whole passage.
+waiting for the whole passage. Streamed text is cut only where the runtime's
+own text normalization and sentence splitting would cut it, so decimals
+("21.5") and abbreviations ("Dr. Smith", "5 p.m.") read the same as in a
+single request. A sentence is spoken once the next one begins, or when the
+reply ends.
 
 ## Why a shim
 

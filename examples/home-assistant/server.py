@@ -50,7 +50,9 @@ DELIVERY = {
 MAX_CHARS = int(os.environ.get("SCYLLASBAND_MAX_CHARS", "0"))
 ATTR = Attribution(name="Scylla's Band", url="https://github.com/lowkeytea/scyllasband")
 _LOCK = asyncio.Lock()
-_SENTENCE_END = re.compile(r"(?<=[.!?])\s+|(?<=[.!?])$")
+# Where a streamed reply may be cut: the runtime planner's sentence ends (punctuation, closing quotes, then space) and
+# paragraph breaks. Each candidate is checked against the planner before it is used; see _ready_length.
+_CUT = re.compile(r"[.!?…]+[\"'”’»)\]]*\s+|\n\s*\n")
 
 runtime = ScyllasBandRuntime.from_bundle(BUNDLE)
 runtime.warmup()
@@ -115,30 +117,44 @@ def _synth(text: str, voice: str, language: str) -> tuple[bytes, int]:
     return pcm.tobytes(), int(result.sample_rate)
 
 
+def _record(text: str, voice: str, language: str) -> dict:
+    return dict(text=text, voice=voice, language=language, **DELIVERY)
+
+
 def _synth_stream(text: str, voice: str, language: str) -> list[tuple[bytes, int]]:
-    """Synthesize one passage, returning PCM bytes per generated audio chunk."""
-    spec = VOICES.get(voice)
-    resolved = _resolve_language(language, spec)
-    record = dict(
-        text=text, voice=voice, language=resolved,
-        intensity=DELIVERY["intensity"], pace=DELIVERY["pace"], pitch=DELIVERY["pitch"],
-    )
+    """Synthesize one passage (``language`` already resolved), returning PCM bytes per generated audio chunk."""
     out: list[tuple[bytes, int]] = []
-    for event in runtime.synthesize_stream([record]):
+    for event in runtime.synthesize_stream([_record(text, voice, language)]):
         if event.type == "audio_chunk" and event.audio is not None:
             pcm = (np.clip(np.asarray(event.audio, dtype=np.float32), -1, 1) * 32767).astype("<i2")
             out.append((pcm.tobytes(), int(event.sample_rate)))
     return out
 
 
-def _split_sentences(text: str) -> tuple[list[str], str]:
-    """Return complete sentences and the trailing partial sentence."""
-    parts = _SENTENCE_END.split(text)
-    if len(parts) == 1:
-        return [], text
-    # The splitter removes whitespace but keeps the sentence-ending punctuation.
-    complete = [part.strip() for part in parts[:-1] if part.strip()]
-    return complete, parts[-1].strip()
+def _sentences(text: str, voice: str, language: str) -> list[str]:
+    """The sentences the runtime would speak for ``text``, after its own text normalization."""
+    return [chunk.text for chunk in runtime.plan_records([_record(text, voice, language)]).chunks]
+
+
+def _ready_length(buffer: str, voice: str, language: str) -> int:
+    """How much of the start of a streamed ``buffer`` can be spoken now (0 for none).
+
+    Home Assistant sends a streamed reply in fragments as it is written, but the runtime normalizes and splits whole
+    text: "Dr. Smith", "21.5" and "5 p.m. Tomorrow" are only read right with what follows them. So a cut is taken only
+    where planning the two sides separately gives the same sentences as planning the whole buffer, and only with text
+    after it, since the last sentence may still be growing. The latest such cut wins, so sentences that arrive together
+    are spoken together.
+    """
+    whole = None
+    for match in reversed(list(_CUT.finditer(buffer))):
+        end = match.end()
+        if not any(char.isalnum() for char in buffer[end:]):
+            continue
+        if whole is None:
+            whole = _sentences(buffer, voice, language)
+        if _sentences(buffer[:end], voice, language) + _sentences(buffer[end:], voice, language) == whole:
+            return end
+    return 0
 
 
 class Handler(AsyncEventHandler):
@@ -148,32 +164,32 @@ class Handler(AsyncEventHandler):
         self.stream_voice = DEFAULT_VOICE
         self.stream_language = DEFAULT_LANG
         self.stream_buffer = ""
+        self.stream_chars = 0
+        self.stream_failed = False
 
     async def _write_audio(self, audio: bytes, rate: int) -> None:
         await self.write_event(AudioStart(rate=rate, width=2, channels=1).event())
         await self.write_event(AudioChunk(audio=audio, rate=rate, width=2, channels=1).event())
         await self.write_event(AudioStop().event())
 
-    async def _synthesize_passage(self, text: str, voice: str, language: str) -> bool:
+    async def _fail_stream(self, text: str, code: str) -> None:
+        """Report one error for the stream and ignore the rest of its text; SynthesizeStop still ends it."""
+        LOG.warning("stream failed: %s", text)
+        await self.write_event(Error(text=text, code=code).event())
+        self.stream_failed = True
+        self.stream_buffer = ""
+
+    async def _speak_passage(self, text: str) -> None:
         if not text.strip():
-            return True
-        if MAX_CHARS > 0 and len(text) > MAX_CHARS:
-            await self.write_event(Error(
-                text=f"text exceeds SCYLLASBAND_MAX_CHARS ({MAX_CHARS})",
-                code="text-too-long",
-            ).event())
-            return False
+            return
         try:
             async with _LOCK:
-                chunks = await asyncio.to_thread(_synth_stream, text, voice, language)
+                chunks = await asyncio.to_thread(_synth_stream, text, self.stream_voice, self.stream_language)
         except Exception as exc:
-            LOG.warning("streaming synthesis failed: %s", exc)
-            await self.write_event(Error(text=str(exc) or type(exc).__name__,
-                                         code="synthesis-failed").event())
-            return False
+            await self._fail_stream(str(exc) or type(exc).__name__, "synthesis-failed")
+            return
         for audio, rate in chunks:
             await self._write_audio(audio, rate)
-        return True
 
     async def handle_event(self, event: Event) -> bool:
         if Describe.is_type(event.type):
@@ -182,33 +198,40 @@ class Handler(AsyncEventHandler):
 
         if SynthesizeStart.is_type(event.type):
             start = SynthesizeStart.from_event(event)
-            self.is_streaming = True
-            self.stream_buffer = ""
-            if start.voice is not None:
-                self.stream_voice = start.voice.name or DEFAULT_VOICE
-                self.stream_language = start.voice.language or DEFAULT_LANG
-            else:
-                self.stream_voice = DEFAULT_VOICE
-                self.stream_language = DEFAULT_LANG
-            LOG.info("stream start voice=%s language=%s", self.stream_voice, self.stream_language)
+            voice = start.voice.name if start.voice and start.voice.name else DEFAULT_VOICE
+            language = start.voice.language if start.voice and start.voice.language else DEFAULT_LANG
+            self.is_streaming, self.stream_failed = True, False
+            self.stream_buffer, self.stream_chars = "", 0
+            self.stream_voice = voice
+            LOG.info("stream start voice=%s language=%s", voice, language)
+            try:
+                # Check the voice and language once, before any text arrives.
+                self.stream_language = runtime.resolve_language_for_voice(
+                    voice, _resolve_language(language, VOICES.get(voice)))
+            except Exception as exc:
+                await self._fail_stream(str(exc) or type(exc).__name__, "synthesis-failed")
             return True
 
         if SynthesizeChunk.is_type(event.type):
-            if not self.is_streaming:
+            if not self.is_streaming or self.stream_failed:
                 return True
-            chunk = SynthesizeChunk.from_event(event)
-            self.stream_buffer += chunk.text
-            complete, self.stream_buffer = _split_sentences(self.stream_buffer)
-            for sentence in complete:
-                if not await self._synthesize_passage(sentence, self.stream_voice, self.stream_language):
-                    self.stream_buffer = ""
-                    return True
+            text = SynthesizeChunk.from_event(event).text
+            self.stream_chars += len(text)
+            if MAX_CHARS > 0 and self.stream_chars > MAX_CHARS:
+                await self._fail_stream(f"text exceeds SCYLLASBAND_MAX_CHARS ({MAX_CHARS})", "text-too-long")
+                return True
+            self.stream_buffer += text
+            end = _ready_length(self.stream_buffer, self.stream_voice, self.stream_language)
+            if end:
+                ready, self.stream_buffer = self.stream_buffer[:end], self.stream_buffer[end:]
+                await self._speak_passage(ready)
             return True
 
         if SynthesizeStop.is_type(event.type):
             if not self.is_streaming:
                 return True
-            await self._synthesize_passage(self.stream_buffer, self.stream_voice, self.stream_language)
+            if not self.stream_failed:
+                await self._speak_passage(self.stream_buffer)
             self.stream_buffer = ""
             self.is_streaming = False
             await self.write_event(SynthesizeStopped().event())
