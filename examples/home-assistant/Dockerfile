@@ -34,6 +34,6 @@ VOLUME /data
 
 USER scylla
 
-EXPOSE 10210
+EXPOSE 10210 8000
 
 CMD ["python", "/app/server.py"]

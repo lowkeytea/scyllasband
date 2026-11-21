@@ -5,6 +5,8 @@ services:
     container_name: scyllasband-wyoming
     ports:
       - "10211:10210"
+      # OpenAI-compatible HTTP endpoint (Read Aloud custom voices)
+      - "10215:8000"
     volumes:
       # Pronunciation overrides survive rebuilds; the image seeds an empty dict.
       - pronunciation:/data

@@ -7,10 +7,12 @@ Streaming synthesis lets HA start speaking after the first passage of a long
 reply instead of after all of it.
 """
 import asyncio
+import io
 import json
 import logging
 import os
 import re
+import wave
 from functools import partial
 from importlib.metadata import version
 from pathlib import Path
@@ -48,6 +50,8 @@ DELIVERY = {
     "pitch": _delivery("pitch"),
 }
 MAX_CHARS = int(os.environ.get("SCYLLASBAND_MAX_CHARS", "0"))
+HTTP_HOST = os.environ.get("OPENAI_HTTP_HOST", "0.0.0.0")
+HTTP_PORT = int(os.environ.get("OPENAI_HTTP_PORT", "8000"))
 ATTR = Attribution(name="Scylla's Band", url="https://github.com/lowkeytea/scyllasband")
 _LOCK = asyncio.Lock()
 # Where a streamed reply may be cut: the runtime planner's sentence ends (punctuation, closing quotes, then space) and
@@ -265,15 +269,129 @@ class Handler(AsyncEventHandler):
         return True
 
 
+_HTTP_REASONS = {
+    200: "OK", 204: "No Content", 400: "Bad Request", 404: "Not Found",
+    413: "Payload Too Large", 500: "Internal Server Error",
+}
+
+
+def _http_head(status: int, content_type: str, length: int) -> bytes:
+    return (
+        f"HTTP/1.1 {status} {_HTTP_REASONS[status]}\r\n"
+        f"Content-Type: {content_type}\r\n"
+        f"Content-Length: {length}\r\n"
+        "Access-Control-Allow-Origin: *\r\n"
+        "Access-Control-Allow-Headers: Authorization, Content-Type\r\n"
+        "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
+        "Connection: close\r\n\r\n"
+    ).encode("latin-1")
+
+
+async def _http_send(writer: asyncio.StreamWriter, status: int,
+                     content_type: str, payload: bytes) -> None:
+    writer.write(_http_head(status, content_type, len(payload)) + payload)
+    await writer.drain()
+
+
+def _http_json(payload: dict) -> bytes:
+    return json.dumps(payload).encode("utf-8")
+
+
+def _wav(pcm: bytes, rate: int) -> bytes:
+    out = io.BytesIO()
+    with wave.open(out, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(rate)
+        wav.writeframes(pcm)
+    return out.getvalue()
+
+
+async def _handle_http(reader: asyncio.StreamReader,
+                       writer: asyncio.StreamWriter) -> None:
+    """Serve a minimal OpenAI-compatible speech API over HTTP/1.1."""
+    try:
+        head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 30)
+        lines = head.decode("latin-1").split("\r\n")
+        method, target, _ = lines[0].split(" ", 2)
+        headers = {}
+        for line in lines[1:]:
+            if ":" in line:
+                key, value = line.split(":", 1)
+                headers[key.strip().lower()] = value.strip()
+        length = int(headers.get("content-length", "0"))
+        if length < 0 or length > 1_000_000:
+            await _http_send(writer, 413, "application/json",
+                             _http_json({"error": "request too large"}))
+            return
+        body = await reader.readexactly(length) if length else b""
+        path = target.split("?", 1)[0]
+
+        if method == "OPTIONS":
+            await _http_send(writer, 204, "text/plain", b"")
+            return
+        if method == "GET" and path in ("/v1/models", "/models"):
+            models = [{"id": voice, "object": "model", "owned_by": "scyllasband"}
+                      for voice in sorted(VOICES)]
+            await _http_send(writer, 200, "application/json",
+                             _http_json({"object": "list", "data": models}))
+            return
+        if method == "POST" and path in ("/v1/audio/speech", "/audio/speech"):
+            try:
+                request = json.loads(body)
+            except Exception:
+                await _http_send(writer, 400, "application/json",
+                                 _http_json({"error": "invalid JSON body"}))
+                return
+            text = request.get("input")
+            if not isinstance(text, str) or not text.strip():
+                await _http_send(writer, 400, "application/json",
+                                 _http_json({"error": "input must be non-empty text"}))
+                return
+            if MAX_CHARS > 0 and len(text) > MAX_CHARS:
+                await _http_send(writer, 400, "application/json",
+                                 _http_json({"error": f"text exceeds SCYLLASBAND_MAX_CHARS ({MAX_CHARS})"}))
+                return
+            voice = request.get("voice") or DEFAULT_VOICE
+            if voice not in VOICES:
+                await _http_send(writer, 400, "application/json",
+                                 _http_json({"error": f"unknown voice: {voice}"}))
+                return
+            language = request.get("language") or VOICES[voice].get("default_language") or DEFAULT_LANG
+            try:
+                async with _LOCK:
+                    pcm, rate = await asyncio.to_thread(_synth, text, voice, language)
+            except Exception as exc:
+                LOG.warning("http synthesis failed: %s", exc)
+                await _http_send(writer, 400, "application/json",
+                                 _http_json({"error": str(exc) or type(exc).__name__}))
+                return
+            await _http_send(writer, 200, "audio/wav", _wav(pcm, rate))
+            return
+        await _http_send(writer, 404, "application/json",
+                         _http_json({"error": "not found"}))
+    except Exception as exc:
+        LOG.warning("http request failed: %s", exc)
+    finally:
+        writer.close()
+
+
 async def main() -> None:
     uri = os.environ.get("WYOMING_URI", "tcp://0.0.0.0:10210")
     server = AsyncServer.from_uri(uri)
-    LOG.info("Ready at %s (voice=%s %s)", uri, DEFAULT_VOICE, DEFAULT_LANG)
-    task = asyncio.create_task(server.run(partial(Handler)))
+    http_server = await asyncio.start_server(_handle_http, HTTP_HOST, HTTP_PORT)
+    LOG.info("Ready at %s (voice=%s %s) and HTTP on %s:%d",
+             uri, DEFAULT_VOICE, DEFAULT_LANG, HTTP_HOST, HTTP_PORT)
+    tasks = [
+        asyncio.create_task(server.run(partial(Handler))),
+        asyncio.create_task(http_server.serve_forever()),
+    ]
     try:
-        await task
+        await asyncio.gather(*tasks)
     except asyncio.CancelledError:
-        pass
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 if __name__ == "__main__":

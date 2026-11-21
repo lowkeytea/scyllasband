@@ -13,6 +13,27 @@ own text normalization and sentence splitting would cut it, so decimals
 single request. A sentence is spoken once the next one begins, or when the
 reply ends.
 
+## OpenAI-compatible endpoint
+
+The same process also serves an OpenAI-compatible speech API on port 8000 inside
+the container, mapped to host port 10215 by the compose file. Home Assistant
+keeps using Wyoming on 10211; browser extensions such as Read Aloud use the HTTP
+endpoint. CORS headers are included, so no separate proxy or nginx container is
+needed. No API key is required by default.
+
+```bash
+curl http://<docker-host>:10215/v1/models
+curl -X POST http://<docker-host>:10215/v1/audio/speech \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"scyllasband","input":"Hello.","voice":"orpheus","response_format":"wav"}' \
+  -o speech.wav
+```
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `OPENAI_HTTP_HOST` | `0.0.0.0` | HTTP listen address |
+| `OPENAI_HTTP_PORT` | `8000` | HTTP listen port |
+
 ## Why a shim
 
 Scylla's Band ships a Python API, a CLI and a C API, but no server. Home
