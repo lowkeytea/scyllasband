@@ -1,0 +1,21 @@
+services:
+  scyllasband-wyoming:
+    build: .
+    image: scyllasband-wyoming:local
+    container_name: scyllasband-wyoming
+    ports:
+      - "10211:10210"
+    volumes:
+      # Pronunciation overrides survive rebuilds; the image seeds an empty dict.
+      - pronunciation:/data
+    restart: unless-stopped
+    environment:
+      SCYLLASBAND_VOICE: orpheus
+      SCYLLASBAND_LANGUAGE: en_gb
+      # Leave delivery unset so each voice's own defaults apply.
+      # SCYLLASBAND_INTENSITY: "0"
+      # SCYLLASBAND_PACE: "0"
+      # SCYLLASBAND_PITCH: "0"
+
+volumes:
+  pronunciation:
