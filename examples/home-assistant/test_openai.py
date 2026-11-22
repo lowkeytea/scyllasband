@@ -72,6 +72,39 @@ def main():
                          f"status={status} frames={frames} rate={rate}"))
     results.append(check("CORS on POST", headers.get("Access-Control-Allow-Origin") == "*"))
 
+    # Per-request delivery (pitch/speed/intensity). Firefox Read Aloud sends
+    # none of these; its baseline request above must keep working unchanged.
+    base = request("POST", "/v1/audio/speech", {
+        "input": "Delivery check.", "voice": "orpheus", "response_format": "wav",
+    })
+    results.append(check("baseline (no delivery keys)", base[0] == 200 and base[2][:4] == b"RIFF",
+                         f"status={base[0]}"))
+
+    pitched = request("POST", "/v1/audio/speech", {
+        "input": "Delivery check.", "voice": "orpheus", "response_format": "wav", "pitch": 2,
+    })
+    results.append(check("pitch accepted", pitched[0] == 200 and pitched[2][:4] == b"RIFF",
+                         f"status={pitched[0]}"))
+
+    fast = request("POST", "/v1/audio/speech", {
+        "input": "Delivery check.", "voice": "orpheus", "response_format": "wav", "speed": 1.5,
+    })
+    ok = fast[0] == 200 and fast[2][:4] == b"RIFF"
+    fast_frames = base_frames = 0
+    if ok and base[0] == 200:
+        with wave.open(io.BytesIO(fast[2])) as w:
+            fast_frames = w.getnframes()
+        with wave.open(io.BytesIO(base[2])) as w:
+            base_frames = w.getnframes()
+    results.append(check("speed changes pacing", ok and fast_frames != base_frames,
+                         f"status={fast[0]} base={base_frames} fast={fast_frames}"))
+
+    for bad, label in [(5, "pitch out of range"), ("loud", "pitch not numeric")]:
+        status, _, _ = request("POST", "/v1/audio/speech", {
+            "input": "Delivery check.", "voice": "orpheus", "response_format": "wav", "pitch": bad,
+        })
+        results.append(check(label + " rejected", status == 400, f"status={status}"))
+
     status, _, payload = request("POST", "/v1/audio/speech", {
         "input": "   ", "voice": "orpheus", "response_format": "wav",
     })

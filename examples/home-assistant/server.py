@@ -49,6 +49,34 @@ DELIVERY = {
     "pace": _delivery("pace"),
     "pitch": _delivery("pitch"),
 }
+
+
+def _clamped(value, name: str, low: float = -2.0, high: float = 2.0) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{name} must be a number") from None
+    if not low <= number <= high:
+        raise ValueError(f"{name} must be between {low} and {high}")
+    return number
+
+
+def _delivery_override(request: dict) -> dict:
+    """Per-request voice delivery from an OpenAI-compatible payload.
+
+    Missing keys keep the env-derived DELIVERY values, so clients that send
+    only model/input/voice/response_format (Firefox Read Aloud) are unchanged.
+    `speed` is an OpenAI-style factor mapped onto Scylla's pace (-2..2).
+    """
+    out = dict(DELIVERY)
+    if "pitch" in request:
+        out["pitch"] = _clamped(request["pitch"], "pitch")
+    if "intensity" in request:
+        out["intensity"] = _clamped(request["intensity"], "intensity")
+    if "speed" in request:
+        out["pace"] = _clamped((float(request["speed"]) - 1) * 2, "speed")
+    return out
+
 MAX_CHARS = int(os.environ.get("SCYLLASBAND_MAX_CHARS", "0"))
 HTTP_HOST = os.environ.get("OPENAI_HTTP_HOST", "0.0.0.0")
 HTTP_PORT = int(os.environ.get("OPENAI_HTTP_PORT", "8000"))
@@ -111,11 +139,11 @@ def _resolve_language(language: str, spec: dict | None) -> str:
     return mapped
 
 
-def _synth(text: str, voice: str, language: str) -> tuple[bytes, int]:
+def _synth(text: str, voice: str, language: str, delivery: dict | None = None) -> tuple[bytes, int]:
     spec = VOICES.get(voice)
     language = _resolve_language(language, spec)
     result = runtime.synthesize(SynthesisRequest(
-        text=text, voice_id=voice, language=language, **DELIVERY
+        text=text, voice_id=voice, language=language, **(delivery or DELIVERY)
     ))
     pcm = (np.clip(np.asarray(result.audio, dtype=np.float32), -1, 1) * 32767).astype("<i2")
     return pcm.tobytes(), int(result.sample_rate)
@@ -359,8 +387,9 @@ async def _handle_http(reader: asyncio.StreamReader,
                 return
             language = request.get("language") or VOICES[voice].get("default_language") or DEFAULT_LANG
             try:
+                delivery = _delivery_override(request)
                 async with _LOCK:
-                    pcm, rate = await asyncio.to_thread(_synth, text, voice, language)
+                    pcm, rate = await asyncio.to_thread(_synth, text, voice, language, delivery)
             except Exception as exc:
                 LOG.warning("http synthesis failed: %s", exc)
                 await _http_send(writer, 400, "application/json",
