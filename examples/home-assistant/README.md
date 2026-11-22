@@ -29,6 +29,22 @@ curl -X POST http://<docker-host>:10215/v1/audio/speech \
   -o speech.wav
 ```
 
+Three optional request fields control voice delivery per call:
+
+| Field | Range | Meaning |
+| --- | --- | --- |
+| `pitch` | -2 .. 2 | Semitone shift, as in the native runtime |
+| `intensity` | -2 .. 2 | Calm to intense |
+| `speed` | 0 .. 2 | Speaking-rate factor; mapped to the runtime's `pace` as `(speed - 1) * 2` |
+
+For example:
+`{"model":"scyllasband","input":"Hello.","voice":"orpheus","response_format":"wav","pitch":1,"speed":1.3}`
+
+Any field left out keeps the container's env default (`SCYLLASBAND_PITCH`,
+`SCYLLASBAND_INTENSITY`, `SCYLLASBAND_PACE`), so clients that send only the
+standard OpenAI fields — Firefox Read Aloud included — behave exactly as
+before. Out-of-range or non-numeric values are rejected with HTTP 400.
+
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `OPENAI_HTTP_HOST` | `0.0.0.0` | HTTP listen address |
