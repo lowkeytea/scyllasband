@@ -40,10 +40,9 @@ Three optional request fields control voice delivery per call:
 For example:
 `{"model":"scyllasband","input":"Hello.","voice":"orpheus","response_format":"wav","pitch":1,"speed":1.3}`
 
-Any field left out keeps the container's env default (`SCYLLASBAND_PITCH`,
-`SCYLLASBAND_INTENSITY`, `SCYLLASBAND_PACE`), so clients that send only the
-standard OpenAI fields — Firefox Read Aloud included — behave exactly as
-before. Out-of-range or non-numeric values are rejected with HTTP 400.
+Calls without these fields fall back to the container's env defaults
+(`SCYLLASBAND_PITCH`, `SCYLLASBAND_INTENSITY`, `SCYLLASBAND_PACE`).
+Out-of-range or non-numeric values are rejected with HTTP 400.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
