@@ -1,4 +1,4 @@
-ARG SCYLLASBAND_COMMIT=ece0adcce0896a77d6ff11adc2e3d86f56b3a51e
+ARG SCYLLASBAND_COMMIT=5f67f08dcdf011cbc8a6dc4eb859c572b38b6f9a
 ARG WYOMING_SPEC=">=1.7,<2"
 
 FROM python:3.12-slim
@@ -34,6 +34,6 @@ VOLUME /data
 
 USER scylla
 
-EXPOSE 10210
+EXPOSE 10210 8000
 
 CMD ["python", "/app/server.py"]

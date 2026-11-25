@@ -13,6 +13,55 @@ own text normalization and sentence splitting would cut it, so decimals
 single request. A sentence is spoken once the next one begins, or when the
 reply ends.
 
+## OpenAI-compatible endpoint
+
+The same process can also serve an OpenAI-compatible speech API, for clients
+such as the Read Aloud browser extension. It is off by default. To turn it on,
+uncomment `OPENAI_HTTP_PORT` and the `10215:8000` port line in
+`docker-compose.yml`, set `OPENAI_API_KEY`, and recreate the container. Home
+Assistant keeps using Wyoming on 10211. CORS headers are included, so no
+separate proxy or nginx container is needed. With a key set, every request
+needs `Authorization: Bearer <key>` (Read Aloud has an API key field).
+
+```bash
+curl http://<docker-host>:10215/v1/models -H 'Authorization: Bearer choose-a-key'
+curl -X POST http://<docker-host>:10215/v1/audio/speech \
+  -H 'Authorization: Bearer choose-a-key' -H 'Content-Type: application/json' \
+  -d '{"model":"scyllasband","input":"Hello.","voice":"orpheus","response_format":"wav"}' \
+  -o speech.wav
+```
+
+Three optional request fields control voice delivery per call:
+
+| Field | Range | Meaning |
+| --- | --- | --- |
+| `pitch` | -2 .. 2 | Semitone shift, as in the native runtime |
+| `intensity` | -2 .. 2 | Calm to intense |
+| `speed` | 0.25 .. 4 | OpenAI's rate factor (1 normal), read on a log scale as the runtime's `pace`: 0.5 is its slowest and 2 its fastest, and values beyond them stay there |
+
+For example:
+`{"model":"scyllasband","input":"Hello.","voice":"orpheus","response_format":"wav","pitch":1,"speed":1.3}`
+
+Calls without these fields fall back to the container's env defaults
+(`SCYLLASBAND_PITCH`, `SCYLLASBAND_INTENSITY`, `SCYLLASBAND_PACE`).
+Out-of-range or non-numeric values are rejected with HTTP 400.
+
+`response_format` is `wav` (the default) or `pcm` (raw 16-bit little-endian mono
+at 24 kHz); there is no MP3 or Opus encoder in the image, so other formats are
+rejected with HTTP 400. `input` takes up to 4,096 characters per request, as
+OpenAI's API does: synthesis is shared with Home Assistant, which waits while a
+request is spoken. At most three speech requests are made or waiting at a time;
+more get HTTP 503 with `Retry-After`, and a request whose client has left is
+dropped. `speed: 1` leaves the container's pace as it is. Errors use OpenAI's
+`{"error": {"message": ...}}` shape.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `OPENAI_HTTP_PORT` | unset (off) | Port of the OpenAI-compatible endpoint inside the container |
+| `OPENAI_HTTP_HOST` | `0.0.0.0` | Its listen address |
+| `OPENAI_API_KEY` | unset (no key) | Key every request must send as `Authorization: Bearer <key>` |
+| `OPENAI_MAX_CHARS` | `4096` | Longest `input` per request (`0`: no limit beyond the 1 MB request size) |
+
 ## Why a shim
 
 Scylla's Band ships a Python API, a CLI and a C API, but no server. Home
@@ -69,6 +118,11 @@ the internet. Bind it to one host address when possible:
 ports:
   - "192.168.1.10:10211:10210"
 ```
+
+The OpenAI-compatible endpoint is the same: set `OPENAI_API_KEY` when you turn
+it on, bind its port the same way, and never forward it to the internet.
+Without a key, any client that can reach the port can use it, including web
+pages open in a browser on your network.
 
 ## Home Assistant setup
 
