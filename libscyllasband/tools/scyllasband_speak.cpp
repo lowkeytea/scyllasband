@@ -18,7 +18,9 @@ const char* kUsage =
     "usage: scyllasband_speak --bundle DIR --voice ID (--text TEXT | --file PATH | --score SCORE.json) [--output OUT.wav]\n"
     "  [--language CODE] [--delivery SPEC] [--speed 1.0] [--steps N] [--sampler heun|euler] [--seed N]\n"
     "  [--temperature 1.0] [--threads N] [--accelerator cpu|gpu|auto|ane] [--no-normalize] [--metadata OUT.json]\n"
-    "  [--plan-only] [--stream] [--warmup] [--timings N]\n"
+    "  [--style NAME] [--plan-only] [--stream] [--warmup] [--timings N]\n"
+    "  --style NAME: speak the text in one of the bundle's speech styles (\"spoken\" on every bundle), as one record\n"
+    "    through the styled records call; --metadata then holds each target's metadata\n"
     "  --timings N: speak the text N times in this process and print load, warm-up and per-request first-audio and total\n"
     "  --timings-file PATH: speak each line of PATH once in this process (new text every request, so the G2P runs on the\n"
     "    path to first audio), after one request with the first line; prints the timings only, never the text\n"
@@ -58,6 +60,23 @@ void write_wav(const std::string& path, const float* samples, int64_t count, int
 int fail(const char* what) {
     std::fprintf(stderr, "scyllasband_speak: %s: %s\n", what, scyllasband_last_error());
     return 1;
+}
+
+std::string json_string(const std::string& value) {
+    std::string out = "\"";
+    for (unsigned char c : value) {
+        if (c == '"' || c == '\\') {
+            out += '\\';
+            out += static_cast<char>(c);
+        } else if (c < 0x20) {
+            char escaped[8];
+            std::snprintf(escaped, sizeof escaped, "\\u%04x", static_cast<unsigned>(c));
+            out += escaped;
+        } else {
+            out += static_cast<char>(c);
+        }
+    }
+    return out + "\"";
 }
 
 }  // namespace
@@ -141,8 +160,8 @@ int main(int argc, char** argv) {
     int sing_steps = 0;
     ScyllasBandRequest request;
     scyllasband_request_init(&request);
-    std::string voice, language, delivery;
-    bool plan_only = false, stream = false, warm = false;
+    std::string voice, language, delivery, style;
+    bool plan_only = false, stream = false, warm = false, styled = false;
     int threads = 0, timings = 0;
     std::vector<std::string> timing_lines;  // --timings-file: one request per line
     for (int i = 1; i < argc; ++i) {
@@ -164,6 +183,7 @@ int main(int argc, char** argv) {
         } else if (arg == "--voice") voice = value();
         else if (arg == "--language") language = value();
         else if (arg == "--delivery") delivery = value();
+        else if (arg == "--style") style = value(), styled = true;
         else if (arg == "--speed") request.speed = std::stof(value());
         else if (arg == "--steps") request.steps = std::stoi(value());
         else if (arg == "--sampler") sampler = value();
@@ -211,6 +231,10 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "%s", kUsage);
         return 2;
     }
+    if (styled && !score.empty()) {
+        std::fprintf(stderr, "--style is for speech; a score names its own style\n%s", kUsage);
+        return 2;
+    }
     request.text = text.c_str();
     request.voice_id = voice.c_str();
     request.language = language.empty() ? nullptr : language.c_str();
@@ -234,6 +258,27 @@ int main(int argc, char** argv) {
         if (scyllasband_warmup(runtime, voice.c_str()) != SCYLLASBAND_OK) return fail("warm-up failed");
         warmup_ms = milliseconds_since(start);
     }
+
+    // --style: the request as one record, spoken through the styled records call; without it, the request as before.
+    ScyllasBandRecordsRequest records;
+    scyllasband_records_request_init(&records);
+    std::string records_json;
+    auto speak_stream = [&](ScyllasBandEventCallback callback, void* user) -> ScyllasBandStatus {
+        if (!styled) return scyllasband_synthesize_stream(runtime, &request, callback, user);
+        records_json = "[{\"text\": " + json_string(request.text) + ", \"voice\": " + json_string(voice);
+        if (!language.empty()) records_json += ", \"language\": " + json_string(language);
+        if (!delivery.empty()) records_json += ", \"delivery\": " + json_string(delivery);
+        records_json += "}]";
+        records.records_json = records_json.c_str();
+        records.speed = request.speed;
+        records.steps = request.steps;
+        records.sampler = request.sampler;
+        records.seed = request.seed;
+        records.has_seed = request.has_seed;
+        records.temperature = request.temperature;
+        records.normalize_text = request.normalize_text;
+        return scyllasband_synthesize_records_style_stream(runtime, &records, style.c_str(), callback, user);
+    };
 
     int status = 0;
     if (!score.empty()) {
@@ -266,7 +311,7 @@ int main(int argc, char** argv) {
                 }
                 return 0;
             };
-            if (scyllasband_synthesize_stream(runtime, &request, callback, &timing) != SCYLLASBAND_OK) {
+            if (speak_stream(callback, &timing) != SCYLLASBAND_OK) {
                 status = fail("synthesis failed");
                 break;
             }
@@ -280,22 +325,35 @@ int main(int argc, char** argv) {
         if (scyllasband_plan_json(runtime, &request, &plan) != SCYLLASBAND_OK) status = fail("planning failed");
         else std::printf("%s\n", plan);
         scyllasband_string_free(plan);
-    } else if (stream) {
+    } else if (stream || styled) {
         struct State {
             std::vector<float> samples;
             int32_t rate = 0;
+            bool print = false;
+            std::string chunks;  // the AUDIO events' metadata, comma-separated
         } state;
+        state.print = stream;
         auto callback = [](const ScyllasBandEvent* event, void* user) -> int32_t {
             auto* s = static_cast<State*>(user);
-            std::fprintf(stderr, "[%d] %s %s\n", static_cast<int>(event->type), event->chunk_id ? event->chunk_id : "-", event->metadata_json);
+            if (s->print) {
+                std::fprintf(stderr, "[%d] %s %s\n", static_cast<int>(event->type), event->chunk_id ? event->chunk_id : "-", event->metadata_json);
+            }
             if (event->type == SCYLLASBAND_EVENT_AUDIO) {
                 s->samples.insert(s->samples.end(), event->samples, event->samples + event->sample_count);
                 s->rate = event->sample_rate;
+                if (event->metadata_json) s->chunks += (s->chunks.empty() ? "" : ", ") + std::string(event->metadata_json);
             }
             return 0;
         };
-        if (scyllasband_synthesize_stream(runtime, &request, callback, &state) != SCYLLASBAND_OK) status = fail("synthesis failed");
-        else if (!output.empty()) write_wav(output, state.samples.data(), static_cast<int64_t>(state.samples.size()), state.rate);
+        if (speak_stream(callback, &state) != SCYLLASBAND_OK) {
+            status = fail("synthesis failed");
+        } else {
+            if (!output.empty()) write_wav(output, state.samples.data(), static_cast<int64_t>(state.samples.size()), state.rate);
+            if (styled && !metadata_path.empty()) {
+                std::ofstream(metadata_path) << "{\"style\": " << json_string(style) << ", \"chunks\": [" << state.chunks << "]}";
+            }
+            if (!stream) std::fprintf(stderr, "%lld samples at %d Hz\n", static_cast<long long>(state.samples.size()), state.rate);
+        }
     } else {
         ScyllasBandAudio audio{};
         if (scyllasband_synthesize(runtime, &request, &audio) != SCYLLASBAND_OK) {

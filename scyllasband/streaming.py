@@ -10,7 +10,9 @@ model predicts for its own delivery and speed:
   at a clause, else between words;
 - a paragraph or a new record ends a target once it is long enough, and a change of voice, language or delivery always
   does; a short remainder is never left on its own;
-- a target over the trained maximum gives way to an earlier boundary before it is synthesized.
+- a target over the trained maximum gives way to an earlier boundary before it is synthesized;
+- on a v5 bundle no target holds fewer than ``Engine.min_target_phones`` phones while the passage has a neighbour for
+  them to join: a sentence of a word or two is spoken in one pass with the next (the last one with the one before).
 
 Every target gets the neighbouring phones as context, the last latent frames already spoken as its acoustic prefix, and
 the preceding latents as the vocoder's left context, so the emitted pieces join into one continuous waveform with no
@@ -26,7 +28,7 @@ from typing import Any, Iterator, TextIO
 import numpy as np
 
 from .engine import Engine, Sentence
-from .events import SILENCE
+from .events import SILENCE, mark_sounded_pauses
 from .planner import PlanChunk, SynthesisPlan
 
 
@@ -58,7 +60,8 @@ class StreamOptions:
     speed: float = 1.0
     seed: int | None = None
     temperature: float = 1.0
-    pause_ms: float = 0.0          # extra silence where the voice, language or delivery changes
+    pause_ms: float = 0.0          # extra silence where the voice, language or delivery changes (and no carry-over there)
+    style: str = "spoken"          # a speech style of the bundle (Engine.speech_styles; v5: spoken, rap)
 
 
 SENTENCE_END = frozenset({"<end_stmt>", "<end_question>", "<end_exclaim>", "<ellipsis>"})
@@ -67,6 +70,7 @@ WINDOW_PHONES = 200        # phones measured ahead to choose a target's end; pas
 FIRST_WINDOW_PHONES = 48   # the first target looks only this far ahead at first, so little text is phonemized early
 SENTENCE_STOPS = ("sentence", "paragraph", "end")
 FILL_SHARE = 0.5           # a later target prefers a sentence end in the upper half of the trained range
+UNCOUNTED_PHONES = frozenset({"ˈ", "ˌ", "ː", "̃"})   # not phones for Engine.min_target_phones
 
 
 def synthesize_plan_stream(engine: Engine, plan: SynthesisPlan, options: StreamOptions | None = None, *,
@@ -78,14 +82,23 @@ def synthesize_plan_stream(engine: Engine, plan: SynthesisPlan, options: StreamO
     first_audio_ms: float | None = None
     spoken = 0
     previous_chain: str | None = None
-    for chain in _chains(plan.chunks):
-        stream = _ChainStream(engine, chain)
-        values, present, row, resolved = engine.delivery_inputs(chain[0].voice, chain[0].delivery)
+    chains = list(_chains(plan.chunks))
+    streams = [_ChainStream(engine, chain) for chain in chains]
+    for index in range(1, len(streams)):   # the same voice going on with a new delivery: one passage, no pause between
+        if options.pause_ms <= 0 and _same_speaker(chains[index - 1][0], chains[index][0]):
+            streams[index].previous, streams[index - 1].following = streams[index - 1], streams[index]
+    tail: np.ndarray | None = None
+    contour_tail: np.ndarray | None = None   # v5: the pitch contour rendered so far in this passage, for the predictor's prefix
+    mode = engine.speech_style(options.style)[0]   # the style's row, for the duration, pitch and flow graphs
+    for chain, stream in zip(chains, streams):
+        values, present, row, resolved = style_delivery(engine, options.style, chain[0])
         delivery = (values, present, resolved.get("pitch", 0.0))
-        tail: np.ndarray | None = None
+        if stream.previous is None:   # a new voice or language, or a requested pause: nothing carries over
+            tail = None
+            contour_tail = None
         start = 0
         while True:
-            end, sentence, durations = _next_target(engine, stream, start, spoken == 0, delivery, options.speed, row)
+            end, sentence, durations = _next_target(engine, stream, start, spoken == 0, delivery, options.speed, row, mode)
             chunk = stream.target_chunk(start, end)
             seed = None if options.seed is None else int(options.seed) + chunk.index
             yield StreamingEvent(type="chunk_started", chunk=chunk)
@@ -93,7 +106,10 @@ def synthesize_plan_stream(engine: Engine, plan: SynthesisPlan, options: StreamO
             result = engine.synthesize_sentence(sentence, voice=chunk.voice, language=chunk.language, delivery=delivery,
                                                 prefix=tail, steps=options.steps, sampler=options.sampler, speed=options.speed,
                                                 noise_scale=options.temperature, rng=np.random.default_rng(seed), durations=durations,
-                                                voice_row=row)
+                                                voice_row=row, pitch_prefix=contour_tail, delivery_mode=mode)
+            if result.contour is not None and engine.pitch_prefix_frames:
+                joined_contour = result.contour if contour_tail is None else np.concatenate([contour_tail, result.contour], -1)
+                contour_tail = joined_contour[:, -engine.pitch_prefix_frames:]
             audio = engine.decode(result.latents, voice=chunk.voice, language=chunk.language, left=tail)
             if previous_chain is not None and previous_chain != chunk.chain_id and options.pause_ms > 0:
                 audio = np.concatenate([np.zeros(int(sample_rate * options.pause_ms / 1000), np.float32), audio])
@@ -111,6 +127,23 @@ def synthesize_plan_stream(engine: Engine, plan: SynthesisPlan, options: StreamO
     yield StreamingEvent(type="done", sample_rate=sample_rate,
                          metadata=dict(chunks=spoken, first_audio_ms=None if first_audio_ms is None else round(first_audio_ms, 1),
                                        elapsed_ms=round((time.perf_counter() - started) * 1000, 1)))
+
+
+def style_delivery(engine: Engine, style: str | None, chunk: PlanChunk) -> tuple[np.ndarray, np.ndarray, int, dict[str, Any]]:
+    """``Engine.delivery_inputs`` for a chunk spoken in ``style``. A style trained without intensity and pace (rap) gets
+    neither, and a request that sets one is refused; its pitch shift stays."""
+    values, present, row, resolved = engine.delivery_inputs(chunk.voice, chunk.delivery)
+    if engine.speech_style(style)[1]:
+        return values, present, row, resolved
+    given = [name for name in ("intensity", "pace") if (chunk.delivery or {}).get(name) is not None]
+    if given:
+        raise ValueError(f"Style {style!r} was trained without intensity and pace; leave {' and '.join(given)} unset "
+                         "(a pitch shift is fine)")
+    return values, np.zeros_like(present), row, dict(resolved, intensity=None, pace=None)
+
+
+def _same_speaker(a: PlanChunk, b: PlanChunk) -> bool:
+    return a.voice == b.voice and a.language == b.language
 
 
 def _chains(chunks: list[PlanChunk]) -> Iterator[list[PlanChunk]]:
@@ -144,7 +177,12 @@ class _ChainStream:
         self.phones: list[str] = []
         self.word_starts: list[int] = []
         self.cuts: dict[int, str] = {}
+        self.min_pauses: set[int] = set()   # silences after a dash typed with no spaces around it
         self.pieces: list[_Piece] = []
+        # The chains spoken just before and after this one by the same voice in the same language (only the delivery
+        # changes): their text is context for this chain's targets, and the audio continues across the change.
+        self.previous: _ChainStream | None = None
+        self.following: _ChainStream | None = None
 
     @property
     def complete(self) -> bool:
@@ -166,6 +204,13 @@ class _ChainStream:
     def _append(self, chunk: PlanChunk) -> None:
         result = self.engine.phonemize(chunk.text, language=chunk.language)
         phones = list(result["phones"])
+        if self.engine.pause_mark:
+            # v5: every pause after punctuation inside the passage is marked sounded; the passage's last silence is not.
+            more = len(self.pieces) < len(self.chunks) - 1 or self.following is not None
+            phones, moved = mark_sounded_pauses(phones, last=more, mark=self.engine.pause_mark)
+            result = dict(result, phones=phones, word_starts=[moved[j] for j in result["word_starts"]],
+                          word_boundary_candidates=[moved[j] for j in result["word_boundary_candidates"]],
+                          min_pause_phones=[moved[j] for j in result.get("min_pause_phones", ())])
         base = len(self.phones) - 1 if self.phones else 0
         if self.phones:
             previous = self.pieces[-1].chunk
@@ -177,6 +222,7 @@ class _ChainStream:
         starts = [base + j for j in result["word_starts"]]
         self.word_starts.extend(([first_word] if self.pieces else []) + starts)
         candidates = set(result["word_boundary_candidates"])
+        self.min_pauses.update(base + j for j in result.get("min_pause_phones", ()))
         for j in range(1, len(phones) - 1):
             if phones[j] == SILENCE:
                 kind = ("sentence" if phones[j - 1] in SENTENCE_END else "clause" if phones[j - 1] in CLAUSE_PAUSE
@@ -186,6 +232,22 @@ class _ChainStream:
         self.cuts[base + len(phones) - 1] = "end"
         self.pieces.append(_Piece(chunk, base, base + len(phones) - 1, [first_word, *starts]))
 
+    def context_tail(self, count: int) -> list[int]:
+        """The last ``count`` context phones of this chain (already spoken), reaching into the chains before it."""
+        ids = self.engine.context_ids(self.phones)[-count:]
+        if len(ids) < count and self.previous is not None:
+            ids = self.previous.context_tail(count - len(ids)) + ids
+        return ids
+
+    def context_head(self, count: int) -> list[int]:
+        """The first ``count`` context phones of this chain, phonemized only as far as needed, reaching into the next."""
+        while not self.complete and sum(p != SILENCE for p in self.phones) < count:
+            self._append(self.chunks[len(self.pieces)])
+        ids = self.engine.context_ids(self.phones)[:count]
+        if len(ids) < count and self.following is not None:
+            ids = ids + self.following.context_head(count - len(ids))
+        return ids
+
     def sentence(self, start: int, end: int) -> Sentence:
         """The target ``[start, end]`` (silence to silence) with its context."""
         reach = self.engine.context_phones
@@ -193,8 +255,25 @@ class _ChainStream:
         first_word = next(i for i in range(start, end + 1) if self.phones[i] != SILENCE)
         word_starts = [w - start for w in self.word_starts if start < w <= end and w != first_word]
         before = self.engine.context_ids(self.phones[max(0, start - 3 * reach):start])[-reach:]
+        if len(before) < reach and self.previous is not None:
+            before = self.previous.context_tail(reach - len(before)) + before
         after = self.engine.context_ids(self.phones[end + 1:end + 1 + 3 * reach])[:reach]
-        return Sentence(phones=self.phones[start:end + 1], word_starts=word_starts, before_ids=before, after_ids=after)
+        if len(after) < reach and self.following is not None:
+            after = after + self.following.context_head(reach - len(after))
+        opens = [0] if start == 0 or self.cuts.get(start) in SENTENCE_STOPS else []
+        return Sentence(phones=self.phones[start:end + 1], word_starts=word_starts, before_ids=before, after_ids=after,
+                        min_pauses=[i - start for i in sorted(self.min_pauses) if start < i <= end],
+                        sentence_starts=opens + [i - start for i in range(start + 1, end) if self.cuts.get(i) in SENTENCE_STOPS])
+
+    def spoken_phones(self, start: int, end: int | None = None) -> int:
+        """Phones between two stream positions, stress and length marks and <tokens> not counted."""
+        return sum(1 for phone in self.phones[start:end] if not phone.startswith("<") and phone not in UNCOUNTED_PHONES)
+
+    def short_rest(self, index: int, least: int) -> bool:
+        """Whether fewer than ``least`` phones are left in the chain after the silence ``index`` (and some are)."""
+        while not self.complete and self.spoken_phones(index) < least:
+            self._append(self.chunks[len(self.pieces)])
+        return 0 < self.spoken_phones(index) < least
 
     def target_chunk(self, start: int, end: int) -> PlanChunk:
         """A plan chunk describing the target: its sentences' ids and text (part of a sentence gets ``id.n``)."""
@@ -219,8 +298,8 @@ class _ChainStream:
 
 
 def _next_target(engine: Engine, stream: _ChainStream, start: int, first: bool,
-                 delivery: tuple, speed: float, voice_row: int | None = None) -> tuple[int, Sentence, list[int]]:
-    """The end of the next target, its sentence and durations."""
+                 delivery: tuple, speed: float, voice_row: int | None = None, style: int | None = None) -> tuple[int, Sentence, list[int]]:
+    """The end of the next target, its sentence and durations. ``style``: the style row the durations are predicted for."""
     shortest, longest = engine.min_target_frames, engine.max_target_frames
     voice = engine.voice_index(stream.chunks[0].voice) if voice_row is None else int(voice_row)
     language = engine.language_index(stream.chunks[0].language)
@@ -230,7 +309,8 @@ def _next_target(engine: Engine, stream: _ChainStream, start: int, first: bool,
     def measure(end: int) -> tuple[Sentence, list[int]]:
         if end not in measured:
             sentence = stream.sentence(start, end)
-            measured[end] = (sentence, engine.durations(sentence, voice=voice, language=language, delivery=delivery, speed=speed))
+            measured[end] = (sentence, engine.durations(sentence, voice=voice, language=language, delivery=delivery, speed=speed,
+                                                        style=style))
         return measured[end]
 
     window = FIRST_WINDOW_PHONES if first else WINDOW_PHONES
@@ -252,6 +332,11 @@ def _next_target(engine: Engine, stream: _ChainStream, start: int, first: bool,
                 kind in SENTENCE_STOPS and frames[i] >= shortest for i, kind in stops):
             break
         window *= 2
+    least = engine.min_target_phones
+    if least > 0:                       # no end that makes this target, or leaves the chain's last one, a few phones long
+        enough = [i for i, _ in stops
+                  if stream.at_end(i) or (stream.spoken_phones(start, i) >= least and not stream.short_rest(i, least))]
+        stops = [(i, stream.cuts[i]) for i in enough or [stops[-1][0]]]
     candidates = []
     for i, kind in stops:               # a paragraph or record ends the target once it is long enough
         candidates.append((i, kind))

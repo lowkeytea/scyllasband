@@ -3,6 +3,9 @@
 Consecutive sentences with the same voice, language and delivery form a chain, spoken continuously: the streaming
 loop reads a chain's sentences as one stream of phones and cuts it into synthesis targets, each seeing the text around
 it as context, continuing from the previous target's acoustics and decoded as part of one continuous waveform.
+When only the delivery changes (same voice and language), the next chain goes on from the previous one in the same
+way: its targets keep their own delivery, but the text around them, the acoustics and the waveform carry across the
+change. A change of voice or language, or a requested pause between chains, starts afresh.
 """
 
 from __future__ import annotations
@@ -12,7 +15,7 @@ import re
 from typing import Any, Iterable, Mapping, Sequence
 
 from .delivery import CONTROLS, delivery_spec, resolve_delivery
-from .text_normalizer import normalize_spoken_text
+from .text_normalizer import nonverbal_spellings as respell_nonverbal, normalize_spoken_text
 
 # A sentence ends after a terminal punctuation run (and any closing quotes/brackets) followed by whitespace.
 _SENTENCE_END_RE = re.compile(r"(?:[.!?…]+|\.\.\.)[\"'”’»)\]]*\s+")
@@ -85,9 +88,10 @@ def split_for_retry(text: str, *, min_share: float = 0.0) -> list[str]:
 
 
 def plan_records(records: Sequence[Mapping[str, Any]], *, resolve_language, normalize: bool = True,
-                 source_kind: str = "text") -> SynthesisPlan:
+                 source_kind: str = "text", nonverbal_spellings: bool = False) -> SynthesisPlan:
     """``records``: dicts with text, voice and optional language / delivery. ``resolve_language(voice, language)``
-    returns the trained locale for the voice."""
+    returns the trained locale for the voice. ``nonverbal_spellings`` (v5 bundles): typed variants of a non-verbal word
+    take the spelling the model was trained on before the text is normalized."""
     plan = SynthesisPlan(source_kind=source_kind)
     chain_key: tuple | None = None
     chain_serial = 0
@@ -102,7 +106,8 @@ def plan_records(records: Sequence[Mapping[str, Any]], *, resolve_language, norm
             chain_key, chain_serial = key, chain_serial + 1
         paragraphs = [p for p in _PARAGRAPH_RE.split(str(record.get("text") or "")) if p.strip()]
         for paragraph_index, paragraph in enumerate(paragraphs):
-            spoken = normalize_spoken_text(paragraph, language=language) if normalize else paragraph
+            typed = respell_nonverbal(paragraph, language=language) if normalize and nonverbal_spellings else paragraph
+            spoken = normalize_spoken_text(typed, language=language) if normalize else paragraph
             sentences = split_sentences(spoken)
             for sentence_index, sentence in enumerate(sentences):
                 index = len(plan.chunks)

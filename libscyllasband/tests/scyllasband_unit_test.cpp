@@ -87,7 +87,10 @@ void durations_suite(const Json& fixture) {
     for (const Json& c : fixture.get("cases").elements()) {
         std::vector<float> values;
         for (const Json& v : c.get("values").elements()) values.push_back(static_cast<float>(v.num()));
-        std::vector<int> got = frames_to_durations(values, strings(c.get("phones")), c.get("scale").num(), c.get("pause_scale").num(1.0));
+        std::vector<int> min_pauses;
+        for (int64_t index : ints(c.get("min_pauses"))) min_pauses.push_back(static_cast<int>(index));
+        std::vector<int> got = frames_to_durations(values, strings(c.get("phones")), c.get("scale").num(), c.get("pause_scale").num(1.0),
+                                                   min_pauses, c.get("min_pause_frames").num(0.0));
         std::vector<int64_t> want = ints(c.get("expected"));
         expect(std::vector<int64_t>(got.begin(), got.end()) == want, "durations " + label(c.get("values")));
     }
@@ -154,6 +157,11 @@ void segments_suite(const Json& fixture) {
             same = unicode::encode(got[i].first) == want[i][0].str() && got[i].second == strings(want[i][1]);
         }
         expect(same, "punctuated segments " + label(c.get("text")) + " max " + std::to_string(c.get("max_chars").integer()));
+        auto marked = marked_segments(unicode::decode(c.get("text").str()), static_cast<std::size_t>(c.get("max_chars").integer()));
+        const auto& tight = c.get("tight").elements();
+        bool marks = marked.size() == tight.size();
+        for (std::size_t i = 0; marks && i < marked.size(); ++i) marks = marked[i].tight_dash == tight[i].boolean();
+        expect(marks, "tight dashes " + label(c.get("text")));
     }
 }
 
@@ -168,6 +176,7 @@ void unicode_suite(const Json& fixture) {
     for (const Json& c : fixture.get("cases").elements()) {
         unicode::Text text = unicode::decode(c.get("text").str());
         expect(unicode::encode(unicode::lower(text)) == c.get("lower").str(), "lower " + label(c.get("text")));
+        expect(unicode::encode(unicode::upper(text)) == c.get("upper").str(), "upper " + label(c.get("text")));
         expect(unicode::encode(unicode::nfc(text)) == c.get("nfc").str(), "nfc " + label(c.get("text")));
     }
 }
@@ -175,13 +184,16 @@ void unicode_suite(const Json& fixture) {
 // Graph stand-ins for the fake bundle of tests/test_runtime.py (_FakeGraphs): G2P characters become phones of the same
 // letter, every span position lasts `frames_per_phone`, the flow velocity is minus its input and the vocoder returns
 // frames * 512 - 256 samples of 0.1.
-// What the fake graphs were called with: the component, and for flow calls the delivery mode, whether the melody was all zero
-// and the time.
+// What the fake graphs were called with: the component, the style row (the duration graph's style_id, the pitch and flow
+// graphs' delivery_mode_id; -1 where the graph has no such input), whether intensity or pace was set, the identity vector's
+// first value (v5), and for flow calls whether the melody was all zero and the time.
 struct FakeCall {
     std::string name;
     int64_t mode = -1;
     bool melody_zero = false;
     float time = 0.0f;
+    bool present = false;
+    float identity = 0.0f;
 };
 
 class FakeGraph : public Graph {
@@ -198,14 +210,23 @@ public:
         for (int64_t dim : first.shape) count *= static_cast<std::size_t>(dim);
         if (log_) {
             FakeCall call{name_};
-            if (name_.rfind("vector_estimator", 0) == 0) {
+            // The style row is the last input where the contract has one, the identity vector (v5) the one before it.
+            const bool flow = name_.rfind("vector_estimator", 0) == 0, pitch = name_.rfind("pitch_estimator", 0) == 0;
+            const std::size_t plain = flow ? 17 : pitch ? 14 : name_ == "duration_predictor" ? 7 : 0;
+            if (plain) {
+                const uint8_t* set = static_cast<const uint8_t*>(inputs[6].data);
+                call.present = std::any_of(set, set + 5, [](uint8_t value) { return value != 0; });
+                const std::size_t v5 = plain + (pitch ? 4 : 2);
+                if (inputs.size() == v5) call.identity = *static_cast<const float*>(inputs[v5 - 2].data);
+                if (inputs.size() == v5 || (flow && inputs.size() == plain + 1)) call.mode = *static_cast<const int64_t*>(inputs.back().data);
+            }
+            if (flow) {
                 call.time = *static_cast<const float*>(inputs[1].data);
                 const TensorView& melody = inputs[16];
                 std::size_t values = 1;
                 for (int64_t dim : melody.shape) values *= static_cast<std::size_t>(dim);
                 const float* data = static_cast<const float*>(melody.data);
                 call.melody_zero = std::all_of(data, data + values, [](float v) { return v == 0.0f; });
-                call.mode = inputs.size() > 17 ? *static_cast<const int64_t*>(inputs[17].data) : -1;
             }
             log_->push_back(call);
         }
@@ -1006,11 +1027,328 @@ void singing_suite(const Json& fixture) {
     }
 }
 
+// The graph calls apart from the G2P (both sides cache phonemizations their own way) against the fixture's rows.
+bool same_calls(const std::vector<FakeCall>& log, const Json& want, std::string* detail) {
+    std::vector<FakeCall> calls;
+    for (const FakeCall& call : log) {
+        if (call.name.rfind("g2p", 0) != 0) calls.push_back(call);
+    }
+    *detail = std::to_string(calls.size()) + " against " + std::to_string(want.size());
+    if (calls.size() != want.size()) return false;
+    for (std::size_t i = 0; i < calls.size(); ++i) {
+        const Json& w = want[i];
+        const bool same = calls[i].name == w.get("name").str() && calls[i].mode == w.get("mode").integer(-1) &&
+                          (!w.has("present") || calls[i].present == w.get("present").boolean()) &&
+                          (!w.has("identity") || calls[i].identity == static_cast<float>(w.get("identity").num())) &&
+                          (!w.has("time") || (calls[i].melody_zero == w.get("melody_zero").boolean() && calls[i].time == static_cast<float>(w.get("time").num())));
+        if (!same) {
+            *detail = "call " + std::to_string(i) + " " + calls[i].name + " mode " + std::to_string(calls[i].mode) + ", expected " + w.dump();
+            return false;
+        }
+    }
+    return true;
+}
+
+Json run_lengths(const std::vector<float>& audio) {
+    Json::Array runs;
+    for (float value : audio) {
+        if (!runs.empty() && static_cast<float>(runs.back()[0].num()) == value) {
+            runs.back().elements()[1] = Json(runs.back()[1].integer() + 1);
+        } else {
+            runs.push_back(Json(Json::Array{Json(static_cast<double>(value)), Json(int64_t{1})}));
+        }
+    }
+    return Json(std::move(runs));
+}
+
+// A G2P that returns the fixture's phone groups for a text (tests/test_v5.py _line_g2p), for line_phones.
+class TableFrontend : public SongFrontend {
+public:
+    explicit TableFrontend(const Json& table) : table_(table) {}
+    Phonemized phonemize(const std::string& text, const std::string&) override {
+        if (!table_.has(text)) throw std::invalid_argument("no reading for '" + text + "'");
+        Phonemized out;
+        out.phones.push_back(kSilencePhone);
+        const Json& groups = table_.get(text);
+        for (std::size_t index = 0; index < groups.size(); ++index) {
+            if (index) {
+                out.phones.push_back(kSilencePhone);
+                out.word_starts.push_back(static_cast<int>(out.phones.size()));
+            }
+            for (const Json& phone : groups[index].elements()) out.phones.push_back(phone.str());
+        }
+        out.phones.push_back("<end_stmt>");
+        out.phones.push_back(kSilencePhone);
+        return out;
+    }
+    std::string resolve_language(const std::string&, const std::string& language) const override { return language; }
+    const SingingControls& singing() const override { return controls_; }
+    int sample_rate() const override { return 24000; }
+    int latent_hop() const override { return 512; }
+    int64_t max_phrase_frames() const override { return 1024; }
+    bool has_decoder(const std::string&) const override { return true; }
+    std::vector<std::string> available_decoders() const override { return {"vocos"}; }
+
+private:
+    const Json& table_;
+    SingingControls controls_;
+};
+
+// The v5 rules against the Python runtime on the fake v5 bundle (generate_fixtures.v5_cases).
+void v5_suite(const Json& fixture) {
+    for (const Json& c : fixture.get("spellings").elements()) {
+        const std::string got = nonverbal_spellings(c.get("text").str(), c.get("language").str());
+        expect(got == c.get("expected").str(), "nonverbal_spellings " + label(c.get("text")) + " (" + c.get("language").str() + ") -> '" + got + "'");
+    }
+    for (const Json& c : fixture.get("opening").elements()) {
+        std::vector<int> durations, starts;
+        for (int64_t value : ints(c.get("durations"))) durations.push_back(static_cast<int>(value));
+        for (int64_t value : ints(c.get("sentence_starts"))) starts.push_back(static_cast<int>(value));
+        const std::vector<int> got = opening_minimums(strings(c.get("phones")), durations, starts);
+        expect(std::vector<int64_t>(got.begin(), got.end()) == ints(c.get("expected")), "opening_minimums " + label(c.get("phones")));
+    }
+    expect(opening_minimums({"<sil>", "ʌ", "̃", "ʔ", "<sil>", "ʌ", "̃", "<sil>"}, {1, 1, 0, 1, 0, 1, 0, 1}) == std::vector<int>({1, 6, 0, 1, 2, 12, 0, 1}),
+           "opening_minimums: a target starts a sentence by default");
+
+    const Json& files = fixture.get("bundles");
+    std::map<std::string, std::unique_ptr<FakeBundle>> bundles;
+    for (const auto& [name, content] : files.items()) bundles[name] = std::make_unique<FakeBundle>(content);
+    auto open = [&](const std::string& name, std::vector<FakeCall>* log = nullptr, float frames_per_phone = 1.0f) {
+        return fake_engine(*bundles.at(name), files.get(name), log, frames_per_phone);
+    };
+
+    {
+        auto engine = open("default");
+        expect(engine->v5() && engine->min_target_phones() == 12 && engine->spoken_mode() == 0 &&
+                   engine->speech_styles() == std::vector<std::string>({"spoken", "rap"}) && engine->pause_mark() == "<nonverbal>" &&
+                   engine->pitch_prefix_width() == 6 && engine->feeds_delivery_mode(),
+               "the v5 bundle's settings");
+        expect(engine->speech_style("") == std::make_pair(int64_t{0}, true) && engine->speech_style(" Rap ") == std::make_pair(int64_t{9}, false),
+               "speech styles and their rows");
+        for (const Json& c : fixture.get("phonemize").elements()) {
+            const Phonemized got = engine->phonemize(c.get("text").str(), "en_us", c.get("nonverbal").boolean());
+            const std::vector<int64_t> starts(got.word_starts.begin(), got.word_starts.end()),
+                candidates(got.word_boundary_candidates.begin(), got.word_boundary_candidates.end());
+            expect(got.phones == strings(c.get("phones")) && starts == ints(c.get("word_starts")) && candidates == ints(c.get("word_boundary_candidates")),
+                   "phonemize " + label(c.get("text")) + (c.get("nonverbal").boolean() ? "" : " without the non-verbal table") + ": " +
+                       Json::array_of(got.phones).dump());
+        }
+        auto moved = open("sung_moved");
+        expect(moved->spoken_mode() == 4 && moved->speech_style("rap") == std::make_pair(int64_t{6}, false), "the rows come from the bundle");
+        const Json info = singing_info(*engine);
+        expect(strings(info.get("styles")) == strings(fixture.get("styles").get("sung_default")) && info.get("default_decoder").str() == "bigvgan" &&
+                   info.get("guidance").num() == 3.0,
+               "v5 singing info " + info.dump());
+        expect(singing_info(*open("sung_wave_needed")).get("default_decoder").str() == "wave" &&
+                   singing_info(*open("sung_wave_spare")).get("default_decoder").str() == "vocos" &&
+                   singing_info(*open("sung_floor")).get("register_floor").integer() == 41,
+               "v5 singing info: the decoder the manifest names, the register floor");
+    }
+
+    for (const Json& c : fixture.get("refused").elements()) {
+        const FakeBundle bundle(c.get("bundle"));
+        std::string error;
+        bool failed = false;
+        try {
+            fake_engine(bundle, c.get("bundle"));
+        } catch (const std::invalid_argument& failure) {
+            failed = true;
+            error = failure.what();
+        }
+        const std::string name = "bundle '" + c.get("name").str() + "'";
+        expect(failed == !c.get("error").is_null(), name + (failed ? " refused: " + error : " accepted"));
+        if (failed && c.get("same_message").boolean()) expect(error == c.get("error").str(), name + ": " + error);
+    }
+
+    for (const Json& c : fixture.get("streams").elements()) {
+        const std::string name = "v5 stream '" + c.get("name").str() + "'";
+        std::vector<FakeCall> log;
+        auto engine = open(c.get("bundle").str(), &log, static_cast<float>(c.get("frames_per_phone").num()));
+        SynthesisOptions options;
+        options.steps = 1;
+        options.seed = 0;
+        options.style = c.get("options").get("style").str();
+        options.pause_ms = c.get("options").get("pause_ms").num(0.0);
+        std::vector<std::pair<Json, std::size_t>> spoken;
+        std::string error;
+        try {
+            const Plan plan = plan_records(*engine, c.get("records"));
+            expect(same_json(plan.to_json(), c.get("plan")), name + ": plan " + plan.to_json().dump().substr(0, 300));
+            log.clear();
+            synthesize_plan_stream(*engine, plan, options, [&](const StreamEvent& event) {
+                if (event.type == StreamEvent::kAudio) spoken.emplace_back(event.metadata, event.audio->size());
+                return true;
+            });
+        } catch (const std::invalid_argument& failure) {
+            error = failure.what();
+        }
+        if (c.has("error") || !error.empty()) {
+            expect(error == c.get("error").str(), name + ": error '" + error + "', expected '" + c.get("error").str() + "'");
+            continue;
+        }
+        const auto& want = c.get("targets").elements();
+        expect(spoken.size() == want.size(), name + ": " + std::to_string(spoken.size()) + " targets, expected " + std::to_string(want.size()));
+        for (std::size_t i = 0; i < std::min(spoken.size(), want.size()); ++i) {
+            const Json& got = spoken[i].first;
+            const Json& w = want[i];
+            bool same = got.get("chunk").get("chunk_id").str() == w.get("chunk_id").str() && got.get("chunk").get("text").str() == w.get("text").str() &&
+                        strings(got.get("phones")) == strings(w.get("phones")) && ints(got.get("durations")) == ints(w.get("durations")) &&
+                        static_cast<int64_t>(spoken[i].second) == w.get("samples").integer() && same_json(got.get("delivery"), w.get("delivery")) &&
+                        got.get("delivery_set").boolean() == w.get("delivery_set").boolean();
+            for (const char* key : {"latent_frames", "prefix_frames", "pitch_prefix_frames", "delivery_mode", "seed", "context_before", "context_after"}) {
+                same = same && got.get(key).integer(-1) == w.get(key).integer(-2);
+            }
+            expect(same, name + " target " + std::to_string(i) + ": " + got.dump().substr(0, 500));
+        }
+        std::string detail;
+        const bool calls = same_calls(log, c.get("calls"), &detail);
+        expect(calls, name + ": graph calls (" + detail + ")");
+    }
+
+    {
+        TableFrontend frontend(fixture.get("line_table"));
+        for (const Json& c : fixture.get("lines").elements()) {
+            const std::string name = "line_phones " + c.get("words").dump() + " (" + c.get("language").str() + ")";
+            Json::Array got;
+            std::string error;
+            try {
+                for (const std::vector<std::string>& word : line_phones(strings(c.get("words")), frontend, c.get("language").str())) got.push_back(Json::array_of(word));
+            } catch (const ScoreError& failure) {
+                error = failure.what();
+            }
+            if (c.has("error")) expect(error == c.get("error").str(), name + ": error '" + error + "'");
+            else expect(error.empty() && same_json(Json(got), c.get("expected")), name + ": " + (error.empty() ? Json(got).dump() : error));
+        }
+    }
+    expect(stressed_pronoun({"ɹ", "ˌ", "a", "ɪ"}) == std::vector<std::string>({"ɹ", "ˈ", "a", "ɪ"}) &&
+               stressed_pronoun({"<sil>"}) == std::vector<std::string>({"<sil>"}) && stressed_pronoun({"ˈ", "a", "ɪ"}).size() == 3,
+           "stressed_pronoun: one stress mark, the primary one");
+    for (const Json& c : fixture.get("timing").elements()) {
+        const std::string name = "score_durations " + c.get("phones").dump().substr(0, 80);
+        std::vector<std::vector<std::string>> groups;   // null where the fixture broke the layout on purpose
+        for (const Json& group : c.get("groups").elements()) groups.push_back(strings(group));
+        std::vector<ScoreWord> words;
+        for (const Json& word : c.get("words").elements()) {
+            words.push_back(ScoreWord{word[0].str(), static_cast<double>(word[1].integer() * 512) / 24000, static_cast<double>(word[2].integer() * 512) / 24000, 1});
+        }
+        std::vector<int> starts;
+        for (int64_t value : ints(c.get("word_starts"))) starts.push_back(static_cast<int>(value));
+        if (c.get("groups").is_array()) {
+            const auto [phones, layout_starts] = word_layout(groups);
+            expect(phones == strings(c.get("phones")) && layout_starts == starts, "word_layout " + c.get("groups").dump().substr(0, 80));
+        }
+        std::vector<int> got;
+        std::string error;
+        try {
+            got = score_durations(strings(c.get("phones")), starts, words, c.get("total").integer(), c.get("share").num(), 512, 24000);
+        } catch (const ScoreError& failure) {
+            error = failure.what();
+        }
+        if (c.has("error")) expect(error == c.get("error").str(), name + ": error '" + error + "', expected '" + c.get("error").str() + "'");
+        else expect(error.empty() && std::vector<int64_t>(got.begin(), got.end()) == ints(c.get("expected")), name + ": " + Json::array_of(got).dump() + error);
+    }
+
+    for (const Json& c : fixture.get("plans").elements()) {
+        auto engine = open(c.get("bundle").str());
+        PlanSettings settings;
+        settings.use_register = c.get("register").boolean();
+        settings.transpose = static_cast<int>(c.get("transpose").integer());
+        settings.pad = 0.02;
+        const std::string name = "v5 plan " + c.get("bundle").str() + " " + c.get("name").str() + " register " + c.get("register").dump() + " transpose " +
+                                 c.get("transpose").dump();
+        SongPlan plan;
+        std::string error;
+        try {
+            EngineSongFrontend frontend(*engine);
+            plan = plan_song(parse_bundle_score(c.get("score").dump(), engine->singing()), frontend, "scylla", "en_us", settings);
+        } catch (const std::runtime_error& failure) {   // a phrase longer than the fake buckets
+            error = failure.what();
+        } catch (const std::invalid_argument& failure) {
+            error = failure.what();
+            if (error.empty()) error = "error";
+        }
+        if (c.has("error") || !error.empty()) {
+            // A phrase too long for the fake buckets words its numbers differently on the two sides; every other message is the same.
+            expect(c.get("error_type").str() == "OverlongError" ? !error.empty() : error == c.get("error").str(),
+                   name + ": error '" + error + "', expected '" + c.get("error").str() + "'");
+            continue;
+        }
+        expect(plan.register_shift == c.get("register_shift").integer() && plan.mode_id == c.get("mode_id").integer() && plan.mode == c.get("mode").str() &&
+                   std::fabs(plan.seconds() - c.get("seconds").num()) < 1e-12, name + ": register, mode or length");
+        const auto& want = c.get("phrases").elements();
+        expect(plan.phrases.size() == want.size(), name + ": " + std::to_string(plan.phrases.size()) + " phrases, expected " + std::to_string(want.size()));
+        for (std::size_t i = 0; i < std::min(plan.phrases.size(), want.size()); ++i) {
+            const PhrasePlan& got = plan.phrases[i];
+            const Json& w = want[i];
+            std::vector<float> melody;
+            for (const Json& value : w.get("melody").elements()) melody.push_back(static_cast<float>(value.num()));
+            std::vector<std::string> notes;
+            for (const ScoreNote& note : got.phrase.notes) notes.push_back(note.name());
+            const std::vector<int64_t> durations(got.durations.begin(), got.durations.end()), starts(got.sentence.word_starts.begin(), got.sentence.word_starts.end());
+            expect(std::fabs(got.phrase.start - w.get("start").num()) < 1e-12 && std::fabs(got.phrase.end - w.get("end").num()) < 1e-12 &&
+                       got.phrase.text == w.get("text").str() && notes == strings(w.get("notes")),
+                   name + " phrase " + std::to_string(i) + ": times, text or notes '" + got.phrase.text + "'");
+            expect(got.sentence.phones == strings(w.get("phones")) && starts == ints(w.get("word_starts")),
+                   name + " phrase " + std::to_string(i) + ": phones " + Json::array_of(got.sentence.phones).dump());
+            expect(durations == ints(w.get("durations")) && got.frames == w.get("frames").integer(),
+                   name + " phrase " + std::to_string(i) + ": durations " + Json::array_of(got.durations).dump());
+            expect(got.melody == melody, name + " phrase " + std::to_string(i) + ": melody");
+        }
+    }
+
+    for (const Json& c : fixture.get("sings").elements()) {
+        std::vector<FakeCall> log;
+        auto engine = open(c.get("bundle").str(), &log);
+        const Json& options = c.get("options");
+        SingRequest request;
+        request.voice = "scylla";
+        request.language = "en_us";
+        request.seed = 5;
+        request.steps = static_cast<int>(options.get("steps").integer(0));
+        request.sampler = options.get("sampler").str();
+        request.decoder = options.get("decoder").str();
+        if (options.has("guidance")) request.guidance = options.get("guidance").num();
+        request.plan.pad = 0.02;
+        const std::string name = "v5 sing " + c.get("bundle").str() + " " + c.get("score").get("style").str() + " " + options.dump();
+        Json metadata;
+        std::vector<float> audio;
+        std::string error;
+        try {
+            audio = sing(*engine, parse_bundle_score(c.get("score").dump(), engine->singing()), request, &metadata);
+        } catch (const std::invalid_argument& failure) {
+            error = failure.what();
+        }
+        if (c.has("error") || !error.empty()) {
+            expect(error == c.get("error").str(), name + ": error '" + error + "', expected '" + c.get("error").str() + "'");
+            continue;
+        }
+        std::string detail;
+        const bool calls = same_calls(log, c.get("calls"), &detail);
+        expect(calls, name + ": graph calls (" + detail + ")");
+        expect(same_json(run_lengths(audio), c.get("audio"), 1e-7), name + ": audio " + run_lengths(audio).dump().substr(0, 160));
+        const Json& m = c.get("metadata");
+        bool same_meta = metadata.get("decoder").str() == m.get("decoder").str() && metadata.get("steps").integer() == m.get("steps").integer() &&
+                         metadata.get("sampler").str() == m.get("sampler").str() && metadata.get("guidance").num() == m.get("guidance").num() &&
+                         metadata.get("guidance_steps").str() == m.get("guidance_steps").str() && metadata.get("mode").str() == m.get("mode").str() &&
+                         metadata.get("mode_id").integer() == m.get("mode_id").integer() &&
+                         metadata.get("register_shift").integer() == m.get("register_shift").integer() &&
+                         metadata.get("seconds").num() == m.get("seconds").num() && metadata.get("phrases").size() == m.get("phrases").size();
+        for (std::size_t i = 0; same_meta && i < m.get("phrases").size(); ++i) {
+            const Json& got = metadata.get("phrases")[i];
+            const Json& w = m.get("phrases")[i];
+            same_meta = got.get("text").str() == w.get("text").str() && got.get("frames").integer() == w.get("frames").integer() &&
+                        got.get("bucket").integer() == w.get("bucket").integer() && got.get("seed").integer() == w.get("seed").integer() &&
+                        got.get("seconds").num() == w.get("seconds").num() && ints(got.get("durations")) == ints(w.get("durations"));
+        }
+        expect(same_meta, name + ": metadata " + metadata.dump().substr(0, 300));
+    }
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
     if (argc < 3) {
-        std::fprintf(stderr, "usage: %s <events|durations|context|delivery|sentences|segments|normalizer|unicode|targets|singing> <fixtures dir>\n", argv[0]);
+        std::fprintf(stderr, "usage: %s <events|durations|context|delivery|sentences|segments|normalizer|unicode|targets|singing|records|v5> <fixtures dir>\n", argv[0]);
         return 2;
     }
     const std::string suite = argv[1], dir = argv[2];
@@ -1020,7 +1358,7 @@ int main(int argc, char** argv) {
         {"sentences", {"text.json", sentences_suite}},   {"segments", {"text.json", segments_suite}},
         {"normalizer", {"normalizer.json", normalizer_suite}}, {"unicode", {"unicode.json", unicode_suite}},
         {"targets", {"targets.json", targets_suite}}, {"singing", {"singing.json", singing_suite}},
-        {"records", {"records.json", records_suite}}};
+        {"records", {"records.json", records_suite}}, {"v5", {"v5.json", v5_suite}}};
     auto it = suites.find(suite);
     if (it == suites.end()) {
         std::fprintf(stderr, "unknown suite %s\n", suite.c_str());

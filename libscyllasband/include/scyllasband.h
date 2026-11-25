@@ -28,7 +28,9 @@
 extern "C" {
 #endif
 
-#define SCYLLASBAND_ABI_VERSION "3.1.0"   /* 3.1.0 adds singing; every 3.0.0 type and function is unchanged */
+/* 3.1.0 adds records and singing; every 3.0.0 type and function is unchanged. 3.2.0 adds speech styles
+   (scyllasband_synthesize_records_style_stream) and scyllasband_score_parse_for; every 3.1.0 type and function is unchanged. */
+#define SCYLLASBAND_ABI_VERSION "3.2.0"
 
 typedef struct ScyllasBandRuntime ScyllasBandRuntime;
 
@@ -119,9 +121,11 @@ SCYLLASBAND_API void scyllasband_runtime_destroy(ScyllasBandRuntime* runtime);
 
 /* {"backend", "accelerator", "sample_rate", "release_id", "default_voice", "voices": [{"id", "languages", "default_language"}],
    "delivery": {"ranges": {control: [low, high]}, "defaults": {voice: {control: value}}, "units": {control: unit}},
-   "graph_contract", "singing": {"supported", "styles", "decoders", "default_decoder", "sampler", "steps", "guidance",
+   "graph_contract", "speech_styles": [style] (what scyllasband_synthesize_records_style_stream may speak in; "spoken" on
+   every bundle), "singing": {"supported", "styles", "decoders", "default_decoder", "sampler", "steps", "guidance",
    "voice_midi_center": {voice: MIDI pitch}, "register_band": [below, above] (semitones around the centre the register aims
-   for), "max_phrase_seconds"}} ("singing" has supported = false on spoken-only bundles). Owned by the runtime. */
+   for), "max_phrase_seconds", and "guidance_steps" and "register_floor" where the bundle states them}} ("singing" has
+   supported = false on spoken-only bundles). Owned by the runtime. */
 SCYLLASBAND_API const char* scyllasband_voices_json(ScyllasBandRuntime* runtime);
 
 /* Loads the graphs a short sentence needs so the first request starts quickly. voice_id may be NULL. */
@@ -147,7 +151,8 @@ SCYLLASBAND_API void scyllasband_cancel(ScyllasBandRuntime* runtime);
    records_json is a JSON array of {"text", "voice", "language"?, "delivery"?, "intensity"?, "pace"?, "pitch"?} objects: the
    delivery as a control=value string or a {"intensity", "pace", "pitch"} mapping, or the controls as fields (not both);
    omitted controls take the voice's default. Consecutive records with the same voice, language and delivery are spoken as one
-   continuous chain; a change of any starts a new chain (with pause_ms of silence before it). Sentence i of the plan draws its
+   continuous chain; a change of any starts a new chain (with pause_ms of silence before it). A chain that changes only the
+   delivery continues from the previous one's text, acoustics and waveform when pause_ms is 0. Sentence i of the plan draws its
    noise from seed + i, across records. */
 typedef struct {
     uint32_t struct_size;      /* sizeof(ScyllasBandRecordsRequest): set by scyllasband_records_request_init, checked by every call */
@@ -175,12 +180,20 @@ SCYLLASBAND_API ScyllasBandStatus scyllasband_plan_records_json(ScyllasBandRunti
 SCYLLASBAND_API ScyllasBandStatus scyllasband_synthesize_records_stream(ScyllasBandRuntime* runtime, const ScyllasBandRecordsRequest* request,
                                                                         ScyllasBandEventCallback callback, void* user_data);
 
-/* --- singing (ABI 3.1.0; v4 bundles whose voices_json "singing.supported" is true) ---------------------------------------
+/* ABI 3.2.0. As scyllasband_synthesize_records_stream, spoken in `style`: NULL, "" or "spoken" is plain speech; any other
+   style must be one the bundle lists (scyllasband_voices_json "speech_styles"). A style the bundle cannot speak, or a record
+   that sets a control the style does not take, is refused with SCYLLASBAND_ERROR_INVALID_ARGUMENT. */
+SCYLLASBAND_API ScyllasBandStatus scyllasband_synthesize_records_style_stream(ScyllasBandRuntime* runtime, const ScyllasBandRecordsRequest* request,
+                                                                              const char* style, ScyllasBandEventCallback callback,
+                                                                              void* user_data);
 
-   A score is JSON: {"text", "bpm", "style": "pop" | "ballad", "notes": [[label, note, beats], ...]}; note a pitch name with
-   octave ("C4", "F#3", "Bb3") or "rest" (label "-"); a word over several notes is numbered ("baby~1", "baby~2", or its
-   syllables "ba~1", "by~2"). The song is sung phrase by phrase (phrases split at rests of 0.25 s or more), moved by octaves
-   into the voice's sung range. */
+/* --- singing (ABI 3.1.0; bundles whose voices_json "singing.supported" is true) ------------------------------------------
+
+   A score is JSON: {"text", "bpm", "style", "notes": [[label, note, beats], ...]}; style one of voices_json "singing.styles"
+   ("pop", "sung" or "ballad" on a v4 bundle); note a pitch name with octave ("C4",
+   "F#3", "Bb3") or "rest" (label "-"), or "x" for a word sung with no pitch where the bundle allows it; a word over several notes is
+   numbered ("baby~1", "baby~2", or its syllables "ba~1", "by~2"). The song is sung phrase by phrase (phrases split at rests of
+   0.25 s or more), moved by octaves into the voice's sung range (and above the bundle's register floor, where it has one). */
 typedef struct {
     uint32_t struct_size;      /* sizeof(ScyllasBandSingRequest): set by scyllasband_sing_request_init, checked by every call */
     const char* score_json;
@@ -202,13 +215,19 @@ typedef struct {
 /* Fills the defaults and struct_size: no transpose, register on, the bundle's steps, sampler, guidance and decoder, no seed. */
 SCYLLASBAND_API void scyllasband_sing_request_init(ScyllasBandSingRequest* request);
 
-/* Checks a score without a runtime and returns it normalized after transposing it by `transpose` semitones: {"text", "bpm",
+/* Checks a score without a runtime (the v4 styles: pop, sung, ballad, rap; for a bundle's own, scyllasband_score_parse_for) and
+   returns it normalized after transposing it by `transpose` semitones: {"text", "bpm",
    "style", "mode", "seconds", "transpose", "notes": [{"index", "label", "word_index", "part", "note", "midi", "beats", "start",
    "end"}], "words": [{"word", "start", "end", "parts"}], "range": {"low", "high", "mean", "low_note", "high_note"}, "lines":
    [{"first", "last"}]} (lines: note index ranges that end at rests of 0.25 s or more). On SCYLLASBAND_ERROR_INVALID_ARGUMENT
    *out_json is {"error": message, "note_index": index of the note at fault, or null}. Thread-safe. Free *out_json with
    scyllasband_string_free. */
 SCYLLASBAND_API ScyllasBandStatus scyllasband_score_parse(const char* score_json, int32_t transpose, char** out_json);
+
+/* ABI 3.2.0. scyllasband_score_parse with the singing styles and notes of the runtime's bundle; on a v4
+   bundle the same as scyllasband_score_parse. Runs no graph and does not wait for a request in progress. */
+SCYLLASBAND_API ScyllasBandStatus scyllasband_score_parse_for(ScyllasBandRuntime* runtime, const char* score_json, int32_t transpose,
+                                                              char** out_json);
 
 /* How the score sits in the voice's range after the transpose and the octave register: {"voice_center", "band": [low, high],
    "transpose", "register_shift", "mean_midi", "low_midi", "high_midi", "low_note", "high_note", "outside_semitones",

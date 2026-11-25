@@ -98,15 +98,39 @@ bool is_punctuation_pause(const std::string& phone) {
 
 bool is_punctuation_phone(const std::string& phone) { return punctuation_phones().count(phone) > 0; }
 
+bool is_pause_mark(const std::string& phone) { return phone == "<nonverbal>" || phone == "<breath>"; }
+
+std::vector<std::string> mark_sounded_pauses(const std::vector<std::string>& phones, bool last, const std::string& mark, std::vector<int>& moved) {
+    std::set<std::size_t> wanted;
+    const std::size_t stop = last ? phones.size() : (phones.empty() ? 0 : phones.size() - 1);
+    for (std::size_t index = 1; index < stop; ++index) {
+        if (phones[index] != kSilencePhone || !is_punctuation_phone(phones[index - 1])) continue;
+        std::size_t at = index;
+        while (at > 0 && is_punctuation_phone(phones[at - 1])) --at;
+        wanted.insert(at);
+    }
+    std::vector<std::string> out;
+    moved.clear();
+    for (std::size_t index = 0; index < phones.size(); ++index) {
+        if (wanted.count(index)) out.push_back(mark);
+        moved.push_back(static_cast<int>(out.size()));
+        out.push_back(phones[index]);
+    }
+    return out;
+}
+
 std::vector<int> frames_to_durations(const std::vector<float>& values, const std::vector<std::string>& phones, double scale,
-                                     double pause_scale) {
+                                     double pause_scale, const std::vector<int>& min_pauses, double min_pause_frames) {
     std::vector<int> durations;
     durations.reserve(phones.size());
+    const std::set<int> floored(min_pauses.begin(), min_pauses.end());
+    const int floor = static_cast<int>(std::nearbyint(std::max(0.0, min_pause_frames) * scale));
     for (std::size_t i = 0; i < phones.size() && i < values.size(); ++i) {
         const double factor = scale * (phones[i] == kSilencePhone ? pause_scale : 1.0);
         int frames = static_cast<int>(std::nearbyint(std::max(0.0, static_cast<double>(values[i])) * factor));
         if (phones[i] == kSilencePhone) {
-        } else if (is_non_acoustic_modifier(phones[i]) || is_punctuation_pause(phones[i])) {
+            if (floored.count(static_cast<int>(i))) frames = std::max(frames, floor);
+        } else if (is_non_acoustic_modifier(phones[i]) || is_punctuation_pause(phones[i]) || is_pause_mark(phones[i])) {
             frames = 0;
         } else {
             frames = std::max(1, frames);
@@ -116,10 +140,30 @@ std::vector<int> frames_to_durations(const std::vector<float>& values, const std
     return durations;
 }
 
+std::vector<int> opening_minimums(const std::vector<std::string>& phones, const std::vector<int>& durations, const std::vector<int>& sentence_starts) {
+    // The vowel, stop, break and vowel of the word, and the least frames of the first vowel, the break and the second vowel.
+    static const std::vector<std::string> word = {"ʌ", "̃", "ʔ", kSilencePhone, "ʌ", "̃"};
+    static const std::pair<std::size_t, int> least[] = {{0, 6}, {3, 2}, {4, 12}};
+    auto lead = [](const std::string& phone) { return phone == kSilencePhone || phone == "n" || phone == "ˈ"; };
+    std::vector<int> out = durations;
+    const std::size_t size = word.size();
+    for (int start_index : sentence_starts) {
+        if (start_index < 0) continue;
+        const std::size_t start = static_cast<std::size_t>(start_index);
+        for (std::size_t at = start; at < start + 4 && at + size <= phones.size(); ++at) {
+            if (!std::all_of(phones.begin() + static_cast<std::ptrdiff_t>(start), phones.begin() + static_cast<std::ptrdiff_t>(at), lead)) break;
+            if (!std::equal(word.begin(), word.end(), phones.begin() + static_cast<std::ptrdiff_t>(at))) continue;
+            for (const auto& [offset, frames] : least) out[at + offset] = std::max(out[at + offset], frames);
+            break;
+        }
+    }
+    return out;
+}
+
 std::map<std::string, int64_t> modifier_bits(const std::map<std::string, int>& token_to_id) {
     std::vector<std::pair<int, std::string>> tokens;
     for (const auto& [token, id] : token_to_id) {
-        if (is_non_acoustic_modifier(token)) tokens.emplace_back(id, token);
+        if (is_non_acoustic_modifier(token) || is_pause_mark(token)) tokens.emplace_back(id, token);
     }
     std::stable_sort(tokens.begin(), tokens.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
     std::map<std::string, int64_t> bits;
@@ -185,6 +229,16 @@ FrameEvents frame_events(const std::vector<std::string>& phones, const std::vect
             } else if (Span next = next_segment_span(phones, spans, owner + 1)) {
                 out.boundary[static_cast<std::size_t>(next->first)] = event;
             }
+        }
+        if (is_pause_mark(phone)) {
+            // The pause after the marks and punctuation that follow; none inside this target: no frames to mark.
+            std::size_t owner = index + 1;
+            while (owner < count && (is_punctuation_phone(phones[owner]) || is_pause_mark(phones[owner]))) ++owner;
+            auto bit = bits.find(phone);
+            if (bit != bits.end() && bit->second && owner < count && phones[owner] == kSilencePhone && spans[owner]) {
+                for (int64_t f = spans[owner]->first; f < spans[owner]->second; ++f) out.modifier[static_cast<std::size_t>(f)] |= bit->second;
+            }
+            continue;
         }
         if (is_non_acoustic_modifier(phone)) {
             const bool stress = phone == "ˈ" || phone == "ˌ";

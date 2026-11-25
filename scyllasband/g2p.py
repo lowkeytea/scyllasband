@@ -23,13 +23,14 @@ from typing import Any, Callable, Mapping
 
 import numpy as np
 
-from .g2p_phrases import (DEFAULT_G2P_PHRASE_MAX_CHARS, g2p_phrase_segments, normalize_g2p_phrase_punctuation,
+from .contract import GRAPH_CONTRACTS_V5
+from .g2p_phrases import (DEFAULT_G2P_PHRASE_MAX_CHARS, TIGHT_DASH, g2p_phrase_segments, normalize_g2p_phrase_punctuation,
                           punctuation_run_phone_token)
 from .lexicon import Lexicon, has_lowercase, is_word_token, word_spans
 from .text_normalizer import SPOKEN_TEXT_NORMALIZER_SHA256
 
 CACHE_SIZE = 256
-PUNCTUATION_CHARS = frozenset(",.!?;:-…—")
+PUNCTUATION_CHARS = frozenset(",.!?;:-…—\u2e3a")
 TERMINAL_PRIORITY = ("<end_question>", "<end_exclaim>", "<ellipsis>", "<end_stmt>")
 _BRACKETED_NOTE_RE = re.compile(r"\[[^\[\]\n]{1,80}\]")
 WORD_BOUNDARY_MARKER = "<word_boundary>"
@@ -63,7 +64,9 @@ class G2PFrontend:
         phoneme_dict = assets.get("g2p_phoneme_dict")
         phoneme_dict_path = bundle_dir / phoneme_dict if phoneme_dict else None
         bundle_words = load_json(phoneme_dict_path) if phoneme_dict_path is not None and phoneme_dict_path.exists() else {}
-        self.lexicon = Lexicon(self.phone_to_id, bundle_words if isinstance(bundle_words, Mapping) else {})
+        # A v5 model was trained on its own phones for non-verbal sounds ("Uh-uh", "Hmm", "Psst"); earlier models were not.
+        self.lexicon = Lexicon(self.phone_to_id, bundle_words if isinstance(bundle_words, Mapping) else {},
+                               nonverbal=controls.get("graph_input_contract") in GRAPH_CONTRACTS_V5)
         boundaries = dict(controls.get("word_boundaries") or {})
         self.word_boundary_symbol = str(boundaries.get("g2p_output_symbol", " "))
         fixed = dict(controls.get("fixed_shapes") or {})
@@ -71,41 +74,43 @@ class G2PFrontend:
         self.segment_config = _segment_config(self.config, self.tokenizer, self.text_tokens)
         self._symbols = {str(k): int(v) for k, v in self.tokenizer["text_symbols"].items()}
         self._phonemes = {int(k): str(v) for k, v in dict(self.tokenizer["phoneme_symbols"]).items()}
-        self._cache: OrderedDict[tuple[str, str], dict[str, Any]] = OrderedDict()
+        self._cache: OrderedDict[tuple[str, str, bool], dict[str, Any]] = OrderedDict()
         self._word_cache: OrderedDict[tuple[str, str], tuple[str, ...]] = OrderedDict()
         # Segments are predicted independently, so a text that joins already spoken sentences reuses their predictions.
-        self._segment_cache: OrderedDict[tuple[str, str], dict[str, Any]] = OrderedDict()
+        self._segment_cache: OrderedDict[tuple[str, str, bool], dict[str, Any]] = OrderedDict()
         self._lock = threading.RLock()
 
     def model_language(self, language: str) -> str:
         normalized = str(language).strip().lower().replace("-", "_")
         return str(self.language_map.get(normalized, normalized))
 
-    def phonemize(self, text: str, *, language: str) -> dict[str, Any]:
-        key = (str(text or ""), self.model_language(language))
+    def phonemize(self, text: str, *, language: str, nonverbal: bool = True) -> dict[str, Any]:
+        """``nonverbal``: False reads the text without the v5 non-verbal table (sung lyrics were labelled without it)."""
+        key = (str(text or ""), self.model_language(language), bool(nonverbal))
         with self._lock:
             cached = self._cache.get(key)
             if cached is not None:
                 self._cache.move_to_end(key)
                 return copy.deepcopy(cached)
-            result = self._phonemize(key[0], language=key[1])
+            result = self._phonemize(key[0], language=key[1], nonverbal=key[2])
             self._cache[key] = copy.deepcopy(result)
             while len(self._cache) > CACHE_SIZE:
                 self._cache.popitem(last=False)
             return result
 
-    def _phonemize(self, text: str, *, language: str) -> dict[str, Any]:
-        segments = punctuated_segments(text, max_chars=int(self.segment_config["chunk_max_chars"]))
+    def _phonemize(self, text: str, *, language: str, nonverbal: bool = True) -> dict[str, Any]:
+        segments = _marked_segments(text, max_chars=int(self.segment_config["chunk_max_chars"]))
         phones: list[str] = [SILENCE]
         word_starts: list[int] = []
         candidates: list[int] = []
         punctuation: list[dict[str, Any]] = []
+        min_pauses: list[int] = []
         repairs: list[dict[str, Any]] = []
         applied_overrides: list[dict[str, Any]] = []
         lexicon_entries: list[dict[str, Any]] = []
         confidences: list[float] = []
-        for index, (segment, tokens) in enumerate(segments):
-            prediction = self._predict_segment(segment, language=language)
+        for index, (segment, tokens, tight) in enumerate(segments):
+            prediction = self._predict_segment(segment, language=language, nonverbal=nonverbal)
             confidences.append(float(prediction.get("confidence", 0.0)))
             applied_overrides.extend(prediction.get("pronunciation_overrides", []))
             repairs.extend(prediction.get("terminal_tail_repairs", []))
@@ -133,6 +138,8 @@ class G2PFrontend:
                         punctuation.append(dict(segment_index=index, phone_index=len(phones), phone=token))
                         phones.append(token)
                         phones.append(SILENCE)
+                        if tight and token == "<pause_dash>":
+                            min_pauses.append(len(phones) - 1)
         if phones[-1] != SILENCE:
             phones.append(SILENCE)
         if len(phones) <= 2 and not any(p not in SILENCE_PHONES for p in phones):
@@ -141,7 +148,8 @@ class G2PFrontend:
         if unknown:
             raise ValueError(f"G2P produced symbols outside the phone vocabulary: {', '.join(unknown[:20])}")
         result = dict(phones=phones, word_starts=word_starts, word_boundary_candidates=candidates, punctuation=punctuation,
-                      g2p_segments=[segment for segment, _ in segments], g2p_confidence=min(confidences) if confidences else 0.0)
+                      min_pause_phones=min_pauses,
+                      g2p_segments=[segment for segment, _, _ in segments], g2p_confidence=min(confidences) if confidences else 0.0)
         if applied_overrides:
             result["pronunciation_overrides"] = applied_overrides
         if lexicon_entries:
@@ -151,8 +159,8 @@ class G2PFrontend:
         return result
 
     # --- graph prediction -------------------------------------------------------------------------------------------
-    def _predict_segment(self, text: str, *, language: str) -> dict[str, Any]:
-        key = (text, language)
+    def _predict_segment(self, text: str, *, language: str, nonverbal: bool = True) -> dict[str, Any]:
+        key = (text, language, nonverbal)
         with self._lock:
             cached = self._segment_cache.get(key)
             if cached is not None:
@@ -161,7 +169,7 @@ class G2PFrontend:
         prediction = self._predict_raw(text, language=language)
         prediction = self._apply_overrides(prediction, text=text, language=language)
         prediction = self._repair_terminal_tail(prediction, text=text, language=language)
-        prediction = self._apply_lexicon(prediction, text=text, language=language)
+        prediction = self._apply_lexicon(prediction, text=text, language=language, nonverbal=nonverbal)
         with self._lock:
             self._segment_cache[key] = copy.deepcopy(prediction)
             while len(self._segment_cache) > CACHE_SIZE:
@@ -245,15 +253,17 @@ class G2PFrontend:
             return prediction
         return dict(prediction, phones=phones, pronunciation_overrides=applied)
 
-    def _apply_lexicon(self, prediction: dict[str, Any], *, text: str, language: str) -> dict[str, Any]:
+    def _apply_lexicon(self, prediction: dict[str, Any], *, text: str, language: str, nonverbal: bool = True) -> dict[str, Any]:
         """Replace the phones of lexicon words. When the prediction has one word group per word, each entry replaces its own
         group; otherwise (the G2P joins some function words, "in the" -> ɪnðə) the text between lexicon words is predicted
         on its own and joined with the entries."""
         tokens = text.split()
         initialisms = has_lowercase(text)
         hits = {}
+        sounds = self.lexicon.nonverbal_hits(tokens, language) if nonverbal else {}
+        context = self.lexicon.context_hits(tokens, language)
         for index, token in enumerate(tokens):
-            entry = self.lexicon.lookup(token, language, initialisms=initialisms)
+            entry = sounds.get(index) or self.lexicon.lookup(token, language, initialisms=initialisms) or context.get(index)
             if entry:
                 hits[index] = entry
         if not hits:
@@ -275,7 +285,7 @@ class G2PFrontend:
 
         def flush() -> None:
             if piece:
-                part = self._predict_segment(" ".join(piece), language=language)
+                part = self._predict_segment(" ".join(piece), language=language, nonverbal=nonverbal)
                 joined.extend(str(p) for p in part.get("phones", []))
                 confidences.append(float(part.get("confidence", 0.0)))
                 piece.clear()
@@ -319,9 +329,14 @@ def punctuated_segments(text: str, *, max_chars: int = DEFAULT_G2P_PHRASE_MAX_CH
     sentence end keeps only that end. Phrases longer than ``max_chars`` (the G2P input budget) are split between
     words, with no punctuation between the parts.
     """
+    return [(segment, tokens) for segment, tokens, _ in _marked_segments(text, max_chars=max_chars)]
+
+
+def _marked_segments(text: str, *, max_chars: int = DEFAULT_G2P_PHRASE_MAX_CHARS) -> list[tuple[str, list[str], bool]]:
+    """``punctuated_segments`` plus, per segment, whether its punctuation holds a dash typed with no spaces around it."""
     value = _BRACKETED_NOTE_RE.sub(" ", normalize_g2p_phrase_punctuation(text))
     value = re.sub(r"\s+", " ", value).strip()
-    out: list[tuple[str, list[str]]] = []
+    out: list[list[Any]] = []
     current: list[str] = []
     index = 0
     while index < len(value):
@@ -330,24 +345,26 @@ def punctuated_segments(text: str, *, max_chars: int = DEFAULT_G2P_PHRASE_MAX_CH
             while end < len(value) and value[end] in PUNCTUATION_CHARS:
                 end += 1
             token = punctuation_run_phone_token(value[index:end])
+            tight = TIGHT_DASH in value[index:end]
             segment = "".join(current).strip()
             if _has_word(segment):
-                out.append((segment, [token] if token else []))
+                out.append([segment, [token] if token else [], tight])
             elif out and token:
                 out[-1][1].append(token)
+                out[-1][2] = out[-1][2] or tight
             current, index = [], end
             continue
         current.append(value[index])
         index += 1
     if _has_word("".join(current)):
-        out.append(("".join(current).strip(), []))
-    result: list[tuple[str, list[str]]] = []
-    for segment, tokens in out:
+        out.append(["".join(current).strip(), [], False])
+    result: list[tuple[str, list[str], bool]] = []
+    for segment, tokens, tight in out:
         terminal = next((t for t in TERMINAL_PRIORITY if t in tokens), None)
         tokens = [terminal] if terminal else tokens
         parts = _split_words(segment, max_chars)
-        result.extend((part, []) for part in parts[:-1])
-        result.append((parts[-1], tokens))
+        result.extend((part, [], False) for part in parts[:-1])
+        result.append((parts[-1], tokens, tight))
     return result
 
 

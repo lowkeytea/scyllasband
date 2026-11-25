@@ -1,0 +1,11 @@
+{
+  "text": "this is unbelievable",
+  "bpm": 108,
+  "style": "pop",
+  "notes": [
+    ["this", "C4", 0.5],
+    ["is", "D4", 0.5],
+    ["unbelievable", "E4", 0.25],
+    ["-", "rest", 1.0]
+  ]
+}

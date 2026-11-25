@@ -1,7 +1,7 @@
 # libscyllasband
 
-`libscyllasband` is the native C++ runtime for Scylla's Band model bundles (graph contract
-`scyllasband_measured_controls_v3`). It implements the same pipeline as the Python runtime and produces
+`libscyllasband` is the native C++ runtime for Scylla's Band model bundles (graph contracts
+`scyllasband_measured_controls_v3` and `_v4` with singing). It implements the same pipeline as the Python runtime and produces
 the same durations, latents and audio for the same inputs. The public C ABI is `include/scyllasband.h`.
 
 Each build links one graph runtime:
@@ -31,7 +31,8 @@ to another. For each target:
 
 1. the duration graph predicts frames for a 512-phone span of the target plus up to 180 context phones on
    each side from the neighbouring text, and the target's frames are rounded to integers, with pauses scaled
-   by the requested pace (`controls.pace_pauses`);
+   by the requested pace (`controls.pace_pauses`) and the pause after a dash typed with no spaces around it held
+   for at least 0.3 seconds;
 2. per-frame phone ids and text events (punctuation, word starts, stress and length marks, phone phase,
    sentence type) are built;
 3. the pitch predictor integrates noise to a pitch and voicing contour for those frames (its sampler and steps
@@ -132,8 +133,24 @@ Each record is `{"text", "voice", "language"?, "delivery"?, "intensity"?, "pace"
 `control=value` string or a `{"intensity", "pace", "pitch"}` object, or the controls as fields, not both. Consecutive
 records with the same voice, language and delivery form one chain, spoken continuously with the previous target's
 acoustics as context; a record that changes any of the three starts a new chain, even when it has no text, and
-`pause_ms` of silence opens every chain after the first (at the start of that target's audio). Chunk *i* of the
+`pause_ms` of silence opens every chain after the first (at the start of that target's audio). A chain that changes
+only the delivery goes on from the one before it (the same voice and language, `pause_ms` 0): each keeps its own
+delivery, while the surrounding text, the acoustics and the waveform carry across the change. Chunk *i* of the
 whole plan, counted across records, draws its noise from `seed + i`. The rules and messages are the Python runtime's (`planner.plan_records`).
+
+### Speech styles and the bundle's score styles (ABI 3.2)
+
+`scyllasband_voices_json` lists the speech styles the bundle can speak in (`"speech_styles"`: `["spoken"]` on v4
+bundles, more on the next model in training), and `scyllasband_synthesize_records_style_stream(runtime, &request,
+style, on_event, user_data)` speaks the records in one of them; a style the bundle does not list is refused.
+`scyllasband_synthesize_records_stream` and the 3.0.0 calls speak in the spoken style.
+`scyllasband_score_parse_for(runtime, score_json, transpose, &out_json)` checks a score with the singing styles of the
+runtime's bundle; `scyllasband_score_parse` has no runtime and knows the v4 styles.
+
+| Function | Purpose |
+| --- | --- |
+| `scyllasband_synthesize_records_style_stream` | `scyllasband_synthesize_records_stream` in a speech style of the bundle. |
+| `scyllasband_score_parse_for` | `scyllasband_score_parse` with the singing styles of the runtime's bundle. |
 
 ### Singing (ABI 3.1)
 
@@ -188,7 +205,8 @@ renders the 71 s song in 19 s at 764 MB, against 71 s on its CPU.
 
 `ScyllasBandRecordsRequest` and `ScyllasBandSingRequest` start with `struct_size`; initialize requests with their
 init function so a caller built against another layout gets an error instead of misread fields. Every 3.0.0 type and
-function is unchanged in 3.1 (`scyllasband_abi` checks it).
+function is unchanged in 3.1 (`scyllasband_abi` checks it), and 3.2 adds two functions and changes no type, so a caller
+built against 3.0 or 3.1 runs on a 3.2 library as it is.
 
 ## Build
 
@@ -265,6 +283,10 @@ build/litert/scyllasband_speak --bundle ../scyllasband/models/litert --voice gwe
 `--score` sings a score on a v4 bundle, with `--decoder bigvgan|vocos` (`--turbo-sing` = Vocos), `--sing-steps`,
 `--guidance`, `--transpose` and `--no-register`.
 
+`--style` speaks the text in one of the bundle's speech styles (`scyllasband_voices_json` `"speech_styles"`), as one record
+through `scyllasband_synthesize_records_style_stream`; a style the bundle cannot speak is refused with the library's error.
+Without `--style` the tool speaks through `scyllasband_synthesize` as before.
+
 ## Tests
 
 `ctest` runs the unit suites (`events`, `durations`, `context`, `delivery`, `sentences`, `segments`,
@@ -278,11 +300,13 @@ change:
 PYTHONPATH=.. python tests/generate_fixtures.py
 ```
 
-The pronunciation lexicon is embedded from `scyllasband/lexicon.py` as `src/scyllasband_lexicon.inc`; regenerate it
-after a lexicon change (the Python tests fail while it is out of date):
+The pronunciation lexicon is embedded from `scyllasband/lexicon.py` as `src/scyllasband_lexicon.inc`, and the text
+normalizer's spoken-form tables from `scyllasband/text_data/*.json` as `src/scyllasband_text_data.inc`; regenerate them
+after a change (the Python tests fail while either is out of date):
 
 ```bash
 python tools/generate_lexicon.py
+python tools/generate_text_data.py
 ```
 
 `tests/parity_harness.py` compares the built library with the Python runtime on a bundle of the build's

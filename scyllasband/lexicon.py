@@ -3,9 +3,18 @@
 The G2P reads whole phrases, which keeps connected-speech forms (unstressed "to", linking r, French liaison); a full word
 dictionary would undo them. This lexicon is small and targeted:
 
-- initialisms, the G2P's weakest class: in a long phrase it can drop a letter ("GPU" said as "GU"). An initialism matches
-  only when written in capitals (also with a plural or possessive "s"), and not inside text written all in capitals;
-- words it mispronounces (``WORDS``), matched in any case.
+- initialisms, the G2P's weakest class: in a long phrase it can drop a letter ("GPU" said as "GU"). The English list is
+  in scyllasband/text_data/en.json: ``spell`` entries are never words, so they match in capitals or in lower case, also
+  inside text written all in capitals; ``capitals_only`` entries are also words ("US", "IT"), so they match only in
+  capitals inside mixed-case text, as does any other word of capitals with no vowel. A plural or possessive "s" may
+  follow;
+- words it mispronounces (``WORDS``, from text_data/en.json "pronunciations"), matched in any case;
+- words whose reading depends on the words around them (``CONTEXT_WORDS``, from text_data/<language>.json
+  "context_pronunciations"): French numbers, where the G2P drops the t of "vingt" in "vingt deux" and of a final "huit".
+
+- on a v5 bundle, the non-verbal sounds as the model was trained on them (text_data/en.json "nonverbal_phones", the
+  trainer's phone table): a listed word standing alone takes the table's phones, and a sound the normalizer writes as
+  several words ("Uh-uh" -> "uh uh") takes one part per word, so the break between its parts is a word boundary.
 
 A bundle's ``g2p_phoneme_dict`` asset ({language: {word: phones}}) adds or replaces word entries. The C++ runtime embeds
 the same tables (libscyllasband/tools/generate_lexicon.py writes src/scyllasband_lexicon.inc from this module).
@@ -14,6 +23,8 @@ the same tables (libscyllasband/tools/generate_lexicon.py writes src/scyllasband
 from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
+
+from .text_data import TEXT_DATA
 
 # Letter names as phone templates; "{s}" takes secondary stress, and primary stress on an initialism's last letter, as
 # espeak reads them ("GPU" dʒˌiːpˌiːjˈuː).
@@ -27,22 +38,38 @@ LETTERS: dict[str, dict[str, str]] = {
     "en_us": _EN_LETTERS,
     "en_gb": dict(_EN_LETTERS, O="{s}əʊ", R="{s}ɑː", Z="z{s}ɛd"),
 }
-# Initialisms read letter by letter. Not listed: ones that are also everyday words in capitals ("US", "IT", "AM"), and
-# acronyms read as words ("NASA", "JSON", "ONNX").
-_EN_INITIALISMS = (
-    "AI", "API", "AR", "ASR", "BBC", "CEO", "CLI", "CNN", "CPU", "CSS", "CSV", "DIY", "DNA", "DNS", "EU", "FAQ", "FBI", "GPS",
-    "GPU", "HDMI", "HTML", "HTTP", "HTTPS", "ID", "IDE", "IPA", "IRS", "LLM", "MIT", "MRI", "NBA", "NFL", "NLP", "NPU", "NYC",
-    "PC", "PDF", "RNA", "SDK", "SQL", "SSD", "TDT", "TPU", "TTS", "TV", "UI", "UK", "URI", "URL", "USA", "USB", "UX", "VPN",
-    "VR", "XML",
-)
+_EN_INITIALISM_TABLE = TEXT_DATA["en"]["initialisms"]
+_EN_INITIALISMS = tuple(_EN_INITIALISM_TABLE["spell"]) + tuple(_EN_INITIALISM_TABLE["capitals_only"])
+_EN_CAPITALS_ONLY = frozenset(_EN_INITIALISM_TABLE["capitals_only"])
+# Any other word in capitals with no vowel letter is read letter by letter ("PTWC", "MS", "NPR"), up to this length.
+SPELLED_MAX_LETTERS = int(TEXT_DATA["en"]["spell_unlisted"]["max"])
+_VOWEL_LETTERS = frozenset(TEXT_DATA["en"]["spell_unlisted"]["vowels"])
 INITIALISMS: dict[str, tuple[str, ...]] = {"en_us": _EN_INITIALISMS, "en_gb": _EN_INITIALISMS}
-_EN_WORDS = {
-    "git": "ɡˈɪt",                        # unstressed after "new" in a phrase, heard as "NuGet"
-    "librispeech": "lˈɪbɹiːspˌiːtʃ",      # G2P: lˈaɪbɹɪspiːtʃ ("LibreSpeech")
-    "pytest": "pˈaɪtˌɛst",                # G2P: pˈaɪɾɪst ("pytis")
-}
-WORDS: dict[str, dict[str, str]] = {"en_us": _EN_WORDS, "en_gb": _EN_WORDS}
+CAPITALS_ONLY: dict[str, frozenset[str]] = {"en_us": _EN_CAPITALS_ONLY, "en_gb": _EN_CAPITALS_ONLY}
+# Words the G2P mispronounces, by English dialect (scyllasband/text_data/en.json "pronunciations"), matched in any case:
+# "ay" and "eff" (letter names the G2P reads as "eye" and "ee eff eff"), "git" (heard as "NuGet" after "new"),
+# "librispeech", "pytest".
+WORDS: dict[str, dict[str, str]] = {dialect: dict(entries) for dialect, entries in TEXT_DATA["en"]["pronunciations"].items()}
+# Words read by context, by G2P language: an entry applies to a word whose previous word is in ``after``, whose next word is
+# in ``before``, or (``phrase_end``) that ends its phrase; the first entry that applies wins.
+CONTEXT_WORDS: dict[str, tuple[Mapping[str, Any], ...]] = {
+    language: tuple(data["context_pronunciations"]) for language, data in TEXT_DATA.items() if data.get("context_pronunciations")}
+# Non-verbal sounds of the v5 models: {word: symbols separated by spaces, " | " between the parts of a sound typed as
+# several words}, the word sequences that spell such a sound, and the dialects the table covers.
+_NONVERBAL = TEXT_DATA["en"]["nonverbal_phones"]
+NONVERBAL_WORDS: dict[str, str] = dict(_NONVERBAL["words"])
+NONVERBAL_PHRASES: dict[str, str] = dict(_NONVERBAL["phrases"])
+NONVERBAL_LANGUAGES = frozenset(_NONVERBAL["locales"])
 PLURAL_SUFFIXES = ("'s", "’s", "s")
+POSSESSIVE_SUFFIXES = ("'s", "’s")
+_SIBILANTS = frozenset("szʃʒ")
+_VOICELESS = frozenset("ptkfθ")
+
+
+def possessive_phones(entry: Sequence[str]) -> tuple[str, ...]:
+    """The possessive ending after a word's phones: "ɪz" after a sibilant, "s" after a voiceless consonant, else "z"."""
+    last = next((phone for phone in reversed(entry) if phone not in ("ˈ", "ˌ", "ː")), "")
+    return ("ɪ", "z") if last in _SIBILANTS else ("s",) if last in _VOICELESS else ("z",)
 PLURAL_PHONE = "z"
 
 
@@ -72,9 +99,27 @@ def split_phones(phones: str, vocabulary: Mapping[str, Any]) -> tuple[str, ...] 
 class Lexicon:
     """Word and initialism entries per G2P language, as phone tuples checked against the acoustic model's phone vocabulary."""
 
-    def __init__(self, vocabulary: Mapping[str, Any], bundle_words: Mapping[str, Any] | None = None) -> None:
+    def __init__(self, vocabulary: Mapping[str, Any], bundle_words: Mapping[str, Any] | None = None, *,
+                 nonverbal: bool = False) -> None:
+        """``nonverbal``: also hold the v5 non-verbal table (``nonverbal_hits``); every symbol of it must be in the
+        vocabulary."""
         self.words: dict[str, dict[str, tuple[str, ...]]] = {}
         self.initialisms: dict[str, dict[str, tuple[str, ...]]] = {}
+        self._vocabulary = vocabulary
+        self.nonverbal: dict[str, tuple[tuple[str, ...], ...]] = {}   # word -> its parts, each a tuple of phones
+        self.nonverbal_phrases: dict[tuple[str, ...], str] = {}
+        if nonverbal:
+            for word, phones in NONVERBAL_WORDS.items():
+                parts = tuple(tuple(part.split()) for part in phones.split("|"))
+                unknown = sorted({phone for part in parts for phone in part if phone not in vocabulary})
+                if unknown or not all(parts):
+                    raise ValueError(f"Non-verbal entry {word!r} needs phones outside this bundle's vocabulary: {' '.join(unknown)}")
+                self.nonverbal[word] = parts
+            for phrase, word in NONVERBAL_PHRASES.items():
+                tokens = tuple(phrase.lower().split())
+                if len(self.nonverbal.get(word, ())) != len(tokens):
+                    raise ValueError(f"Non-verbal phrase {phrase!r} needs an entry {word!r} with one part per word")
+                self.nonverbal_phrases[tokens] = word
         for language, letters in LETTERS.items():
             table = {}
             for word in INITIALISMS.get(language, ()):
@@ -84,6 +129,14 @@ class Lexicon:
             self.initialisms[language] = table
         for language, entries in WORDS.items():
             self.words[language] = self._words(entries, vocabulary)
+        # language -> [(word, phones, after, before, phrase_end)]
+        self.context: dict[str, list[tuple[str, tuple[str, ...], frozenset[str], frozenset[str], bool]]] = {}
+        for language, rules in CONTEXT_WORDS.items():
+            for rule in rules:
+                phones = split_phones(str(rule["phones"]), vocabulary)
+                if phones:
+                    self.context.setdefault(language, []).append((str(rule["word"]).lower(), phones, frozenset(rule.get("after", ())),
+                                                                  frozenset(rule.get("before", ())), bool(rule.get("phrase_end"))))
         for language, entries in dict(bundle_words or {}).items():
             if isinstance(entries, Mapping) and entries:
                 self.words.setdefault(str(language), {}).update(self._words(entries, vocabulary))
@@ -98,21 +151,94 @@ class Lexicon:
                 table[key] = split
         return table
 
+    def nonverbal_hits(self, tokens: Sequence[str], language: str) -> dict[int, tuple[str, ...]]:
+        """{token index: phones} for the whitespace tokens that are a listed non-verbal word standing alone, or part of a
+        listed phrase (longest first; each word takes the entry's next part). A phrase's sound typed as one word ("haha")
+        takes its parts joined. Empty without the table or outside its dialects."""
+        if not self.nonverbal or language not in NONVERBAL_LANGUAGES:
+            return {}
+        split = [_split_token(token) for token in tokens]
+        found: dict[int, tuple[str, ...]] = {}
+        for phrase in sorted(self.nonverbal_phrases, key=len, reverse=True):
+            size = len(phrase)
+            for start in range(len(tokens) - size + 1):
+                if any(start + k in found for k in range(size)):
+                    continue
+                if (all(split[start + k][1].lower() == phrase[k] for k in range(size))
+                        and not any(split[start + k][2] for k in range(size - 1)) and not any(split[start + k][0] for k in range(1, size))):
+                    for k, part in enumerate(self.nonverbal[self.nonverbal_phrases[phrase]]):
+                        found[start + k] = part
+        for index, (_, core, _) in enumerate(split):
+            if index not in found and core.isalpha() and core.lower() in self.nonverbal:
+                found[index] = tuple(phone for part in self.nonverbal[core.lower()] for phone in part)
+        return found
+
+    def context_hits(self, tokens: Sequence[str], language: str) -> dict[int, tuple[str, ...]]:
+        """{token index: phones} for the whitespace tokens of one phrase that a context entry reads."""
+        rules = self.context.get(language)
+        if not rules:
+            return {}
+        words = [_split_token(token)[1].lower() for token in tokens]
+        found: dict[int, tuple[str, ...]] = {}
+        for index, word in enumerate(words):
+            previous = words[index - 1] if index > 0 else ""
+            following = words[index + 1] if index + 1 < len(words) else ""
+            for rule_word, phones, after, before, phrase_end in rules:
+                if (word == rule_word and (not after or previous in after) and (not before or following in before)
+                        and (not phrase_end or index + 1 == len(words))):
+                    found[index] = phones
+                    break
+        return found
+
     def lookup(self, token: str, language: str, *, initialisms: bool) -> tuple[str, ...] | None:
-        """The entry for one whitespace token, or None. ``initialisms`` is False inside text written all in capitals."""
+        """The entry for one whitespace token, or None. ``initialisms`` is False inside text written all in capitals, where
+        only initialisms that are never words are spelled."""
         words = self.words.get(language)
         if words:
             entry = words.get(token.lower())
             if entry:
                 return entry
-        table = self.initialisms.get(language) if initialisms else None
+            for suffix in POSSESSIVE_SUFFIXES:
+                if token.lower().endswith(suffix):
+                    entry = words.get(token.lower()[:-len(suffix)])
+                    if entry:
+                        return entry + possessive_phones(entry)   # "Garcia's"
+        table = self.initialisms.get(language)
         if table:
-            if token in table:
-                return table[token]
+            entry = self._initialism(token, language, table, initialisms)
+            if entry:
+                return entry
             for suffix in PLURAL_SUFFIXES:
-                if token.endswith(suffix) and token[:-len(suffix)] in table:
-                    return table[token[:-len(suffix)]] + (PLURAL_PHONE,)
+                if token.endswith(suffix):
+                    entry = self._initialism(token[:-len(suffix)], language, table, initialisms)
+                    if entry:
+                        return entry + (PLURAL_PHONE,)
         return None
+
+    def _initialism(self, token: str, language: str, table: Mapping[str, tuple[str, ...]],
+                    mixed_case: bool) -> tuple[str, ...] | None:
+        upper = token.upper()
+        if upper in table and upper not in CAPITALS_ONLY.get(language, ()) and token in (upper, token.lower()):
+            return table[upper]   # never a word: capitals or lower case, also in text written all in capitals
+        if not mixed_case or token != upper:
+            return None
+        if token in table:
+            return table[token]
+        letters = LETTERS.get(language)
+        if (letters and 2 <= len(token) <= SPELLED_MAX_LETTERS and token.isascii() and token.isalpha() and token.isupper()
+                and not _VOWEL_LETTERS.intersection(token)):
+            return split_phones(initialism_phones(token, letters), self._vocabulary)
+        return None
+
+
+def _split_token(token: str) -> tuple[str, str, str]:
+    """A whitespace token as (leading marks, word, trailing marks): quotes and brackets around a word are not part of it."""
+    start, end = 0, len(token)
+    while start < end and not token[start].isalnum():
+        start += 1
+    while end > start and not token[end - 1].isalnum():
+        end -= 1
+    return token[:start], token[start:end], token[end:]
 
 
 def has_lowercase(text: str) -> bool:

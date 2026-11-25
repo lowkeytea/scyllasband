@@ -1,0 +1,15 @@
+{
+  "text": "see dee ee ef gee eh bee see",
+  "bpm": 108,
+  "style": "pop",
+  "notes": [
+    ["see", "C4", 0.5],
+    ["dee", "D4", 0.5],
+    ["ee", "E4", 0.5],
+    ["ef", "F4", 0.5],
+    ["gee", "G4", 0.5],
+    ["eh", "A4", 0.5],
+    ["bee", "B4", 0.5],
+    ["see", "C5", 1.5]
+  ]
+}

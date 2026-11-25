@@ -15,6 +15,8 @@ namespace {
 constexpr int kMaxConsonantFrames = 8;
 // Vowel symbols of the phone vocabulary (the first character of a phone decides): the same set the trainer uses.
 const unicode::Text kVowels = unicode::decode("aeiouyɑɐɒæəɚɛɜɝɪɔʊʌɨʉøœɯɤɵɘɞɶ");
+// v5: the vowel set its sung rows were timed with (the first character of a phone once its marks are stripped).
+const unicode::Text kVowelsV5 = kVowels + unicode::decode("ᵻ");
 const char* const kNeedsV4 = "Singing needs a v4 bundle with delivery modes (controls.delivery_modes); this bundle has none";
 
 // Median share of a word's acoustic frames its vowels take, measured by forced alignment on the training corpus: sung 0.51,
@@ -44,11 +46,69 @@ Json note_json(const ScoreNote& note) {
     return out;
 }
 
-void check_style(const SingingControls& controls, const Score& score) {
-    const std::vector<std::string> allowed = singing_styles(controls);
-    if (std::find(allowed.begin(), allowed.end(), score.style) == allowed.end()) {
-        throw ScoreError("Style " + quote(score.style) + " (" + score.mode + ") is not a singing style of this bundle; choose one of " + join(allowed, ", "));
+// The delivery mode the bundle sings `score` in; throws when its style is not one of the bundle's.
+std::string check_style(const SingingControls& controls, const Score& score) {
+    for (const auto& [style, mode] : style_table(controls)) {
+        if (style == score.style) return mode;
     }
+    throw ScoreError("Style " + quote(score.style) + " (" + score.mode + ") is not a singing style of this bundle; choose one of " +
+                     join(singing_styles(controls), ", "));
+}
+
+// A phone without its stress, length and combining marks; empty for a token that is only marks.
+unicode::Text sounding(const std::string& phone) {
+    unicode::Text out;
+    for (char32_t cp : unicode::decode(phone)) {
+        if (!is_non_acoustic_modifier(unicode::encode(unicode::Text(1, cp)))) out.push_back(cp);
+    }
+    return out;
+}
+
+bool is_vowel_v5(const std::string& phone) {
+    const unicode::Text core = sounding(phone);
+    return !core.empty() && kVowelsV5.find(core[0]) != unicode::Text::npos;
+}
+
+int64_t edit_distance(const std::vector<unicode::Text>& a, const std::vector<unicode::Text>& b) {
+    std::vector<int64_t> row(b.size() + 1);
+    for (std::size_t j = 0; j <= b.size(); ++j) row[j] = static_cast<int64_t>(j);
+    for (std::size_t i = 1; i <= a.size(); ++i) {
+        int64_t previous = row[0];
+        row[0] = static_cast<int64_t>(i);
+        for (std::size_t j = 1; j <= b.size(); ++j) {
+            const int64_t above = row[j];
+            row[j] = std::min({row[j] + 1, row[j - 1] + 1, previous + (a[i - 1] != b[j - 1] ? 1 : 0)});
+            previous = above;
+        }
+    }
+    return row.back();
+}
+
+// The phones of `text` as the G2P groups them into words, silences and punctuation dropped.
+std::vector<std::vector<std::string>> phone_groups(const std::string& text, SongFrontend& frontend, const std::string& language) {
+    const Phonemized result = frontend.phonemize(text, language);
+    std::vector<std::size_t> starts = {0};
+    for (int start : result.word_starts) starts.push_back(static_cast<std::size_t>(start));
+    starts.push_back(result.phones.size());
+    std::vector<std::vector<std::string>> out;
+    for (std::size_t k = 0; k + 1 < starts.size(); ++k) {
+        std::vector<std::string> piece;
+        for (std::size_t i = starts[k]; i < starts[k + 1] && i < result.phones.size(); ++i) {
+            if (result.phones[i] != kSilencePhone && !is_punctuation_pause(result.phones[i])) piece.push_back(result.phones[i]);
+        }
+        if (!piece.empty()) out.push_back(std::move(piece));
+    }
+    return out;
+}
+
+// The marks-free phones of a piece (line_phones compares these).
+std::vector<unicode::Text> sounding_phones(const std::vector<std::string>& phones, std::size_t from, std::size_t to) {
+    std::vector<unicode::Text> out;
+    for (std::size_t i = from; i < to; ++i) {
+        unicode::Text core = sounding(phones[i]);
+        if (!core.empty()) out.push_back(std::move(core));
+    }
+    return out;
 }
 
 std::optional<double> voice_center(const SingingControls& controls, const std::string& voice) {
@@ -70,13 +130,44 @@ std::vector<std::string> singing_modes(const SingingControls& controls) {
     return listed;
 }
 
-std::vector<std::string> singing_styles(const SingingControls& controls) {
+StyleTable style_table(const SingingControls& controls) {
     const std::vector<std::string> modes = singing_modes(controls);
-    std::vector<std::string> out;
-    for (const auto& [style, mode] : style_modes()) {
-        if (std::find(modes.begin(), modes.end(), mode) != modes.end()) out.push_back(style);
+    auto sung = [&](const std::string& mode) { return std::find(modes.begin(), modes.end(), mode) != modes.end(); };
+    StyleTable out;
+    if (!controls.v5) {
+        for (const auto& [style, mode] : style_modes()) {
+            if (sung(mode)) out.emplace_back(style, mode);
+        }
+        return out;
+    }
+    for (const std::string& mode : modes) out.emplace_back(mode, mode);
+    for (const auto& [alias, style] : controls.aliases) {
+        const bool named = std::any_of(out.begin(), out.end(), [&](const auto& entry) { return entry.first == alias; });
+        if (sung(style) && !named) out.emplace_back(alias, style);
     }
     return out;
+}
+
+std::vector<std::string> singing_styles(const SingingControls& controls) {
+    std::vector<std::string> out;
+    for (const auto& [style, mode] : style_table(controls)) out.push_back(style);
+    return out;
+}
+
+Score parse_bundle_score(const std::string& text, const SingingControls& controls) {
+    if (!controls.v5) return parse_score_text(text);
+    const StyleTable styles = style_table(controls);
+    return parse_score_text(text, &styles, true);
+}
+
+int bundle_register_shift(const SingingControls& controls, const Score& score, const std::string& voice) {
+    int shift = register_shift(score, voice_center(controls, voice));
+    const std::vector<int> pitched = score.pitched();
+    if (controls.register_floor && !pitched.empty()) {
+        const int lowest = *std::min_element(pitched.begin(), pitched.end());
+        while (lowest + shift < *controls.register_floor) shift += 12;
+    }
+    return shift;
 }
 
 // --- phones, durations and melody ----------------------------------------------------------------------------------------------
@@ -115,6 +206,142 @@ std::pair<std::vector<std::string>, std::vector<int>> word_phones(const std::vec
     }
     phones.push_back(kSilencePhone);
     return {phones, starts};
+}
+
+std::vector<std::string> stressed_pronoun(const std::vector<std::string>& phones) {
+    if (std::find(phones.begin(), phones.end(), "ˈ") != phones.end()) return phones;
+    const auto vowel = std::find_if(phones.begin(), phones.end(), is_vowel_v5);
+    if (vowel == phones.end()) return phones;
+    std::vector<std::string> out(phones.begin(), vowel);
+    if (!out.empty() && out.back() == "ˌ") out.pop_back();  // a secondary stress on the vowel becomes the primary one
+    out.push_back("ˈ");
+    out.insert(out.end(), vowel, phones.end());
+    return out;
+}
+
+std::vector<std::vector<std::string>> line_phones(const std::vector<std::string>& words, SongFrontend& frontend, const std::string& language) {
+    // The pronoun "I" as its own word (not "I'm", "I'll", "I'd", "I've") is stressed in English lyrics.
+    auto sung = [&](std::vector<std::vector<std::string>> pieces) {
+        if (language != "en_us" && language != "en_gb") return pieces;
+        for (std::size_t i = 0; i < pieces.size() && i < words.size(); ++i) {
+            if (words[i] == "i" || words[i] == "I") pieces[i] = stressed_pronoun(pieces[i]);
+        }
+        return pieces;
+    };
+    std::vector<std::vector<std::string>> found = phone_groups(join(words, " "), frontend, language);
+    if (found.size() == words.size()) return sung(std::move(found));
+    std::vector<std::vector<std::string>> alone;
+    for (const std::string& word : words) {
+        std::vector<std::string> phones;
+        for (const std::vector<std::string>& group : phone_groups(word, frontend, language)) phones.insert(phones.end(), group.begin(), group.end());
+        alone.push_back(std::move(phones));
+    }
+    std::vector<std::string> flat;
+    for (const std::vector<std::string>& group : found) flat.insert(flat.end(), group.begin(), group.end());
+    const std::size_t count = words.size(), size = flat.size();
+    const int64_t far = 1000000000;
+    std::vector<std::vector<int64_t>> best(count + 1, std::vector<int64_t>(size + 1, far));
+    std::vector<std::vector<std::size_t>> back(count + 1, std::vector<std::size_t>(size + 1, 0));
+    best[0][0] = 0;
+    for (std::size_t i = 1; i <= count; ++i) {
+        const std::vector<unicode::Text> wanted = sounding_phones(alone[i - 1], 0, alone[i - 1].size());
+        for (std::size_t b = i; b <= size; ++b) {
+            const int64_t reach = static_cast<int64_t>(b) - static_cast<int64_t>(alone[i - 1].size()) - 6;
+            for (std::size_t a = static_cast<std::size_t>(std::max<int64_t>(static_cast<int64_t>(i) - 1, reach)); a < b; ++a) {
+                if (best[i - 1][a] >= far) continue;
+                const std::vector<unicode::Text> piece = sounding_phones(flat, a, b);
+                if (piece.empty()) continue;
+                const int64_t cost = best[i - 1][a] + edit_distance(piece, wanted) + (flat[a] == "ː" || flat[a] == "ˑ" ? 2 : 0);
+                if (cost < best[i][b]) {
+                    best[i][b] = cost;
+                    back[i][b] = a;
+                }
+            }
+        }
+    }
+    if (best[count][size] >= far) throw ScoreError("Could not cut the phrase's phones into its words: " + join(words, " "));
+    std::vector<std::vector<std::string>> out(count);
+    std::size_t b = size;
+    for (std::size_t i = count; i > 0; --i) {
+        const std::size_t a = back[i][b];
+        out[i - 1].assign(flat.begin() + static_cast<std::ptrdiff_t>(a), flat.begin() + static_cast<std::ptrdiff_t>(b));
+        b = a;
+    }
+    return sung(std::move(out));
+}
+
+std::pair<std::vector<std::string>, std::vector<int>> word_layout(const std::vector<std::vector<std::string>>& groups) {
+    std::vector<std::string> phones = {kSilencePhone};
+    std::vector<int> starts;
+    for (std::size_t index = 0; index < groups.size(); ++index) {
+        if (index) {
+            phones.push_back(kSilencePhone);
+            starts.push_back(static_cast<int>(phones.size()));
+        }
+        phones.insert(phones.end(), groups[index].begin(), groups[index].end());
+    }
+    phones.push_back(kSilencePhone);
+    return {phones, starts};
+}
+
+std::vector<int> score_durations(const std::vector<std::string>& phones, const std::vector<int>& word_starts, const std::vector<ScoreWord>& words,
+                                 int64_t total_frames, double vowel_share, int hop, int sample_rate) {
+    std::size_t first = 0;
+    while (first < phones.size() && phones[first] == kSilencePhone) ++first;
+    std::vector<std::size_t> starts = {first};
+    for (int start : word_starts) starts.push_back(static_cast<std::size_t>(start));
+    starts.push_back(phones.size());
+    if (starts.size() - 1 != words.size()) {
+        std::vector<std::string> texts;
+        for (const ScoreWord& word : words) texts.push_back(word.text);
+        throw ScoreError(std::to_string(starts.size() - 1) + " phonemized words for " + std::to_string(words.size()) + " score words: " + join(texts, " "));
+    }
+    std::vector<std::pair<int64_t, int64_t>> bounds;
+    for (const ScoreWord& word : words) {
+        bounds.emplace_back(round_half_even(word.start * sample_rate / hop), round_half_even(word.end * sample_rate / hop));
+    }
+    std::vector<int64_t> durations(phones.size(), 0);
+    int64_t cursor = bounds[0].first;
+    durations[0] = cursor;
+    for (std::size_t gi = 0; gi + 1 < starts.size(); ++gi) {
+        const std::size_t g0 = starts[gi], g1 = starts[gi + 1];
+        const bool word_between_silences = g1 > g0 && g1 <= phones.size() && phones[g1 - 1] == kSilencePhone &&
+                                           std::find(phones.begin() + static_cast<std::ptrdiff_t>(g0), phones.begin() + static_cast<std::ptrdiff_t>(g1 - 1),
+                                                     kSilencePhone) == phones.begin() + static_cast<std::ptrdiff_t>(g1 - 1);
+        if (!word_between_silences) throw ScoreError("The phones of " + quote(words[gi].text) + " are not one word between two silences");
+        const std::size_t last = g1 - 1;  // the <sil> that closes the word
+        const int64_t f0 = std::max(bounds[gi].first, cursor), f1 = bounds[gi].second;
+        std::vector<std::size_t> vowels, consonants;
+        for (std::size_t i = g0; i < last; ++i) {
+            if (sounding(phones[i]).empty()) continue;
+            (is_vowel_v5(phones[i]) ? vowels : consonants).push_back(i);
+        }
+        const int64_t vowel_count = static_cast<int64_t>(vowels.size()), consonant_count = static_cast<int64_t>(consonants.size());
+        const int64_t n = std::max(f1 - f0, vowel_count + consonant_count);
+        int64_t c = 0;
+        if (!vowels.empty()) {
+            c = std::min<int64_t>(kMaxConsonantFrames, std::max<int64_t>(1, round_half_even(static_cast<double>(n) * (1 - vowel_share) /
+                                                                                            static_cast<double>(std::max<int64_t>(1, consonant_count)))));
+            while (consonant_count > 0 && n - c * consonant_count < vowel_count && c > 1) --c;
+        } else {
+            c = std::max<int64_t>(1, floor_div(n, std::max<int64_t>(1, consonant_count)));
+        }
+        for (std::size_t i : consonants) durations[i] = c;
+        const int64_t left = n - c * consonant_count;
+        if (!vowels.empty()) {
+            const int64_t shared = std::max(left, vowel_count);
+            const int64_t share = floor_div(shared, vowel_count), extra = floor_mod(shared, vowel_count);
+            for (std::size_t k = 0; k < vowels.size(); ++k) durations[vowels[k]] = share + (static_cast<int64_t>(k) < extra ? 1 : 0);
+        } else if (!consonants.empty()) {
+            durations[consonants.back()] += std::max<int64_t>(0, left);
+        }
+        int64_t end = f0;
+        for (std::size_t i = g0; i < last; ++i) end += durations[i];
+        const int64_t following = gi + 1 < bounds.size() ? bounds[gi + 1].first : std::max(end + 2, total_frames);
+        durations[last] = std::max<int64_t>(0, following - end);
+        cursor = end + durations[last];
+    }
+    return std::vector<int>(durations.begin(), durations.end());
 }
 
 bool is_vowel(const std::string& phone) {
@@ -251,20 +478,20 @@ Json SongPlan::to_json(bool with_melody) const {
 SongPlan plan_song(const Score& input, SongFrontend& frontend, const std::string& voice, const std::string& language, const PlanSettings& settings) {
     const SingingControls& controls = frontend.singing();
     if (!controls.enabled()) throw std::invalid_argument(kNeedsV4);
-    check_style(controls, input);
+    const std::string mode = check_style(controls, input);
     const int sample_rate = frontend.sample_rate(), hop = frontend.latent_hop();
     const int64_t max_frames = frontend.max_phrase_frames();
     Score score = input.transposed(settings.transpose);
-    const int shift = settings.use_register ? register_shift(score, voice_center(controls, voice)) : 0;
+    const int shift = settings.use_register ? bundle_register_shift(controls, score, voice) : 0;
     score = score.transposed(shift);
     const double longest = static_cast<double>((max_frames - 2) * hop) / sample_rate - 2 * settings.pad;
     const double max_seconds = std::min(settings.max_seconds.value_or(kMaxPhraseSeconds), longest);
-    const double share = settings.vowel_share.value_or(vowel_share_of(score.mode));
+    const double share = settings.vowel_share.value_or(vowel_share_of(mode));
     SongPlan plan;
     plan.voice = voice;
     plan.language = language;
-    plan.mode = score.mode;
-    plan.mode_id = controls.mode_ids.at(score.mode);
+    plan.mode = mode;
+    plan.mode_id = controls.mode_ids.at(mode);
     plan.register_shift = shift;
     plan.transpose = settings.transpose;
     const std::vector<Phrase> phrases = split_phrases(score, settings.phrase_rest, max_seconds, settings.pad);
@@ -272,9 +499,11 @@ SongPlan plan_song(const Score& input, SongFrontend& frontend, const std::string
         const Phrase& phrase = phrases[index];
         std::vector<std::string> words;
         for (const ScoreWord& word : phrase.words) words.push_back(word.text);
-        auto [phones, starts] = word_phones(words, frontend, language);
         const int64_t total = round_half_even(phrase.notes.back().end * sample_rate / hop) + 2;
-        std::vector<int> durations = phone_durations(phones, starts, phrase.words, total, share, hop, sample_rate);
+        // v5: read and timed as the model's sung rows were (the phrase read once, no non-verbal table).
+        auto [phones, starts] = controls.v5 ? word_layout(line_phones(words, frontend, language)) : word_phones(words, frontend, language);
+        std::vector<int> durations = controls.v5 ? score_durations(phones, starts, phrase.words, total, share, hop, sample_rate)
+                                                 : phone_durations(phones, starts, phrase.words, total, share, hop, sample_rate);
         int64_t frames = 0;
         for (int value : durations) frames += value;
         if (frames > max_frames) {
@@ -306,12 +535,24 @@ SingSettings resolve_sing_settings(const SongFrontend& frontend, const SingReque
     out.sampler = lower(request.sampler.empty() ? (singing.sampler.empty() ? std::string("heun") : singing.sampler) : request.sampler);
     if (out.sampler != "heun" && out.sampler != "euler") throw std::invalid_argument("Unsupported sampler '" + out.sampler + "'; choose heun or euler");
     const std::string preferred = singing.decoder.empty() ? std::string("vocos") : singing.decoder;
-    out.decoder = request.decoder.empty() ? (frontend.has_decoder(preferred) ? preferred : std::string("vocos")) : lower(request.decoder);
+    // A preferred decoder the bundle does not carry gives way to vocos; on a v5 bundle only when the manifest marks that
+    // decoder "required": false.
+    out.decoder = request.decoder.empty() ? (frontend.has_decoder(preferred) || singing.decoder_required ? preferred : std::string("vocos"))
+                                          : lower(request.decoder);
     if (!frontend.has_decoder(out.decoder)) {
         throw std::invalid_argument("This bundle has no '" + out.decoder + "' decoder; it has " + join(frontend.available_decoders(), ", "));
     }
+    if (!request.guidance && singing.v5 && !singing.guidance_stated) {
+        throw std::invalid_argument("This v5 bundle states no singing guidance (controls.delivery_modes.singing.guidance); pass guidance");
+    }
     out.guidance = request.guidance.value_or(singing.guidance);
     if (!std::isfinite(out.guidance)) throw std::invalid_argument("guidance must be finite");
+    out.guidance_steps = singing.guidance_steps;
+    if (out.guidance_steps == "first_half") {
+        out.guidance_until = 0.5;
+    } else if (out.guidance_steps != "all") {
+        throw std::invalid_argument("Unknown controls.delivery_modes.singing.guidance_steps '" + out.guidance_steps + "'; this runtime knows all, first_half");
+    }
     return out;
 }
 
@@ -356,7 +597,7 @@ SongFit song_fit(const SingingControls& controls, const Score& score, const std:
     fit.transpose = transpose;
     auto sung_mean = [&](int t, int* shift_out) {
         const Score moved = score.transposed(t);
-        const int shift = use_register ? register_shift(moved, fit.voice_center) : 0;
+        const int shift = use_register ? bundle_register_shift(controls, moved, voice) : 0;
         if (shift_out) *shift_out = shift;
         const std::vector<int> pitched = moved.pitched();
         long long sum = 0;

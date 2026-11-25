@@ -26,22 +26,37 @@ PUNCTUATION_PHONES = frozenset({"<pause_comma>", "<pause_semicolon>", "<pause_co
                                 "<end_question>", "<end_exclaim>"})
 SENTENCE_TYPES = {"<end_stmt>": 1, "<end_question>": 2, "<end_exclaim>": 3, "<ellipsis>": 4}
 SILENCE = "<sil>"
+# Pause-content marks (v5 vocabularies): zero-frame tokens in front of the punctuation run before a pause, saying what the
+# pause holds (<nonverbal> = sound in the gap). They reach that pause's frames as a modifier-event bit.
+PAUSE_MARKS = frozenset({"<breath>", "<nonverbal>"})
+SOUNDED_PAUSE = "<nonverbal>"
+# "Uh-uh" / "Nuh-uh" opening a sentence (v5): the vowel, stop, break and vowel of the word, and the least frames of the
+# first vowel, the break and the second vowel. The duration model gives the first vowel 1 to 3 frames and no break there,
+# which is heard as "ahh" / "nah"; inside and at the end of a sentence its own lengths are right.
+OPENING_BREAK = ("ʌ", "̃", "ʔ", SILENCE, "ʌ", "̃")
+OPENING_BREAK_LEAD = frozenset({SILENCE, "n", "ˈ"})
+OPENING_BREAK_FRAMES = ((0, 6), (3, 2), (4, 12))
 
 
 def is_punctuation_pause_phone(phone: str) -> bool:
     return phone.startswith("<pause") or phone.startswith("<end_") or phone == "<ellipsis>"
 
 
-def frames_to_durations(values: Sequence[float], phones: Sequence[str], *, scale: float = 1.0, pause_scale: float = 1.0) -> list[int]:
+def frames_to_durations(values: Sequence[float], phones: Sequence[str], *, scale: float = 1.0, pause_scale: float = 1.0,
+                        min_pauses: Sequence[int] = (), min_pause_frames: float = 0.0) -> list[int]:
     """Rounded frames: punctuation and modifiers 0; ``<sil>`` may be 0; every other phone at least 1. ``pause_scale``
-    multiplies ``<sil>`` frames on top of ``scale`` (pace moves pauses with the words)."""
+    multiplies ``<sil>`` frames on top of ``scale`` (pace moves pauses with the words). The ``<sil>`` at each index in
+    ``min_pauses`` lasts at least ``min_pause_frames`` x ``scale`` frames."""
     durations = []
-    for value, phone in zip(values, phones):
+    floored = set(min_pauses)
+    floor = int(round(max(0.0, float(min_pause_frames)) * float(scale)))
+    for index, (value, phone) in enumerate(zip(values, phones)):
         factor = float(scale) * (float(pause_scale) if phone == SILENCE else 1.0)
         frames = int(round(max(0.0, float(value)) * factor))
         if phone == SILENCE:
-            pass
-        elif is_non_acoustic_phone_modifier(phone) or is_punctuation_pause_phone(phone):
+            if index in floored:
+                frames = max(frames, floor)
+        elif is_non_acoustic_phone_modifier(phone) or is_punctuation_pause_phone(phone) or phone in PAUSE_MARKS:
             frames = 0
         else:
             frames = max(1, frames)
@@ -50,7 +65,7 @@ def frames_to_durations(values: Sequence[float], phones: Sequence[str], *, scale
 
 
 def modifier_bits(token_to_id: Mapping[str, int]) -> dict[str, int]:
-    tokens = [t for t, _ in sorted(token_to_id.items(), key=lambda kv: kv[1]) if is_non_acoustic_phone_modifier(t)]
+    tokens = [t for t, _ in sorted(token_to_id.items(), key=lambda kv: kv[1]) if is_non_acoustic_phone_modifier(t) or t in PAUSE_MARKS]
     return {token: 1 << bit for bit, token in enumerate(tokens)}
 
 
@@ -97,6 +112,14 @@ def frame_events(phones: Sequence[str], durations: Sequence[int], word_starts: S
                 following_span = _next_segment_span(phones, spans, owner + 1)
                 if following_span is not None:
                     boundary[following_span[0]] = event
+        if phone in PAUSE_MARKS:
+            owner = index + 1   # the pause after the marks and punctuation that follow; none inside this target: no frames to mark
+            while owner < count and (phones[owner] in PUNCTUATION_PHONES or phones[owner] in PAUSE_MARKS):
+                owner += 1
+            bit = int(bits.get(phone, 0))
+            if bit and owner < count and phones[owner] == SILENCE and spans[owner] is not None:
+                modifier[spans[owner][0]:spans[owner][1]] |= bit
+            continue
         if is_non_acoustic_phone_modifier(phone):
             stress = phone in {"ˈ", "ˌ"}
             owner_span = _next_acoustic_span(phones, spans, index + 1, 1) if stress else _postfix_owner_span(phones, spans, index)
@@ -122,6 +145,44 @@ def frame_events(phones: Sequence[str], durations: Sequence[int], word_starts: S
     sentence = np.repeat(np.asarray(sentence_types(phones, following), np.int64), np.asarray(durations, np.int64))
     return dict(expanded_boundary_event_ids=boundary, expanded_modifier_event_ids=modifier, expanded_phone_phase=phase,
                 expanded_phone_log_duration=log_duration, expanded_sentence_type_ids=sentence)
+
+
+def mark_sounded_pauses(phones: Sequence[str], *, last: bool = True, mark: str = SOUNDED_PAUSE) -> tuple[list[str], list[int]]:
+    """``phones`` of one sentence (silence to silence) with ``mark`` in front of the punctuation run before every pause that
+    follows punctuation, and for each ORIGINAL phone index its index in the result. The leading silence is never marked;
+    the trailing one only with ``last`` (a sentence followed by more of the passage: its end pause is inside the text)."""
+    phones = list(phones)
+    wanted = set()
+    for index in range(1, len(phones) if last else len(phones) - 1):
+        if phones[index] == SILENCE and phones[index - 1] in PUNCTUATION_PHONES:
+            at = index
+            while at > 0 and phones[at - 1] in PUNCTUATION_PHONES:
+                at -= 1
+            wanted.add(at)
+    out, moved = [], []
+    for index, phone in enumerate(phones):
+        if index in wanted:
+            out.append(mark)
+        moved.append(len(out))
+        out.append(phone)
+    return out, moved
+
+
+def opening_minimums(phones: Sequence[str], durations: Sequence[int], sentence_starts: Sequence[int] = (0,)) -> list[int]:
+    """``durations`` with the minimum lengths of an opening "Uh-uh" / "Nuh-uh" (``OPENING_BREAK``): where the first word
+    after a sentence start (``sentence_starts``: the index of the silence in front of each sentence) is that word, with
+    only the silence, an "n" and the stress mark before its first vowel."""
+    out = [int(d) for d in durations]
+    size = len(OPENING_BREAK)
+    for start in sentence_starts:
+        for at in range(start, min(start + 4, len(phones) - size + 1)):
+            if not all(phone in OPENING_BREAK_LEAD for phone in phones[start:at]):
+                break
+            if tuple(phones[at:at + size]) == OPENING_BREAK:
+                for offset, frames in OPENING_BREAK_FRAMES:
+                    out[at + offset] = max(out[at + offset], frames)
+                break
+    return out
 
 
 def _next_segment_span(phones, spans, start):

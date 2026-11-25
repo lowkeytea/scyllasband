@@ -102,6 +102,7 @@ Json annotate(Engine& engine, Json metadata, const SynthesisOptions& options, co
     metadata.set("sampler", Json(sampler));
     metadata.set("speed", Json(options.speed));
     metadata.set("seed", options.seed ? Json(static_cast<int64_t>(*options.seed)) : Json());
+    if (engine.v5()) metadata.set("style", Json("spoken"));  // a ScyllasBandRequest has no style: records requests can name one
     return metadata;
 }
 
@@ -163,6 +164,7 @@ ScyllasBandStatus scyllasband_runtime_create(const ScyllasBandRuntimeOptions* op
         info.set("voices", Json(std::move(voices)));
         info.set("delivery", engine.delivery_info());
         info.set("graph_contract", Json(engine.graph_contract()));
+        info.set("speech_styles", Json::array_of(engine.speech_styles()));
         info.set("singing", singing_info(engine));
         runtime->voices_json = info.dump();
         *out_runtime = runtime.release();
@@ -264,10 +266,16 @@ ScyllasBandStatus scyllasband_plan_records_json(ScyllasBandRuntime* runtime, con
 
 ScyllasBandStatus scyllasband_synthesize_records_stream(ScyllasBandRuntime* runtime, const ScyllasBandRecordsRequest* request,
                                                         ScyllasBandEventCallback callback, void* user_data) {
+    return scyllasband_synthesize_records_style_stream(runtime, request, nullptr, callback, user_data);
+}
+
+ScyllasBandStatus scyllasband_synthesize_records_style_stream(ScyllasBandRuntime* runtime, const ScyllasBandRecordsRequest* request,
+                                                              const char* style, ScyllasBandEventCallback callback, void* user_data) {
     return guarded([&] {
         require(runtime != nullptr && callback != nullptr, "runtime and callback are required");
         Json records;
-        const SynthesisOptions options = records_options_from(request, &records);
+        SynthesisOptions options = records_options_from(request, &records);
+        options.style = style ? style : "";
         const uint64_t generation = runtime->engine->cancel_generation();
         std::lock_guard<std::mutex> lock(runtime->mutex);
         Engine& engine = *runtime->engine;
@@ -298,6 +306,10 @@ void scyllasband_test_free(void* pointer) { std::free(pointer); }
 
 int32_t scyllasband_test_normalize(const char* text, const char* language, char** out_text) {
     return guarded([&] { *out_text = copy_string(normalize_spoken_text(text ? text : "", language ? language : "en_us")); });
+}
+
+int32_t scyllasband_test_nonverbal_spellings(const char* text, const char* language, char** out_text) {
+    return guarded([&] { *out_text = copy_string(nonverbal_spellings(text ? text : "", language ? language : "en_us")); });
 }
 
 int32_t scyllasband_test_split_sentences(const char* text, char** out_json) {
@@ -336,6 +348,7 @@ int32_t scyllasband_test_phonemize(ScyllasBandRuntime* runtime, const char* text
         out.set("phones", Json::array_of(result.phones));
         out.set("word_starts", Json::array_of(result.word_starts));
         out.set("word_boundary_candidates", Json::array_of(result.word_boundary_candidates));
+        out.set("min_pause_phones", Json::array_of(result.min_pause_phones));
         out.set("punctuation", result.punctuation);
         out.set("g2p_segments", Json::array_of(result.segments));
         *out_json = copy_string(out.dump());
@@ -357,12 +370,20 @@ int32_t scyllasband_test_synthesize_sentence(ScyllasBandRuntime* runtime, const 
         for (int64_t index : int_list(request.get("word_starts"))) sentence.word_starts.push_back(static_cast<int>(index));
         sentence.before_ids = int_list(request.get("before_ids"));
         sentence.after_ids = int_list(request.get("after_ids"));
+        for (int64_t index : int_list(request.get("min_pauses"))) sentence.min_pauses.push_back(static_cast<int>(index));
+        if (request.get("sentence_starts").is_array()) {
+            sentence.sentence_starts.clear();
+            for (int64_t index : int_list(request.get("sentence_starts"))) sentence.sentence_starts.push_back(static_cast<int>(index));
+        }
+        // A spoken target's style row (v5) and whether its intensity and pace are set (false: a style trained without them).
+        const std::optional<int64_t> style = request.get("style").is_number() ? std::optional<int64_t>(request.get("style").integer()) : std::nullopt;
         const std::string voice = request.get("voice").str(), language = request.get("language").str();
         const std::string delivery_spec = request.get("delivery").str();
         // A sung target (a melody given) has no delivery request: sung clips were trained without intensity or pace.
-        const DeliveryTensors delivery = request.get("melody").is_array()
+        DeliveryTensors delivery = request.get("melody").is_array()
             ? DeliveryTensors{}
             : engine.delivery_tensors(voice, Delivery::parse(request.get("delivery").is_null() ? nullptr : delivery_spec.c_str()));
+        if (!request.get("controlled").boolean(true)) std::fill(std::begin(delivery.present), std::end(delivery.present), uint8_t{0});
         const double speed = request.get("speed").num(1.0);
         Json out{Json::Object{}};
         std::vector<int> forced;
@@ -371,7 +392,7 @@ int32_t scyllasband_test_synthesize_sentence(ScyllasBandRuntime* runtime, const 
         }
         if (noise == nullptr) {
             std::vector<int> durations = forced.empty()
-                ? engine.durations(sentence, engine.voice_index(voice), engine.language_index(language), delivery, speed)
+                ? engine.durations(sentence, engine.voice_index(voice), engine.language_index(language), delivery, speed, style)
                 : forced;
             out.set("durations", Json::array_of(durations));
             *out_json = copy_string(out.dump());
@@ -381,8 +402,12 @@ int32_t scyllasband_test_synthesize_sentence(ScyllasBandRuntime* runtime, const 
         std::vector<float> prefix_values(prefix ? prefix : nullptr, prefix ? prefix + dim * static_cast<std::size_t>(prefix_frames) : nullptr);
         std::vector<float> melody;
         for (const Json& value : request.get("melody").elements()) melody.push_back(static_cast<float>(value.num()));
+        const bool is_sung = request.get("melody").is_array() || request.get("delivery_mode").is_number();
         const SungConditioning sung{request.get("melody").is_array() ? &melody : nullptr, request.get("delivery_mode").integer(0),
-                                    request.get("guidance").num(1.0)};
+                                    request.get("guidance").num(1.0),
+                                    request.get("guidance_until").is_number() ? std::optional<double>(request.get("guidance_until").num()) : std::nullopt};
+        std::vector<float> pitch_prefix;   // [2, n] row-major: the contours rendered so far in the chain (v5)
+        for (const Json& value : request.get("pitch_prefix").elements()) pitch_prefix.push_back(static_cast<float>(value.num()));
         SentenceRequest sentence_request;
         sentence_request.voice = voice;
         sentence_request.language = language;
@@ -399,7 +424,10 @@ int32_t scyllasband_test_synthesize_sentence(ScyllasBandRuntime* runtime, const 
             std::copy_n(noise + 2 * T, dim * T, flow);
         };
         sentence_request.durations = forced.empty() ? nullptr : &forced;
-        sentence_request.sung = &sung;
+        sentence_request.sung = is_sung || !engine.v5() ? &sung : nullptr;
+        sentence_request.mode = style;
+        sentence_request.pitch_prefix = &pitch_prefix;
+        sentence_request.pitch_prefix_frames = static_cast<int64_t>(pitch_prefix.size() / 2);
         SentenceResult result = engine.synthesize_sentence(sentence, sentence_request);
         DecodeRequest decode;
         decode.voice = voice;
@@ -409,6 +437,9 @@ int32_t scyllasband_test_synthesize_sentence(ScyllasBandRuntime* runtime, const 
         decode.decoder = request.get("decoder").str("vocos");
         std::vector<float> audio = engine.decode(result.latents, result.frames, decode);
         out = result.metadata;
+        Json::Array contour;
+        for (float value : result.contour) contour.emplace_back(static_cast<double>(value));
+        out.set("contour", Json(std::move(contour)));
         *out_json = copy_string(out.dump());
         if (out_latents) *out_latents = copy_floats(result.latents);
         if (out_latent_count) *out_latent_count = static_cast<int64_t>(result.latents.size());

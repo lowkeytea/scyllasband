@@ -105,7 +105,7 @@ Json note_json(const ScoreNote& note) {
 
 }  // namespace
 
-std::string ScoreNote::name() const { return midi ? midi_to_note(*midi) : "rest"; }
+std::string ScoreNote::name() const { return midi ? midi_to_note(*midi) : rest() ? "rest" : "x"; }
 
 std::vector<int> Score::pitched() const {
     std::vector<int> out;
@@ -179,17 +179,24 @@ std::string midi_to_note(int midi) {
     return std::string(kNoteNames[floor_mod(midi, 12)]) + std::to_string(floor_div(midi, 12) - 1);
 }
 
-Score parse_score_text(const std::string& text) {
+Score parse_score_text(const std::string& text, const StyleTable* styles, bool unvoiced) {
     Json data;
     try {
         data = Json::parse(text);
     } catch (const std::exception& error) {
         throw ScoreError(std::string("The score is not valid JSON: ") + error.what());
     }
-    return parse_score(data);
+    return parse_score(data, styles, unvoiced);
 }
 
-Score parse_score(const Json& data) {
+Score parse_score(const Json& data, const StyleTable* given_styles, bool unvoiced) {
+    const StyleTable& styles = given_styles ? *given_styles : style_modes();
+    auto mode_of = [&](const std::string& style) {
+        for (const auto& [name, mode] : styles) {
+            if (name == style) return mode;
+        }
+        return std::string();
+    };
     if (!data.is_object()) throw ScoreError("A score is a JSON object with text, bpm, style and notes");
     const std::optional<double> bpm = data.has("bpm") ? py_float(data.get("bpm")) : std::nullopt;
     if (!bpm) throw ScoreError("Score needs a numeric bpm");
@@ -199,14 +206,19 @@ Score parse_score(const Json& data) {
                        (style_value.type() == Json::Type::boolean && !style_value.boolean()) ||
                        (style_value.is_number() && style_value.num() == 0.0) || ((style_value.is_array() || style_value.is_object()) && style_value.size() == 0);
     const std::string style = lower(strip(falsy ? std::string("pop") : py_str(style_value)));
-    if (style_mode(style).empty()) throw ScoreError("Unknown style " + quote(style) + "; choose one of ballad, pop, rap, sung");
+    if (mode_of(style).empty()) {
+        std::vector<std::string> names;
+        for (const auto& [name, mode] : styles) names.push_back(name);
+        std::sort(names.begin(), names.end());
+        throw ScoreError("Unknown style " + quote(style) + "; choose one of " + join(names, ", "));
+    }
     const Json& rows = data.get("notes");
     if (!rows.is_array() || rows.size() == 0) throw ScoreError("Score notes must be a non-empty list of [label, note, beats]");
     const double beat = 60.0 / *bpm;
     Score score;
     score.bpm = *bpm;
     score.style = style;
-    score.mode = style_mode(style);
+    score.mode = mode_of(style);
     std::vector<std::string> pieces;  // syllable spellings of the open word
     int open_part = 0;                // the last part number of the open word (0: no open word)
     double cursor = 0.0;
@@ -219,15 +231,16 @@ Score parse_score(const Json& data) {
         const std::optional<double> beats = py_float(row[2]);
         if (!beats) throw ScoreError("Note " + number_text + " (" + quote(label) + ") has a non-numeric length " + row[2].dump(), at);
         if (!std::isfinite(*beats) || *beats <= 0) throw ScoreError("Note " + number_text + " (" + quote(label) + ") must last a positive number of beats", at);
+        const bool pitchless = unvoiced && lower(strip(name)) == "x";  // a word sung with no pitch
         std::optional<int> midi;
         try {
-            midi = note_to_midi(name);
+            if (!pitchless) midi = note_to_midi(name);
         } catch (const ScoreError& error) {
             throw ScoreError(error.what(), at);
         }
         const double start = cursor, end = cursor + *beats * beat;
         cursor = end;
-        const bool rest = !midi || label == "-" || label.empty();
+        const bool rest = (!midi && !pitchless) || label == "-" || label.empty();
         score.notes.push_back(ScoreNote{rest ? std::string("-") : label, rest ? std::nullopt : midi, start, end, *beats, -1, 0});
         if (rest) {
             open_part = 0;
@@ -316,7 +329,7 @@ int register_shift(const Score& score, std::optional<double> center) {
 std::vector<Phrase> split_phrases(const Score& score, double phrase_rest, double max_seconds, double pad) {
     std::vector<ScoreNote> sung;
     for (const ScoreNote& note : score.notes) {
-        if (note.midi) sung.push_back(note);
+        if (!note.rest()) sung.push_back(note);
     }
     std::vector<std::vector<ScoreNote>> runs;
     std::vector<ScoreNote> current;
@@ -408,7 +421,7 @@ std::vector<std::pair<int, int>> score_lines(const Score& score, double phrase_r
     std::optional<double> last_sung_end;  // the end of the current line's last sung note
     for (std::size_t i = 0; i < score.notes.size(); ++i) {
         const ScoreNote& note = score.notes[i];
-        if (!note.midi) continue;
+        if (note.rest()) continue;
         if (last_sung_end && note.start - *last_sung_end >= phrase_rest) {
             lines.emplace_back(first, static_cast<int>(i) - 1);   // the rests before this note close the previous line
             first = static_cast<int>(i);

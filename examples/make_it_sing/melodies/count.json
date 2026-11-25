@@ -1,0 +1,11 @@
+{
+  "text": "one two three four",
+  "bpm": 120,
+  "style": "pop",
+  "notes": [
+    ["one", "G3", 1.0],
+    ["two", "G3", 1.0],
+    ["three", "G3", 1.0],
+    ["four", "C4", 1.0]
+  ]
+}
