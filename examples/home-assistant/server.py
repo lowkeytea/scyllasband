@@ -7,9 +7,12 @@ Streaming synthesis lets HA start speaking after the first passage of a long
 reply instead of after all of it.
 """
 import asyncio
+import hashlib
+import hmac
 import io
 import json
 import logging
+import math
 import os
 import re
 import wave
@@ -51,14 +54,11 @@ DELIVERY = {
 }
 
 
-def _clamped(value, name: str, low: float = -2.0, high: float = 2.0) -> float:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        raise ValueError(f"{name} must be a number") from None
-    if not low <= number <= high:
-        raise ValueError(f"{name} must be between {low} and {high}")
-    return number
+def _number(value, name: str, low: float, high: float) -> float:
+    """A number from a JSON request in [low, high]; anything else is the client's error."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not low <= value <= high:
+        raise ValueError(f"{name} must be a number from {low:g} to {high:g}")
+    return float(value)
 
 
 def _delivery_override(request: dict) -> dict:
@@ -66,20 +66,34 @@ def _delivery_override(request: dict) -> dict:
 
     Missing keys keep the env-derived DELIVERY values, so clients that send
     only model/input/voice/response_format (Firefox Read Aloud) are unchanged.
-    `speed` is an OpenAI-style factor mapped onto Scylla's pace (-2..2).
+    `speed` is OpenAI's rate factor (0.25 to 4, 1 normal), read on a log scale
+    as the runtime's pace: 0.5 and 2 reach its slowest and fastest (-2, 2).
     """
     out = dict(DELIVERY)
     if "pitch" in request:
-        out["pitch"] = _clamped(request["pitch"], "pitch")
+        out["pitch"] = _number(request["pitch"], "pitch", -2.0, 2.0)
     if "intensity" in request:
-        out["intensity"] = _clamped(request["intensity"], "intensity")
+        out["intensity"] = _number(request["intensity"], "intensity", -2.0, 2.0)
     if "speed" in request:
-        out["pace"] = _clamped((float(request["speed"]) - 1) * 2, "speed")
+        speed = _number(request["speed"], "speed", 0.25, 4.0)
+        if speed != 1.0:   # 1 is normal: the container's own pace stays
+            out["pace"] = max(-2.0, min(2.0, 2.0 * math.log2(speed)))
     return out
 
+
 MAX_CHARS = int(os.environ.get("SCYLLASBAND_MAX_CHARS", "0"))
+# The OpenAI-compatible speech endpoint is off unless OPENAI_HTTP_PORT is set. With OPENAI_API_KEY set, requests need
+# "Authorization: Bearer <key>". OPENAI_MAX_CHARS caps one request's text (OpenAI's own limit, 4096, by default; 0 for
+# none), so one long request cannot hold the synthesis lock Home Assistant's Wyoming requests wait on for long.
 HTTP_HOST = os.environ.get("OPENAI_HTTP_HOST", "0.0.0.0")
-HTTP_PORT = int(os.environ.get("OPENAI_HTTP_PORT", "8000"))
+HTTP_PORT = int(os.environ.get("OPENAI_HTTP_PORT") or 0)
+API_KEY = os.environ.get("OPENAI_API_KEY", "")
+HTTP_MAX_CHARS = int(os.environ.get("OPENAI_MAX_CHARS", "4096"))
+HTTP_MAX_BODY = max(65536, 16 * HTTP_MAX_CHARS) if HTTP_MAX_CHARS > 0 else 1_000_000
+HTTP_TIMEOUT = 30.0   # seconds to send the request head, and again the body
+HTTP_FORMATS = {"wav": "audio/wav", "pcm": "audio/pcm"}   # pcm: 16-bit little-endian mono at the bundle's rate
+HTTP_MAX_QUEUE = 3    # speech requests being made or waiting for the synthesis lock; more get 503 and Retry-After
+_http_queue = 0
 ATTR = Attribution(name="Scylla's Band", url="https://github.com/lowkeytea/scyllasband")
 _LOCK = asyncio.Lock()
 # Where a streamed reply may be cut: the runtime planner's sentence ends (punctuation, closing quotes, then space) and
@@ -298,12 +312,25 @@ class Handler(AsyncEventHandler):
 
 
 _HTTP_REASONS = {
-    200: "OK", 204: "No Content", 400: "Bad Request", 404: "Not Found",
-    413: "Payload Too Large", 500: "Internal Server Error",
+    200: "OK", 204: "No Content", 400: "Bad Request", 401: "Unauthorized", 404: "Not Found",
+    405: "Method Not Allowed", 408: "Request Timeout", 411: "Length Required", 413: "Payload Too Large",
+    431: "Request Header Fields Too Large", 500: "Internal Server Error", 503: "Service Unavailable",
 }
+_MODELS_PATHS = ("/v1/models", "/models")
+_SPEECH_PATHS = ("/v1/audio/speech", "/audio/speech")
 
 
-def _http_head(status: int, content_type: str, length: int) -> bytes:
+class _HttpError(Exception):
+    def __init__(self, status: int, message: str, headers: str = "") -> None:
+        super().__init__(message)
+        self.status, self.headers = status, headers
+
+
+class _ClientGone(Exception):
+    """The client closed its connection before its audio was made."""
+
+
+def _http_head(status: int, content_type: str, length: int, extra: str = "") -> bytes:
     return (
         f"HTTP/1.1 {status} {_HTTP_REASONS[status]}\r\n"
         f"Content-Type: {content_type}\r\n"
@@ -311,18 +338,25 @@ def _http_head(status: int, content_type: str, length: int) -> bytes:
         "Access-Control-Allow-Origin: *\r\n"
         "Access-Control-Allow-Headers: Authorization, Content-Type\r\n"
         "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
+        f"{extra}"
         "Connection: close\r\n\r\n"
     ).encode("latin-1")
 
 
-async def _http_send(writer: asyncio.StreamWriter, status: int,
-                     content_type: str, payload: bytes) -> None:
-    writer.write(_http_head(status, content_type, len(payload)) + payload)
-    await writer.drain()
+async def _http_send(writer: asyncio.StreamWriter, status: int, content_type: str, payload: bytes, extra: str = "") -> None:
+    writer.write(_http_head(status, content_type, len(payload), extra))
+    writer.write(payload)
+    try:
+        await asyncio.wait_for(writer.drain(), HTTP_TIMEOUT)
+    except asyncio.TimeoutError:
+        writer.transport.abort()   # a client that does not read its reply does not keep it in memory
+        raise _ClientGone() from None
 
 
-def _http_json(payload: dict) -> bytes:
-    return json.dumps(payload).encode("utf-8")
+def _http_error_body(status: int, message: str) -> bytes:
+    """OpenAI's error shape, which its clients show as error.message."""
+    kind = "server_error" if status >= 500 else "invalid_request_error"
+    return json.dumps({"error": {"message": message, "type": kind}}).encode("utf-8")
 
 
 def _wav(pcm: bytes, rate: int) -> bytes:
@@ -335,72 +369,142 @@ def _wav(pcm: bytes, rate: int) -> bytes:
     return out.getvalue()
 
 
-async def _handle_http(reader: asyncio.StreamReader,
-                       writer: asyncio.StreamWriter) -> None:
-    """Serve a minimal OpenAI-compatible speech API over HTTP/1.1."""
+async def _read_request(reader: asyncio.StreamReader) -> tuple[str, str, dict, bytes]:
+    """Method, path, headers (lower-case names) and body of one HTTP/1.1 request, or an _HttpError."""
     try:
-        head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 30)
-        lines = head.decode("latin-1").split("\r\n")
-        method, target, _ = lines[0].split(" ", 2)
-        headers = {}
-        for line in lines[1:]:
-            if ":" in line:
-                key, value = line.split(":", 1)
-                headers[key.strip().lower()] = value.strip()
-        length = int(headers.get("content-length", "0"))
-        if length < 0 or length > 1_000_000:
-            await _http_send(writer, 413, "application/json",
-                             _http_json({"error": "request too large"}))
-            return
-        body = await reader.readexactly(length) if length else b""
-        path = target.split("?", 1)[0]
+        head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), HTTP_TIMEOUT)
+    except asyncio.LimitOverrunError:
+        raise _HttpError(431, "request headers too large") from None
+    except asyncio.TimeoutError:
+        raise _HttpError(408, "request head not received in time") from None
+    lines = head.decode("latin-1").split("\r\n")
+    parts = lines[0].split(" ")
+    if len(parts) != 3 or not parts[2].startswith("HTTP/"):
+        raise _HttpError(400, "malformed request line")
+    method, target = parts[0], parts[1]
+    headers = {}
+    for line in lines[1:]:
+        if ":" in line:
+            key, value = line.split(":", 1)
+            headers[key.strip().lower()] = value.strip()
+    if "transfer-encoding" in headers:
+        raise _HttpError(411, "send the body with Content-Length")
+    raw_length = headers.get("content-length", "0")
+    if not (raw_length.isascii() and raw_length.isdigit()) or len(raw_length) > 12:
+        raise _HttpError(400, "invalid Content-Length")
+    length = int(raw_length)
+    if length > HTTP_MAX_BODY:
+        raise _HttpError(413, "request too large")
+    try:
+        body = await asyncio.wait_for(reader.readexactly(length), HTTP_TIMEOUT) if length else b""
+    except asyncio.TimeoutError:
+        raise _HttpError(408, "request body not received in time") from None
+    return method, target.split("?", 1)[0], headers, body
 
-        if method == "OPTIONS":
-            await _http_send(writer, 204, "text/plain", b"")
+
+def _authorize(headers: dict) -> None:
+    if not API_KEY:
+        return
+    scheme, _, token = headers.get("authorization", "").partition(" ")
+    given = hashlib.sha256(token.strip().encode("utf-8")).digest()
+    if scheme.lower() != "bearer" or not hmac.compare_digest(given, hashlib.sha256(API_KEY.encode("utf-8")).digest()):
+        raise _HttpError(401, "missing or wrong API key", "WWW-Authenticate: Bearer\r\n")
+
+
+async def _speech(body: bytes, reader: asyncio.StreamReader) -> tuple[str, bytes]:
+    """The audio for one /v1/audio/speech request: (content type, bytes)."""
+    try:
+        request = json.loads(body)
+    except (ValueError, RecursionError):
+        raise _HttpError(400, "invalid JSON body") from None
+    if not isinstance(request, dict):
+        raise _HttpError(400, "the body must be a JSON object")
+    text = request.get("input")
+    if not isinstance(text, str) or not text.strip():
+        raise _HttpError(400, "input must be non-empty text")
+    for limit, name in ((HTTP_MAX_CHARS, "OPENAI_MAX_CHARS"), (MAX_CHARS, "SCYLLASBAND_MAX_CHARS")):
+        if limit > 0 and len(text) > limit:
+            raise _HttpError(400, f"input is longer than {limit} characters ({name})")
+    response_format = request.get("response_format") or "wav"
+    if not isinstance(response_format, str) or response_format not in HTTP_FORMATS:
+        raise _HttpError(400, "response_format must be wav or pcm")
+    voice = request.get("voice") or DEFAULT_VOICE
+    if not isinstance(voice, str) or voice not in VOICES:
+        raise _HttpError(400, f"unknown voice: {voice}; voices are {', '.join(sorted(VOICES))}")
+    language = request.get("language") or VOICES[voice].get("default_language") or DEFAULT_LANG
+    if not isinstance(language, str):
+        raise _HttpError(400, "language must be text")
+    try:
+        delivery = _delivery_override(request)
+    except ValueError as exc:
+        raise _HttpError(400, str(exc)) from None
+    global _http_queue
+    if _http_queue >= HTTP_MAX_QUEUE:
+        raise _HttpError(503, "busy: try again shortly", "Retry-After: 2\r\n")
+    _http_queue += 1
+    try:
+        async with _LOCK:
+            if reader.at_eof():
+                raise _ClientGone()   # its body was read, so end of stream means the client left while it waited
+            pcm, rate = await asyncio.to_thread(_synth, text, voice, language, delivery)
+    except ValueError as exc:   # the runtime's own refusals, such as a language the voice does not speak
+        raise _HttpError(400, str(exc) or "invalid request") from None
+    except _ClientGone:
+        raise
+    except Exception:
+        LOG.exception("http synthesis failed")
+        raise _HttpError(500, "synthesis failed") from None
+    finally:
+        _http_queue -= 1
+    return HTTP_FORMATS[response_format], (_wav(pcm, rate) if response_format == "wav" else pcm)
+
+
+async def _discard(reader: asyncio.StreamReader) -> None:
+    """Read what is left of a refused request for a moment, so closing does not reset the connection before the client
+    has read the error."""
+    deadline = asyncio.get_running_loop().time() + 2.0
+    received = 0
+    while received < HTTP_MAX_BODY:
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
             return
-        if method == "GET" and path in ("/v1/models", "/models"):
-            models = [{"id": voice, "object": "model", "owned_by": "scyllasband"}
-                      for voice in sorted(VOICES)]
-            await _http_send(writer, 200, "application/json",
-                             _http_json({"object": "list", "data": models}))
+        try:
+            chunk = await asyncio.wait_for(reader.read(65536), remaining)
+        except (asyncio.TimeoutError, ConnectionError):
             return
-        if method == "POST" and path in ("/v1/audio/speech", "/audio/speech"):
-            try:
-                request = json.loads(body)
-            except Exception:
-                await _http_send(writer, 400, "application/json",
-                                 _http_json({"error": "invalid JSON body"}))
-                return
-            text = request.get("input")
-            if not isinstance(text, str) or not text.strip():
-                await _http_send(writer, 400, "application/json",
-                                 _http_json({"error": "input must be non-empty text"}))
-                return
-            if MAX_CHARS > 0 and len(text) > MAX_CHARS:
-                await _http_send(writer, 400, "application/json",
-                                 _http_json({"error": f"text exceeds SCYLLASBAND_MAX_CHARS ({MAX_CHARS})"}))
-                return
-            voice = request.get("voice") or DEFAULT_VOICE
-            if voice not in VOICES:
-                await _http_send(writer, 400, "application/json",
-                                 _http_json({"error": f"unknown voice: {voice}"}))
-                return
-            language = request.get("language") or VOICES[voice].get("default_language") or DEFAULT_LANG
-            try:
-                delivery = _delivery_override(request)
-                async with _LOCK:
-                    pcm, rate = await asyncio.to_thread(_synth, text, voice, language, delivery)
-            except Exception as exc:
-                LOG.warning("http synthesis failed: %s", exc)
-                await _http_send(writer, 400, "application/json",
-                                 _http_json({"error": str(exc) or type(exc).__name__}))
-                return
-            await _http_send(writer, 200, "audio/wav", _wav(pcm, rate))
+        if not chunk:
             return
-        await _http_send(writer, 404, "application/json",
-                         _http_json({"error": "not found"}))
-    except Exception as exc:
-        LOG.warning("http request failed: %s", exc)
+        received += len(chunk)
+
+
+async def _handle_http(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    """Serve a minimal OpenAI-compatible speech API over HTTP/1.1, one request per connection."""
+    try:
+        try:
+            method, path, headers, body = await _read_request(reader)
+            if method == "OPTIONS":
+                await _http_send(writer, 204, "text/plain", b"")   # CORS preflight, before any key is sent
+            elif path in _MODELS_PATHS:
+                if method != "GET":
+                    raise _HttpError(405, "use GET", "Allow: GET, OPTIONS\r\n")
+                _authorize(headers)
+                models = [{"id": voice, "object": "model", "owned_by": "scyllasband"} for voice in sorted(VOICES)]
+                await _http_send(writer, 200, "application/json", json.dumps({"object": "list", "data": models}).encode("utf-8"))
+            elif path in _SPEECH_PATHS:
+                if method != "POST":
+                    raise _HttpError(405, "use POST", "Allow: POST, OPTIONS\r\n")
+                _authorize(headers)
+                content_type, audio = await _speech(body, reader)
+                await _http_send(writer, 200, content_type, audio)
+            else:
+                raise _HttpError(404, "not found")
+        except _HttpError as exc:
+            await _http_send(writer, exc.status, "application/json", _http_error_body(exc.status, str(exc)), exc.headers)
+            await _discard(reader)
+    except (asyncio.IncompleteReadError, ConnectionError, _ClientGone):
+        pass   # the client went away
+    except Exception:
+        LOG.exception("http request failed")
     finally:
         writer.close()
 
@@ -408,13 +512,16 @@ async def _handle_http(reader: asyncio.StreamReader,
 async def main() -> None:
     uri = os.environ.get("WYOMING_URI", "tcp://0.0.0.0:10210")
     server = AsyncServer.from_uri(uri)
-    http_server = await asyncio.start_server(_handle_http, HTTP_HOST, HTTP_PORT)
-    LOG.info("Ready at %s (voice=%s %s) and HTTP on %s:%d",
-             uri, DEFAULT_VOICE, DEFAULT_LANG, HTTP_HOST, HTTP_PORT)
-    tasks = [
-        asyncio.create_task(server.run(partial(Handler))),
-        asyncio.create_task(http_server.serve_forever()),
-    ]
+    tasks = [asyncio.create_task(server.run(partial(Handler)))]
+    if HTTP_PORT > 0:
+        http_server = await asyncio.start_server(_handle_http, HTTP_HOST, HTTP_PORT)
+        tasks.append(asyncio.create_task(http_server.serve_forever()))
+        if API_KEY:
+            LOG.info("OpenAI-compatible speech endpoint on %s:%d (API key required)", HTTP_HOST, HTTP_PORT)
+        else:
+            LOG.warning("OpenAI-compatible speech endpoint on %s:%d with no API key: anyone who can reach this port "
+                        "can use it (set OPENAI_API_KEY)", HTTP_HOST, HTTP_PORT)
+    LOG.info("Ready at %s (voice=%s %s)", uri, DEFAULT_VOICE, DEFAULT_LANG)
     try:
         await asyncio.gather(*tasks)
     except asyncio.CancelledError:
