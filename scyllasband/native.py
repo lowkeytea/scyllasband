@@ -554,7 +554,7 @@ class NativeRuntime:
                                                    pace=pace, pitch=pitch), normalize=normalize)
 
     def speech_styles(self) -> list[str]:
-        """The styles a request may speak in (``style``): spoken, and on a v5 bundle the score-free styles it trained (rap)."""
+        """The styles a request may speak in (``style``): spoken, and any other speech style the bundle lists."""
         return list(self.info.get("speech_styles") or ["spoken"])
 
     def _style(self, style: str | None) -> bytes | None:
@@ -693,7 +693,7 @@ class NativeRuntime:
         return SynthesisResult(audio=audio, sample_rate=self.sample_rate, metadata=metadata)
 
     def score_parse(self, score: Mapping[str, Any] | str, transpose: int = 0) -> dict[str, Any]:
-        """The score checked and normalized with this bundle's styles (a v5 bundle's own, and its note ``x``; ABI 3.2)."""
+        """The score checked and normalized with this bundle's singing styles and notes (ABI 3.2)."""
         if not self.library.has_styles:
             return self.library.score_parse(score, transpose)
         out = c.c_void_p()

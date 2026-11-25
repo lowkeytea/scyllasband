@@ -162,14 +162,14 @@ def _validate_v5(bundle_dir: Path, manifest: Mapping[str, Any]) -> None:
     modes = controls.get("delivery_modes") or {}
     ids = modes.get("ids") if modes.get("enabled") else None
     if not isinstance(ids, Mapping) or "spoken" not in ids:
-        raise BundleError("A v5 bundle must enable controls.delivery_modes and give its style rows (ids) with a 'spoken' row")
+        raise BundleError("A bundle under this graph contract must enable controls.delivery_modes and give its style rows (ids) with a 'spoken' row")
     trained = modes.get("duration_styles_trained")
     if not isinstance(trained, list) or "spoken" not in trained or any(style not in ids for style in trained):
-        raise BundleError("A v5 bundle must list the styles its duration graph was trained on "
+        raise BundleError("A bundle under this graph contract must list the styles its duration graph was trained on "
                           "(controls.delivery_modes.duration_styles_trained: rows of ids, 'spoken' among them)")
     marks = controls.get("pause_marks")
     if not isinstance(marks, Mapping) or marks.get("default") not in ("all", "none"):
-        raise BundleError("A v5 bundle must state controls.pause_marks.default (all or none)")
+        raise BundleError("A bundle under this graph contract must state controls.pause_marks.default (all or none)")
     if marks["default"] == "all":
         vocab = json.loads((bundle_dir / assets["phone_vocab"]).read_text(encoding="utf-8"))
         if marks.get("token") not in dict(vocab.get("token_to_id", vocab)):

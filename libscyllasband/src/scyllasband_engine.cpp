@@ -364,7 +364,7 @@ void Engine::validate_v5() const {
     const Json& modes = controls.get("delivery_modes");
     const Json& ids = modes.get("ids");
     if (!modes.get("enabled").boolean(false) || !ids.is_object() || !ids.has("spoken")) {
-        throw std::invalid_argument("A v5 bundle must enable controls.delivery_modes and give its style rows (ids) with a 'spoken' row");
+        throw std::invalid_argument("A bundle under this graph contract must enable controls.delivery_modes and give its style rows (ids) with a 'spoken' row");
     }
     const Json& trained = modes.get("duration_styles_trained");
     bool spoken = false, known = trained.is_array();
@@ -373,13 +373,13 @@ void Engine::validate_v5() const {
         known = known && style.is_string() && ids.has(style.str());
     }
     if (!spoken || !known) {
-        throw std::invalid_argument("A v5 bundle must list the styles its duration graph was trained on "
+        throw std::invalid_argument("A bundle under this graph contract must list the styles its duration graph was trained on "
                                     "(controls.delivery_modes.duration_styles_trained: rows of ids, 'spoken' among them)");
     }
     const Json& marks = controls.get("pause_marks");
     const std::string marked = marks.get("default").str();
     if (!marks.is_object() || (marked != "all" && marked != "none")) {
-        throw std::invalid_argument("A v5 bundle must state controls.pause_marks.default (all or none)");
+        throw std::invalid_argument("A bundle under this graph contract must state controls.pause_marks.default (all or none)");
     }
     if (marked == "all") {
         const Json vocab = Json::parse_file(bundle_dir_ + "/" + assets.get("phone_vocab").str());
@@ -653,7 +653,7 @@ Phonemized Engine::phonemize(const std::string& text, const std::string& languag
 std::pair<int64_t, bool> Engine::speech_style(const std::string& style) const {
     std::string name = unicode::encode(unicode::lower(unicode::strip(unicode::decode(style))));
     if (name.empty() || name == "spoken") return {spoken_mode_, true};
-    if (!v5_) throw std::invalid_argument("This bundle speaks in one style; --style " + name + " needs a v5 bundle");
+    if (!v5_) throw std::invalid_argument("This bundle speaks only in the spoken style, not in --style " + name);
     if (std::find(speech_styles_.begin(), speech_styles_.end(), name) == speech_styles_.end()) {
         std::string list;
         for (const std::string& known : speech_styles_) list += (list.empty() ? "" : ", ") + known;

@@ -136,7 +136,7 @@ class ScyllasBandRuntime:
         return normalize_spoken_text(text, language=language)
 
     def speech_styles(self) -> list[str]:
-        """The styles a request may speak in (``style``): spoken, and on a v5 bundle the score-free styles it trained (rap)."""
+        """The styles a request may speak in (``style``): spoken, and any other speech style the bundle lists."""
         return list(self.engine.speech_styles)
 
     # --- planning -----------------------------------------------------------------------------------------------------
@@ -203,7 +203,7 @@ class ScyllasBandRuntime:
     # --- singing ------------------------------------------------------------------------------------------------------
     @property
     def supports_singing(self) -> bool:
-        """True on a v4 or v5 bundle with delivery modes (``controls.delivery_modes.enabled``)."""
+        """True on a bundle with delivery modes (``controls.delivery_modes.enabled``)."""
         return bool(self.engine.delivery_modes)
 
     def sing(self, score: Mapping[str, Any], voice_id: str, language: str | None = None, *, seed: int | None = None,

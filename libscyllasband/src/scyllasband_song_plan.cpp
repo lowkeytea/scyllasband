@@ -543,7 +543,7 @@ SingSettings resolve_sing_settings(const SongFrontend& frontend, const SingReque
         throw std::invalid_argument("This bundle has no '" + out.decoder + "' decoder; it has " + join(frontend.available_decoders(), ", "));
     }
     if (!request.guidance && singing.v5 && !singing.guidance_stated) {
-        throw std::invalid_argument("This v5 bundle states no singing guidance (controls.delivery_modes.singing.guidance); pass guidance");
+        throw std::invalid_argument("This bundle states no singing guidance (controls.delivery_modes.singing.guidance); pass guidance");
     }
     out.guidance = request.guidance.value_or(singing.guidance);
     if (!std::isfinite(out.guidance)) throw std::invalid_argument("guidance must be finite");
