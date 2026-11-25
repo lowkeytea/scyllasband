@@ -1,4 +1,4 @@
-// C ABI for singing (include/scyllasband.h, ABI 3.1.0): argument checks, locking and the JSON and audio handed back. Every
+// C ABI for singing (include/scyllasband.h, ABI 3.1.0; scyllasband_score_parse_for: 3.2.0): argument checks, locking and the JSON and audio handed back. Every
 // rule about what is sung lives in scyllasband_score, scyllasband_song_plan and scyllasband_song_render.
 #include "scyllasband_abi_internal.h"
 
@@ -63,7 +63,7 @@ Json annotate(Engine& engine, Json metadata, const std::string& voice) {
 Json plan_json(Engine& engine, const ScyllasBandSingRequest* request, bool with_melody) {
     const SingRequest options = sing_request_from(request);
     ResolvedSing resolved;
-    const SongPlan plan = plan_request(engine, parse_score_text(request->score_json), options, &resolved);
+    const SongPlan plan = plan_request(engine, parse_bundle_score(request->score_json, engine.singing()), options, &resolved);
     return describe_plan(plan, resolved, options, engine.singing(), engine.sample_rate(), with_melody);
 }
 
@@ -115,6 +115,23 @@ ScyllasBandStatus scyllasband_score_parse(const char* score_json, int32_t transp
     });
 }
 
+ScyllasBandStatus scyllasband_score_parse_for(ScyllasBandRuntime* runtime, const char* score_json, int32_t transpose, char** out_json) {
+    if (out_json != nullptr) *out_json = nullptr;
+    return guarded([&] {
+        require(runtime != nullptr && out_json != nullptr, "runtime and out_json are required");
+        require(score_json != nullptr, "score_json is required");
+        try {   // configuration only: no lock
+            *out_json = copy_string(score_summary(parse_bundle_score(score_json, runtime->engine->singing()), transpose).dump());
+        } catch (const ScoreError& error) {
+            Json detail{Json::Object{}};
+            detail.set("error", Json(error.what()));
+            detail.set("note_index", error.note_index() >= 0 ? Json(error.note_index()) : Json());
+            *out_json = copy_string(detail.dump());
+            throw;
+        }
+    });
+}
+
 ScyllasBandStatus scyllasband_sing_fit_json(ScyllasBandRuntime* runtime, const ScyllasBandSingRequest* request, char** out_json) {
     return guarded([&] {
         require(runtime != nullptr && out_json != nullptr, "runtime and out_json are required");
@@ -124,7 +141,8 @@ ScyllasBandStatus scyllasband_sing_fit_json(ScyllasBandRuntime* runtime, const S
         const Engine& engine = *runtime->engine;   // configuration only: no lock
         require(engine.supports_singing(), "Singing needs a v4 bundle with delivery modes (controls.delivery_modes); this bundle has none");
         const std::string voice = known_voice(engine, request->voice_id);
-        const SongFit fit = song_fit(engine.singing(), parse_score_text(request->score_json), voice, request->transpose, request->use_register != 0);
+        const SongFit fit = song_fit(engine.singing(), parse_bundle_score(request->score_json, engine.singing()), voice, request->transpose,
+                                     request->use_register != 0);
         *out_json = copy_string(fit.to_json().dump());
     });
 }
@@ -143,7 +161,7 @@ ScyllasBandStatus scyllasband_sing(ScyllasBandRuntime* runtime, const ScyllasBan
         require(runtime != nullptr && out_audio != nullptr, "runtime and out_audio are required");
         *out_audio = ScyllasBandAudio{};
         const SingRequest options = sing_request_from(request);
-        const Score score = parse_score_text(request->score_json);
+        const Score score = parse_bundle_score(request->score_json, runtime->engine->singing());
         const uint64_t generation = runtime->engine->cancel_generation();
         std::lock_guard<std::mutex> lock(runtime->mutex);
         Engine& engine = *runtime->engine;
@@ -163,7 +181,7 @@ ScyllasBandStatus scyllasband_sing_stream(ScyllasBandRuntime* runtime, const Scy
     return guarded([&] {
         require(runtime != nullptr && callback != nullptr, "runtime and callback are required");
         const SingRequest options = sing_request_from(request);
-        const Score score = parse_score_text(request->score_json);
+        const Score score = parse_bundle_score(request->score_json, runtime->engine->singing());
         const uint64_t generation = runtime->engine->cancel_generation();
         std::lock_guard<std::mutex> lock(runtime->mutex);
         Engine& engine = *runtime->engine;
@@ -194,13 +212,12 @@ ScyllasBandStatus scyllasband_sing_preview(ScyllasBandRuntime* runtime, const Sc
         check_size(request);
         require(request->score_json != nullptr && request->score_json[0] != '\0', "request.score_json is required");
         require(sample_rate >= 0, "sample_rate must be zero or positive");
-        const Score score = parse_score_text(request->score_json).transposed(request->transpose);
+        const Score parsed = runtime != nullptr ? parse_bundle_score(request->score_json, runtime->engine->singing()) : parse_score_text(request->score_json);
+        const Score score = parsed.transposed(request->transpose);
         int shift = 0;
         if (runtime != nullptr && request->use_register) {   // configuration only: no lock
             const Engine& engine = *runtime->engine;
-            const std::string voice = known_voice(engine, request->voice_id);
-            auto center = engine.singing().voice_center.find(voice);
-            shift = register_shift(score, center == engine.singing().voice_center.end() ? std::nullopt : std::optional<double>(center->second));
+            shift = bundle_register_shift(engine.singing(), score, known_voice(engine, request->voice_id));
         }
         const int rate = sample_rate > 0 ? sample_rate : runtime != nullptr ? runtime->engine->sample_rate() : 24000;
         const Score sung = score.transposed(shift);
@@ -230,8 +247,9 @@ ScyllasBandStatus scyllasband_warmup_singing(ScyllasBandRuntime* runtime, const 
         options.steps = 1;
         options.sampler = "euler";
         options.seed = 0;
-        const Score score = parse_score_text(R"({"bpm": 120, "notes": [["la", "C4", 1]]})");
-        sing(engine, score, options);
+        Json warm = Json::parse(R"({"bpm": 120, "notes": [["la", "C4", 1]]})");
+        warm.set("style", Json(singing_styles(engine.singing()).front()));
+        sing(engine, parse_bundle_score(warm.dump(), engine.singing()), options);
     });
 }
 

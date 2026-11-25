@@ -15,6 +15,12 @@
 // Delivery is intensity and pace (graph slots 0 and 1, standard deviations / z_scale) and a pitch shift in semitones; a
 // target with fewer than min_spoken_phones spoken phones gets neither slot, as in training.
 //
+// A v5 bundle (scyllasband_measured_controls_v5, also written ..._v5_1) adds each voice's identity vector as a graph input and
+// a table of style rows (controls.delivery_modes.ids): the duration, pitch and flow graphs all take the target's row. Speech
+// uses the rows the duration and pitch graphs were trained on (duration_styles_trained: spoken, and rap, which is spoken with
+// intensity and pace unset); the other rows are sung from a score. The pitch predictor continues from the contour rendered so
+// far, pauses after punctuation carry the sounded-pause mark, and an opening "Uh-uh" keeps minimum lengths.
+//
 // A v4 bundle (graph contract scyllasband_measured_controls_v4) adds singing: the flow also takes a delivery mode id (0
 // spoken, 1 sung, 2 rap, 3 ballad; controls.delivery_modes), a sung target brings its own melody from a score, which
 // replaces steps 2 and 4 (durations come from the score, the pitch predictor and its soft limit are skipped), and the
@@ -39,6 +45,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -47,6 +54,9 @@ namespace scyllasband {
 
 extern const char* const kGraphContract;    // v3: speech
 extern const char* const kGraphContractV4;  // v4: speech and singing
+extern const char* const kGraphContractV5;  // v5: identity vectors, style rows, a pitch-contour prefix and pause marks
+extern const char* const kGraphContractV5_1;  // the same contract under its other name
+bool is_v5_contract(const std::string& contract);
 
 struct Voice {
     std::string id;
@@ -66,6 +76,9 @@ struct SentenceResult {
     std::vector<int> durations;
     int64_t bucket = 0;
     Json metadata;
+    // [2, frames]: the pitch contour as rendered (soft-limited inside the voice's edges, before any pitch shift; the voicing
+    // channel as sampled). Empty for a sung target. A v5 bundle's next target continues from it (SentenceRequest::pitch_prefix).
+    std::vector<float> contour;
 };
 
 // A waveform decoder (controls.decoders): the bucket key naming its graphs and its output length rule
@@ -74,6 +87,7 @@ struct DecoderSpec {
     std::string name, component;
     int samples_per_frame = 512;
     int short_samples = 0;  // samples the output falls short of frames * samples_per_frame
+    bool optional = false;  // controls.decoders.<name>.required is false: a bundle may leave its graphs out
     // Windowed decoding (0: off): every decode runs through the one bucket graph of window_frames, decoding window_context
     // frames either side of the frames each call keeps. On LiteRT each bucket graph a process opens keeps its own working
     // memory (BigVGAN: about 2 MB per frame), so one bucket bounds it whatever the phrase lengths. From the manifest's
@@ -82,11 +96,13 @@ struct DecoderSpec {
 };
 
 // A target sung from a score: its melody input [frames, 3] replaces the pitch predictor's contour, `mode` is fed to the
-// flow, and `guidance` > 1 contrasts the melody and mode against both switched off (classifier-free guidance).
+// flow, and `guidance` > 1 contrasts the melody and mode against both switched off (classifier-free guidance: off = no melody
+// and the spoken row). `guidance_until`: the flow time (0 to 1) from which evaluations run unguided; none guides them all.
 struct SungConditioning {
     const std::vector<float>* melody = nullptr;
     int64_t mode = 0;
     double guidance = 1.0;
+    std::optional<double> guidance_until;
 };
 
 // Fills the initial noise of one target: `pitch` [2, frames] for the pitch predictor, `flow` [latent_dim, frames] for the flow
@@ -104,7 +120,11 @@ struct SentenceRequest {
     double speed = 1.0;
     NoiseFn noise;
     const std::vector<int>* durations = nullptr;  // phone durations to use instead of the duration graph's
-    const SungConditioning* sung = nullptr;       // a melody from a score in place of the pitch predictor (v4 bundles)
+    const SungConditioning* sung = nullptr;       // a melody from a score in place of the pitch predictor (v4 and v5 bundles)
+    // v5 speech: the style row fed to the duration, pitch and flow graphs (Engine::speech_style); the spoken row when unset.
+    std::optional<int64_t> mode;
+    const std::vector<float>* pitch_prefix = nullptr;  // v5: [2, pitch_prefix_frames] contours rendered so far in this chain
+    int64_t pitch_prefix_frames = 0;
 };
 
 // How latents are decoded to a waveform.
@@ -142,6 +162,21 @@ public:
     int64_t max_frames() const { return buckets_.back().frames; }
     const std::string& graph_contract() const { return graph_contract_; }
     bool feeds_delivery_mode() const { return feeds_delivery_mode_; }
+    bool v5() const { return v5_; }
+    // The spoken row of the style table (0 when the bundle has no table).
+    int64_t spoken_mode() const { return spoken_mode_; }
+    // The styles speech may ask for: the rows the duration and pitch graphs were trained on (v5); spoken alone before.
+    const std::vector<std::string>& speech_styles() const { return speech_styles_; }
+    // (the style's row, whether intensity and pace are set) for speech in `style` ("" = spoken). Only the styles of
+    // speech_styles() can be spoken; a style trained with neither intensity nor pace (controls.delivery_modes.controls_absent,
+    // the score-free rap rows) takes neither.
+    std::pair<int64_t, bool> speech_style(const std::string& style) const;
+    // v5: a target never holds fewer phones than this while the passage has a neighbour to join (0: no such rule).
+    int64_t min_target_phones() const { return min_target_phones_; }
+    // v5: frames of rendered contour the pitch predictor takes as its prefix (0: none), and the sounded-pause mark the
+    // streaming loop puts on every punctuation pause inside a passage (empty: no marks).
+    int pitch_prefix_width() const { return pitch_prefix_width_; }
+    const std::string& pause_mark() const { return pause_mark_; }
     // controls.delivery_modes.ids when enabled (empty on v3 bundles and v4 bundles without singing).
     const std::map<std::string, int64_t>& delivery_modes() const { return singing_.mode_ids; }
     const SingingControls& singing() const { return singing_; }
@@ -169,10 +204,12 @@ public:
     int64_t voice_index(const std::string& voice) const;
     int64_t language_index(const std::string& language) const;
 
-    Phonemized phonemize(const std::string& text, const std::string& language);
+    Phonemized phonemize(const std::string& text, const std::string& language, bool nonverbal = true);
     std::vector<int64_t> context_ids(const std::vector<std::string>& phones) const;
 
-    std::vector<int> durations(const Sentence& sentence, int64_t voice, int64_t language, const DeliveryTensors& delivery, double speed);
+    // Frames per phone of the target. `style` (v5): the style row fed to the duration graph; the spoken row by default.
+    std::vector<int> durations(const Sentence& sentence, int64_t voice, int64_t language, const DeliveryTensors& delivery, double speed,
+                               std::optional<int64_t> style = std::nullopt);
     // Latents for one target. With `request.sung`, the score's melody (and mode and guidance) replaces the pitch predictor,
     // and the noise function's pitch rows are unused.
     SentenceResult synthesize_sentence(const Sentence& sentence, const SentenceRequest& request);
@@ -198,6 +235,7 @@ private:
     GraphOutput run(const std::string& component, const std::vector<TensorView>& inputs);
     const Bucket& bucket(int64_t frames) const;
     void validate() const;
+    void validate_v5() const;
     void load_decoders();
     void load_decoder_windows(const Json& declared);
     // The smallest bucket of at least `frames` with a graph for `decoder`, and that graph.
@@ -207,6 +245,7 @@ private:
     // The delivery graph inputs for a target: none set when it has fewer than min_spoken_phones spoken phones.
     void target_delivery(const std::vector<std::string>& phones, const DeliveryTensors& delivery, float values[5], uint8_t present[5]) const;
     double pause_scale(const DeliveryTensors& delivery) const;
+    const std::vector<float>& identity(int64_t voice_row) const;  // v5: the voice's fixed identity vector
 
     std::unique_ptr<Backend> backend_;  // declared first: graphs are destroyed before their backend
     std::string bundle_dir_;
@@ -244,6 +283,15 @@ private:
     // v4: delivery modes, singing settings and decoders.
     std::string graph_contract_;
     bool feeds_delivery_mode_ = false;
+    bool v5_ = false;
+    int64_t spoken_mode_ = 0;
+    std::vector<std::string> speech_styles_ = {"spoken"};
+    std::set<std::string> uncontrolled_styles_;  // speech styles trained with the intensity and pace slots absent
+    int64_t min_target_phones_ = 0;
+    std::map<int64_t, std::vector<float>> identity_;  // voice row -> its fixed identity vector (assets.voice_identity)
+    int64_t identity_dim_ = 0;
+    int pitch_prefix_width_ = 0;
+    std::string pause_mark_;
     SingingControls singing_;
     std::map<std::string, DecoderSpec> decoders_;
     std::map<std::string, std::vector<std::pair<int64_t, std::string>>> decoder_graphs_;  // decoder -> (frames, component), smallest first

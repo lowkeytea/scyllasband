@@ -90,7 +90,7 @@ Json sing_stream(Engine& engine, const Score& score, const SingRequest& request,
                 gaussian_noise(draw_seed, static_cast<int64_t>(D * T), 1.0f, flow);
             }
         };
-        const SungConditioning sung{&item.melody, plan.mode_id, settings.guidance};
+        const SungConditioning sung{&item.melody, plan.mode_id, settings.guidance, settings.guidance_until};
         SentenceRequest sentence;
         sentence.voice = voice;
         sentence.language = language;
@@ -108,7 +108,7 @@ Json sing_stream(Engine& engine, const Score& score, const SingRequest& request,
         // The lead-in and the closing rest are gated (singing.py gate_phrase): stray breaths and syllables there are not in the score.
         double last_note = 0.0;
         for (const ScoreNote& note : item.phrase.notes) {
-            if (note.midi) last_note = std::max(last_note, note.end);
+            if (!note.rest()) last_note = std::max(last_note, note.end);
         }
         const std::vector<float> audio = gate_phrase(engine.decode(result.latents, result.frames, decode), sample_rate,
                                                      item.phrase.notes.front().start, last_note);
@@ -146,6 +146,7 @@ Json sing_stream(Engine& engine, const Score& score, const SingRequest& request,
     metadata.set("sampler", Json(settings.sampler));
     metadata.set("decoder", Json(settings.decoder));
     metadata.set("guidance", Json(settings.guidance));
+    if (settings.guidance_steps != "all") metadata.set("guidance_steps", Json(settings.guidance_steps));
     metadata.set("seed", request.seed ? Json(static_cast<int64_t>(*request.seed)) : Json());
     metadata.set("graph_contract", Json(engine.graph_contract()));
     metadata.set("samples", Json(song_samples));
@@ -173,10 +174,12 @@ Json singing_info(Engine& engine) {
     out.set("decoders", Json::array_of(engine.available_decoders()));
     if (engine.supports_singing()) {
         EngineSongFrontend frontend(engine);
-        out.set("default_decoder", Json(engine.has_decoder(singing.decoder) ? singing.decoder : std::string("vocos")));
+        out.set("default_decoder", Json(engine.has_decoder(singing.decoder) || singing.decoder_required ? singing.decoder : std::string("vocos")));
         out.set("sampler", Json(singing.sampler));
         out.set("steps", Json(singing.steps));
         out.set("guidance", Json(singing.guidance));
+        if (singing.guidance_steps != "all") out.set("guidance_steps", Json(singing.guidance_steps));
+        if (singing.register_floor) out.set("register_floor", Json(*singing.register_floor));
         Json centers{Json::Object{}};
         for (const Voice& voice : engine.voices()) {
             auto found = singing.voice_center.find(voice.id);

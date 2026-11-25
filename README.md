@@ -8,6 +8,9 @@ Delivery is controlled with **intensity, pace and pitch**. The emotion comes fro
 
 - **[Listen to the voices](https://lowkeytea.dev/scyllasband/samples/)**: every voice saying hello, playing a scene and singing a chorus, four songs built from scores, long-form narration and a nine-voice dialogue in six languages.
 - **[Try it in your browser](https://lowkeytea.dev/scyllasband/demo/)**: the runtime compiled to WebAssembly, with the model downloaded once. The same demo is on [Hugging Face Spaces](https://huggingface.co/spaces/spybyscript/scyllasband).
+- **[Watch the launch video](https://youtu.be/GHkj44MaB9Y)**: the voices joking in six languages and then singing, all fourteen in the last chorus; every voice and every sung note is the model.
+- **[Make It Sing](https://youtu.be/e6yHVbkVcTs)**: a three-minute singing tutorial for people who don't read music; its scores are in [examples/make_it_sing](examples/make_it_sing/README.md).
+- More videos and tutorials are on the [Lowkey Tea YouTube channel](https://www.youtube.com/@LowkeyTea-dev).
 - Join the [Scylla's Band Discord](https://discord.gg/mBhpn7WB5N) for release updates, help, and community discussion.
 
 ## Highlights
@@ -123,6 +126,8 @@ python -m scyllasband speak --backend onnx --compute-units gpu --voice tuesday -
 ```
 
 `--backend onnx --compute-units gpu` picks the installed WebGPU bundle; per-graph choices such as `gpu,g2p=cpu` also work. With the Python runtime on an NVIDIA RTX PRO 6000 (Blackwell), the three-sentence passage in the table below runs at about 90× real time with 58 ms to first audio when warm, against about 7× and 680 ms for the ONNX bundle on the same machine's CPU (Ryzen 7 7800X3D).
+
+On CUDA the flow and pitch estimators (`vector_estimator*` and `pitch_estimator*`, the graphs a target calls at every sampler step) run as captured CUDA graphs on fixed device buffers: each call launches the whole graph at once, which makes thirty single sentences about 1.3× faster on that GPU (140× to 180× real time) with the same output up to the GPU's own run-to-run rounding. The other graphs, other execution providers and the CPU are unaffected. A graph that ONNX Runtime cannot capture runs the standard way, with one line on stderr naming it. `SCYLLASBAND_CUDA_GRAPH=0`, or `ScyllasBandRuntime.from_bundle(..., cuda_graph=False)`, turns capture off.
 
 On Core ML and Core AI, `--compute-units` chooses where the graphs run: `auto` (the bundle's recommendation: the GPU), `gpu`, `cpu`, or `ane`, which runs the graphs the bundle marks as accurate on the Neural Engine there (Core AI's flow and pitch predictor) and the rest on the CPU. iOS does not allow GPU work from background apps, so an app that keeps speaking in the background uses `ane` (Core AI) or `cpu`. The first load of a Core AI bundle specializes its graphs for the device (seconds to tens of seconds; see the table below); the system caches that until the next OS update.
 
@@ -241,6 +246,8 @@ An installed package also provides `scyllasband-sing`. A score is the lyric, the
 - Two styles: `pop` (the sung delivery) and `ballad` (slower, sustained). The style picks the delivery mode the model was trained with; the notes set the pitch and the timing.
 - Phrases are split at rests of 0.25 s or more and rendered one at a time, up to about ten seconds each (less when the bundle's largest bucket is shorter), so put a rest between lines. The whole song is moved by octaves into the voice's sung range (`--no-register` keeps the written octave), so write in any octave; `--transpose N` adds N semitones first, to put a song in the voice's key (a voice sings most accurately within about five semitones of its centre, which the bundle lists per voice).
 
+New to music? [Make It Sing](https://youtu.be/e6yHVbkVcTs) builds a score from nothing, shows what bad values do (the runtime's own errors, a long word crammed onto one note, bpm 400) and stretches one tune over a whole song; [examples/make_it_sing](examples/make_it_sing/README.md) has every score from it.
+
 Singing uses the bundle's singing settings (`v4-20261106`: 4 Euler steps without guidance, the flow distilled from guided 8-step Heun sampling, so a phrase costs the flow what a spoken passage does; the BigVGAN decoder where the bundle carries it; `--steps`, `--sampler`, `--guidance` and `--decoder` override them) and the score's timing in place of the duration and pitch predictors. `--turboSing` (same as `--decoder vocos`) decodes with Vocos, the speech decoder: decoding then costs about as much as for speech instead of most of the render, at the price of some harmonic artefacts on sustained notes in some voices. In Python, `runtime.sing(score, voice_id, language=None, seed=None, steps=None, sampler=None, decoder=None)` returns the same `SynthesisResult` as `synthesize`, with the phrase plan in `metadata["phrases"]`; `runtime.supports_singing` tells whether the loaded bundle can sing. Singing requires a v4 bundle (graph contract `scyllasband_measured_controls_v4`); v3 bundles speak exactly as before and report that they cannot sing.
 
 ## Voices and languages
@@ -255,11 +262,15 @@ All fourteen also support `es`, `it`, `fr`, `de`, and `vi`: 84 trained voice/loc
 ## Text handling
 
 - Spoken-text normalization expands numbers, decimals, dates, times, currency, percentages, ordinals, fractions, initialisms and common abbreviations for each language, and splits letters joined to digits ("V3", "MP3", "4K") into letter names and numbers. English also reads common units, multipliers and plural numbers ("100ms", "68x", "4x4", "1990s", "100s").
+- Abbreviations, titles and units are read in full, the way a person says them ("Dr. Lee" "Doctor Lee", "z. B." "zum Beispiel", "EE. UU." "Estados Unidos", "5 km/h" "five kilometers per hour", with number and gender agreement), in any of their usual spellings and in text written in capitals. The words come from one table per language in `scyllasband/text_data/`, which the native runtime embeds as well.
+- A minus sign before a number is read as the language's "minus" ("-3,5 °C" "moins trois virgule cinq degrés Celsius"). Clock times are read the way each language says them: "15:30" is "quinze heures trente", "fünfzehn Uhr dreißig" (also when "Uhr" is written after it), "le quindici e trenta", "mười lăm giờ ba mươi"; "15:00" and "15 h 00" are "quinze heures", and an English 24-hour time on the hour is "fifteen hundred". French, Spanish, Italian and Vietnamese read a short decimal part as a number ("3,14" "trois virgule quatorze", "tres coma catorce", "ba phẩy mười bốn"). French reads a comma as the decimal sign, groups thousands with a space ("41 093,38 $", "1 500 kWh"), as Vietnamese may, and writes "deux cent mille" and "quatre-vingt mille" without the plural s.
+- "One" agrees with the noun after it in Spanish, Italian and German: "un mensaje", "una alarma", "veintiún años", "veintiún mil", "uno studente", "un'ora", "eine neue Nachricht", "in einer Stunde", "um ein Uhr"; a number after a label ("Kapitel 1 Abschnitt 2") stays a number. British English reads a numeric date day first ("1/9/2026" "the first of September twenty twenty six"), English reads "1 September" as "the first of September", French and Italian read the first of a month as an ordinal ("1 settembre" "primo settembre"), German year ranges are years ("1939-1945" "neunzehnhundertneununddreißig bis neunzehnhundertfünfundvierzig"), and Vietnamese dates say "năm" before the year.
+- English non-verbal words take one spelling and one pronunciation however they are typed: "Hm", "Hmmmm" and "HMM" are "hmm"; "mm-hmm", "mm hmm" and "mmhm" are "mhm"; "uh-huh" and "uh huh" are "uhhuh"; "ah-hah" and "ah hah" are "aha"; "shhh" and "sssh" are "shh"; "uhh" is "uh" and "umm" is "um". Stretched letters are not held longer. "5 mm" stays millimetres and the dotted "H.M.M." is read as letters.
 - The Scylla's Band G2P model in the bundle converts each phrase to phones; punctuation is kept as pause and intonation cues, and word boundaries become optional silences.
-- A small built-in lexicon reads common initialisms written in capitals letter by letter ("GPU", "USB", "API", also with a plural "s") and corrects a few words the G2P misreads. A bundle's `assets/g2p/phoneme_dict.json` (`{language: {word: phones}}`) adds or replaces word entries.
+- A small built-in lexicon reads common initialisms written in capitals letter by letter ("GPU", "USB", "API", also with a plural "s") and corrects words the G2P misreads, including about 230 personal names in American and British English, checked by listening (also with a possessive "'s"), and French number words whose reading depends on the next word ("vingt-deux" with its t, "dix-neuf" with its z, a final "huit" with its t). A bundle's `assets/g2p/phoneme_dict.json` (`{language: {word: phones}}`) adds or replaces word entries.
 - Text is split into sentences after normalization, and the sentences of a paragraph are read as one stream of phones. Each pass speaks 64 to 420 latent frames (about 1.4 to 9 seconds), the lengths the model was trained on, cut from that stream at a sentence end, else a clause, else a word break; a pass is measured with its own delivery and speed before it is synthesized.
 
-`--no-normalize-text` skips normalization when the text is already in spoken form.
+`--no-normalize-text` skips normalization when the text is already in spoken form. A hyphen inside a word ("dix-sept") is still read as a space without a pause, as the normalizer writes it.
 
 ## How it works
 
@@ -304,7 +315,7 @@ Latent-length buckets are 128, 256, 384, 512, 768 and 1024 frames (about 2.7 to 
 
 ## Native and mobile integration
 
-`libscyllasband/` is the C++ runtime for the same bundles, built against LiteRT, ONNX Runtime, or Core ML and Core AI on Apple platforms; see [its README](libscyllasband/README.md). The [Android](examples/android/README.md) example runs the LiteRT bundle; the [iOS](examples/ios/README.md) example runs Core AI on iOS 27 and Core ML on iOS 18–26 through the `ScyllasBandKit` pod. Two singing tutorials sit beside them: [Ghost in the Machine](examples/ghost_in_the_machine/README.md) (a spoken-and-sung piece built step by step, with the melody format and how speech and song are merged) and [Kitchen Patter](examples/kitchen_patter/README.md) (fast talk-singing from one score).
+`libscyllasband/` is the C++ runtime for the same bundles, built against LiteRT, ONNX Runtime, or Core ML and Core AI on Apple platforms; see [its README](libscyllasband/README.md). The [Android](examples/android/README.md) example runs the LiteRT bundle; the [iOS](examples/ios/README.md) example runs Core AI on iOS 27 and Core ML on iOS 18–26 through the `ScyllasBandKit` pod. Singing tutorials sit beside them: [Make It Sing](examples/make_it_sing/README.md) (the scores from the beginner's video: what a score means, what breaks it, a longer song), [Ghost in the Machine](examples/ghost_in_the_machine/README.md) (a spoken-and-sung piece built step by step, with the melody format and how speech and song are merged), [Kitchen Patter](examples/kitchen_patter/README.md) (fast talk-singing from one score), and three pieces built from score sources: [Face Down](examples/face_down/README.md) (a pop song, three voices on the chorus), [Bubble Wrap](examples/bubble_wrap/README.md) (talk-singing, two voices trading verses) and [Thank You for Participating](examples/thank_you/README.md) (a ballad).
 
 ## Validation and limitations
 
@@ -319,8 +330,9 @@ See [the model card](MODEL_CARD.md) for the model contract.
 ```text
 scyllasband/          Python API, CLI, first-run setup, download, bundle contract and execution
 libscyllasband/       C++ runtime with a C API, for LiteRT and ONNX Runtime
-examples/             Android and iOS applications; the singing pieces, each a tutorial (ghost_in_the_machine, kitchen_patter,
-                      face_down, bubble_wrap, thank_you) and write_scores.py, which compiles a score source into melody JSON
+examples/             Android and iOS applications; the singing pieces, each a tutorial (make_it_sing, ghost_in_the_machine,
+                      kitchen_patter, face_down, bubble_wrap, thank_you) and write_scores.py, which compiles a score source
+                      into melody JSON
 data/                 example texts and a dialogue script
 tests/                runtime tests (python -m pytest tests)
 MODEL_CARD.md         model card for the current release

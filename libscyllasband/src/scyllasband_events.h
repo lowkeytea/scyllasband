@@ -22,16 +22,35 @@ struct Sentence {
     std::vector<int> word_starts;
     std::vector<int64_t> before_ids;  // preceding passage phones, silences excluded
     std::vector<int64_t> after_ids;   // following passage phones, silences excluded
+    std::vector<int> min_pauses;      // silences held at least the tight-dash pause (dashes typed with no spaces)
+    std::vector<int> sentence_starts = {0};  // the silence in front of each sentence that begins here
 };
 
 bool is_non_acoustic_modifier(const std::string& phone);  // stress, length and combining marks own no frames
 bool is_punctuation_pause(const std::string& phone);
 bool is_punctuation_phone(const std::string& phone);
+// Pause-content marks of a v5 vocabulary (<nonverbal>, <breath>): zero-frame tokens in front of the punctuation run before a
+// pause; they reach that pause's frames as a modifier-event bit.
+bool is_pause_mark(const std::string& phone);
+// `phones` of one sentence (silence to silence) with `mark` in front of the punctuation run before every pause that follows
+// punctuation; `moved[i]` = the new index of original phone i. The leading silence is never marked, the trailing one only
+// with `last` (a sentence followed by more of the passage).
+std::vector<std::string> mark_sounded_pauses(const std::vector<std::string>& phones, bool last, const std::string& mark, std::vector<int>& moved);
 
 // Rounded frames (half to even): punctuation and modifiers 0, <sil> may be 0, every other phone at least 1. `pause_scale`
-// multiplies <sil> frames on top of `scale` (pace moves pauses with the words).
+// multiplies <sil> frames on top of `scale` (pace moves pauses with the words). The <sil> at each index in `min_pauses`
+// lasts at least `min_pause_frames` x `scale` frames.
 std::vector<int> frames_to_durations(const std::vector<float>& values, const std::vector<std::string>& phones, double scale,
-                                     double pause_scale = 1.0);
+                                     double pause_scale = 1.0, const std::vector<int>& min_pauses = {},
+                                     double min_pause_frames = 0.0);
+
+// `durations` with the minimum lengths of an opening "Uh-uh" / "Nuh-uh" (v5): where the first word after a sentence start
+// (`sentence_starts`: the index of the silence in front of each sentence) is that word, with only the silence, an "n" and
+// the stress mark before its first vowel, the first vowel lasts at least 6 frames, the break (<sil>) 2 and the second vowel
+// 12. The duration model gives the first vowel 1 to 3 frames and no break there, which is heard as "ahh" / "nah"; inside and
+// at the end of a sentence its own lengths are right.
+std::vector<int> opening_minimums(const std::vector<std::string>& phones, const std::vector<int>& durations,
+                                  const std::vector<int>& sentence_starts = {0});
 
 // Modifier tokens in id order, each with its own bit.
 std::map<std::string, int64_t> modifier_bits(const std::map<std::string, int>& token_to_id);

@@ -21,6 +21,12 @@ A v4 bundle (:mod:`scyllasband.contract`) adds singing: the flow also takes a de
 3 ballad), a sung target brings its own melody from a score (:mod:`scyllasband.singing`), which replaces steps 2 and 4
 (durations come from the score, the pitch predictor and its soft limit are skipped), and the bundle may carry a second
 decoder (``controls.decoders``). On a v3 bundle the mode input is never fed and everything above is unchanged.
+
+A v5 bundle adds each voice's identity vector as a graph input and a table of style rows (``controls.delivery_modes.ids``,
+read from the bundle): the duration, pitch and flow graphs all take the target's row. Speech uses the rows the duration
+and pitch graphs were trained on (``duration_styles_trained``: spoken, and rap, which is spoken with intensity and pace
+unset); the other rows are sung from a score. The pitch predictor continues from the contour rendered so far, pauses
+after punctuation carry the sounded-pause mark, and an opening "Uh-uh" keeps minimum lengths (:mod:`scyllasband.events`).
 """
 
 from __future__ import annotations
@@ -31,13 +37,14 @@ import json
 import os
 from pathlib import Path
 import re
+import sys
 import threading
 from typing import Any, Callable, Mapping, Sequence
 
 import numpy as np
 
-from .contract import DELIVERY_MODE_INPUT, GRAPH_CONTRACTS, GRAPH_CONTRACT_V4
-from .events import frame_events, frames_to_durations, modifier_bits
+from .contract import DELIVERY_MODE_INPUT, GRAPH_CONTRACTS, GRAPH_CONTRACTS_V5, GRAPH_CONTRACT_V4, IDENTITY_INPUT, STYLE_INPUT
+from .events import frame_events, frames_to_durations, modifier_bits, opening_minimums
 from .g2p_phrases import is_non_acoustic_phone_modifier
 from .g2p import SILENCE, G2PFrontend
 
@@ -49,6 +56,12 @@ _OUTPUT_RULE = re.compile(r"^\s*latent_frames\s*\*\s*(\d+)\s*(?:-\s*(\d+))?\s*$"
 # Target lengths v2 was trained on, in latent frames (about 1.4 to 9 seconds): shorter targets lose their prosody and
 # longer ones their intelligibility. A bundle can state its own as controls.chunking.min/max_target_frames.
 MIN_TARGET_FRAMES, MAX_TARGET_FRAMES = 64, 420
+# v5: a target never holds fewer phones than this (stress and length marks and <tokens> not counted) while the passage
+# has a neighbour to join; shorter than anything the flow trained on, a lone "Really." came out squeezed. A bundle can
+# state its own as controls.chunking.min_target_phones.
+MIN_TARGET_PHONES_V5 = 12
+# A dash typed with no spaces around it ("a—dream") interrupts the word before it: its pause lasts at least this long.
+TIGHT_DASH_PAUSE_SECONDS, LATENT_SAMPLE_RATE = 0.3, 24000
 
 
 def balanced_context(before: Sequence[int], target: Sequence[int], after: Sequence[int], max_phones: int) -> tuple[list[int], list[int]]:
@@ -86,6 +99,8 @@ class Sentence:
     word_starts: list[int]
     before_ids: list[int] = field(default_factory=list)   # preceding passage phones, silences excluded
     after_ids: list[int] = field(default_factory=list)    # following passage phones, silences excluded
+    min_pauses: list[int] = field(default_factory=list)   # silences held at least TIGHT_DASH_PAUSE_SECONDS (unspaced dashes)
+    sentence_starts: list[int] = field(default_factory=lambda: [0])   # the silence in front of each sentence that begins here
 
 
 @dataclass
@@ -94,6 +109,7 @@ class SentenceResult:
     durations: list[int]
     bucket: int
     metadata: dict[str, Any]
+    contour: np.ndarray | None = None   # [2, T] the pitch contour as rendered (soft-limited, before any pitch shift); v5 chains it
 
 
 CUDA_HINT = ("ONNX Runtime with CUDA is needed for --compute-units gpu: install the runtime with the cuda extra "
@@ -138,10 +154,101 @@ class OnnxSession:
         return self.session.run(None, {name: feeds[name] for name in self.inputs})[0]
 
 
+# The graphs a target calls once per sampler evaluation: the flow's and the pitch predictor's estimators, in every bucket.
+CUDA_GRAPH_COMPONENTS = ("vector_estimator", "pitch_estimator")
+_OFF = ("0", "off", "false", "no")
+
+
+def cuda_graph_default() -> bool:
+    """Whether the estimators run as captured CUDA graphs on the CUDA provider: yes unless SCYLLASBAND_CUDA_GRAPH is 0."""
+    return os.environ.get("SCYLLASBAND_CUDA_GRAPH", "").strip().lower() not in _OFF
+
+
+class CudaGraphSession:
+    """A fixed-shape graph on the CUDA provider, replayed as one captured CUDA graph: each input lives in a device buffer
+    that is overwritten in place when its values change, the output in another, so a call launches the whole graph at once
+    instead of one kernel at a time. The values are those of :class:`OnnxSession` up to the GPU's own rounding.
+
+    The graph must have fixed shapes and run wholly on the CUDA provider; ONNX Runtime refuses to create the session
+    otherwise. If a call fails, the graph goes back to an :class:`OnnxSession` for good, with one line on stderr."""
+
+    def __init__(self, path: Path, *, threads: int | None = None, providers: Sequence[str]):
+        import onnxruntime as ort
+        self.path, self.threads, self.providers = path, threads, list(providers)
+        options = ort.SessionOptions()
+        if threads:
+            options.intra_op_num_threads = int(threads)
+        _preload_cuda()
+        capture = ("CUDAExecutionProvider", {"enable_cuda_graph": "1"})
+        self.session = ort.InferenceSession(str(path), options,
+                                            providers=[capture if name == capture[0] else name for name in self.providers])
+        if self.session.get_providers()[0] != "CUDAExecutionProvider":
+            raise RuntimeError("the CUDA provider did not load")
+        outputs = self.session.get_outputs()
+        tensors = list(self.session.get_inputs()) + outputs[:1]
+        if len(outputs) != 1 or any(not all(isinstance(dim, int) and dim > 0 for dim in tensor.shape) for tensor in tensors):
+            raise RuntimeError("its shapes are not fixed")
+        if any(tensor.type not in _ONNX_DTYPES for tensor in tensors):
+            raise RuntimeError("it has a tensor type the device buffers do not hold")
+        self.inputs = [i.name for i in self.session.get_inputs()]
+        # Host copies of what the device buffers hold: an input is uploaded again only when its bytes differ.
+        self.host = {i.name: np.zeros(i.shape, _ONNX_DTYPES[i.type]) for i in self.session.get_inputs()}
+        self.device = {name: ort.OrtValue.ortvalue_from_numpy(value, "cuda", 0) for name, value in self.host.items()}
+        self.output = ort.OrtValue.ortvalue_from_shape_and_type(list(outputs[0].shape), _ONNX_DTYPES[outputs[0].type], "cuda", 0)
+        self.binding = self.session.io_binding()
+        for name, value in self.device.items():
+            self.binding.bind_ortvalue_input(name, value)
+        self.binding.bind_ortvalue_output(outputs[0].name, self.output)
+        self.plain: OnnxSession | None = None
+        self._lock = threading.Lock()   # one set of buffers: one call at a time
+
+    def run(self, feeds: Mapping[str, np.ndarray]) -> np.ndarray:
+        with self._lock:
+            if self.plain is None:
+                try:
+                    return self._replay(feeds)
+                except Exception as exc:
+                    _cuda_graph_off(self.path, exc)
+                    self.session = self.binding = self.device = self.output = None   # frees the buffers and the captured graph
+                    self.plain = OnnxSession(self.path, threads=self.threads, providers=self.providers)
+            return self.plain.run(feeds)
+
+    def _replay(self, feeds: Mapping[str, np.ndarray]) -> np.ndarray:
+        for name in self.inputs:
+            value, held = np.asarray(feeds[name]), self.host[name]
+            if value.dtype != held.dtype or value.shape != held.shape:
+                raise ValueError(f"input {name} is {value.dtype}{list(value.shape)}, not {held.dtype}{list(held.shape)}")
+            if not np.array_equal(value.view(_BITS[held.dtype.itemsize]), held.view(_BITS[held.dtype.itemsize])):
+                np.copyto(held, value)
+                self.device[name].update_inplace(held)
+        self.session.run_with_iobinding(self.binding)
+        return self.output.numpy()
+
+
+_ONNX_DTYPES = {"tensor(float)": np.float32, "tensor(int64)": np.int64, "tensor(int32)": np.int32, "tensor(bool)": np.bool_}
+_BITS = {1: np.uint8, 4: np.uint32, 8: np.uint64}
+
+
+def _cuda_graph_off(path: Path, reason: BaseException) -> None:
+    why = (str(reason).strip() or type(reason).__name__).splitlines()[0]
+    print(f"{path.name}: running without CUDA graph capture ({why}); SCYLLASBAND_CUDA_GRAPH=0 turns it off for every graph.",
+          file=sys.stderr)
+
+
+def cuda_graph_session(path: Path, *, threads: int | None = None, providers: Sequence[str]) -> "CudaGraphSession | OnnxSession":
+    """``path`` as a captured CUDA graph, or as a plain session (with one line on stderr) when this ONNX Runtime or this
+    graph cannot be captured."""
+    try:
+        return CudaGraphSession(path, threads=threads, providers=providers)
+    except Exception as exc:
+        _cuda_graph_off(path, exc)
+        return OnnxSession(path, threads=threads, providers=providers)
+
+
 class Engine:
     def __init__(self, bundle_dir: str | Path, *, backend: str = "onnx", threads: int | None = None,
                  session_factory: Callable[[str, Mapping[str, Any]], Any] | None = None,
-                 providers: Callable[[str], Sequence[str]] | None = None) -> None:
+                 providers: Callable[[str], Sequence[str]] | None = None, cuda_graph: bool | None = None) -> None:
         self.bundle_dir = Path(bundle_dir)
         self.manifest = json.loads((self.bundle_dir / "manifest.json").read_text(encoding="utf-8"))
         controls = self.manifest["controls"]
@@ -149,13 +256,38 @@ class Engine:
             raise ValueError(f"Bundle graph contract {controls.get('graph_input_contract')!r} is not supported by this runtime "
                              f"(expected one of {', '.join(GRAPH_CONTRACTS)}); download the current model.")
         self.backend, self.threads, self.providers = backend, threads, providers
+        # ONNX Runtime on CUDA: the estimators run as captured CUDA graphs (None: unless SCYLLASBAND_CUDA_GRAPH is 0).
+        self.cuda_graph = cuda_graph_default() if cuda_graph is None else bool(cuda_graph)
         self.controls = controls
         self.graph_contract = str(controls["graph_input_contract"])
-        # v4 flows take the delivery mode id on every call (0 for speech); v3 flows have no such input.
-        self.feeds_delivery_mode = self.graph_contract == GRAPH_CONTRACT_V4
+        # v5: each voice's fixed identity vector is a graph input, the duration and pitch graphs take the style row too, the
+        # pitch predictor takes the contour rendered so far as a prefix, and pauses after punctuation carry the
+        # sounded-pause mark by default (controls.pause_marks).
+        self.v5 = self.graph_contract in GRAPH_CONTRACTS_V5
+        # v4 and v5 flows take the delivery mode id on every call (the spoken row for speech); v3 flows have no such input.
+        self.feeds_delivery_mode = self.graph_contract == GRAPH_CONTRACT_V4 or self.v5
+        self.identity: dict[int, np.ndarray] = {}
+        self.pitch_prefix_frames = 0
+        self.pause_mark: str | None = None
         modes = controls.get("delivery_modes") or {}
         self.delivery_modes: dict[str, int] = ({str(k): int(v) for k, v in (modes.get("ids") or {}).items()} if modes.get("enabled") else {})
         self.singing: dict[str, Any] = dict(modes.get("singing") or {}) if modes.get("enabled") else {}
+        self.spoken_mode = int(self.delivery_modes.get("spoken", 0))
+        # The styles speech may ask for: the rows the duration and pitch graphs were trained on (v5); spoken alone before.
+        self.speech_styles: tuple[str, ...] = ("spoken",)
+        if self.v5:
+            if "spoken" not in self.delivery_modes:
+                raise ValueError("This v5 bundle gives no style rows (controls.delivery_modes.ids with a 'spoken' row)")
+            trained = [str(style) for style in modes.get("duration_styles_trained") or ()]
+            unknown = [style for style in trained if style not in self.delivery_modes]
+            if "spoken" not in trained or unknown:
+                raise ValueError("This v5 bundle must list the styles its duration graph was trained on "
+                                 f"(controls.delivery_modes.duration_styles_trained); got {trained}"
+                                 + (f", with no row for {', '.join(unknown)}" if unknown else ""))
+            pitched = modes.get("pitch_styles_trained")   # the pitch graph's own list, where the bundle gives one
+            self.speech_styles = tuple(style for style in trained if pitched is None or style in pitched)
+        # Speech styles trained with the intensity and pace slots absent (the score-free rap rows).
+        self.uncontrolled_styles = frozenset(str(style) for style in (modes.get("controls_absent") or {}).get("styles") or ())
         self.decoders = {str(k): dict(v) for k, v in (controls.get("decoders") or DEFAULT_DECODERS).items()}
         assets = self.manifest["assets"]
         vocab = json.loads((self.bundle_dir / assets["phone_vocab"]).read_text(encoding="utf-8"))
@@ -173,6 +305,21 @@ class Engine:
         self.pitch_steps = int(self.pitch.get("steps", {}).get("default", 4))
         self.pitch_context = str(self.pitch.get("context_encoder", "pitch_context_encoder"))
         self.bits = modifier_bits(self.phone_to_id)
+        if self.v5:
+            table = json.loads((self.bundle_dir / assets["voice_identity"]).read_text(encoding="utf-8"))
+            dim = int(table["dim"])
+            for name, vector in table["voices"].items():
+                if name in self.voice_to_id:
+                    self.identity[int(self.voice_to_id[name])] = np.asarray(vector, np.float32).reshape(1, dim)
+            prefix = self.pitch.get("prefix") or {}
+            self.pitch_prefix_frames = int(prefix.get("max_frames", 0)) if prefix.get("enabled") else 0
+            marks = controls.get("pause_marks") or {}
+            if marks.get("default") not in ("all", "none"):
+                raise ValueError("This v5 bundle does not say how pauses are marked (controls.pause_marks.default: all or none)")
+            if marks["default"] == "all":
+                if marks.get("token") not in self.phone_to_id:
+                    raise ValueError(f"This bundle's pause mark {marks.get('token')!r} is not in its phone vocabulary")
+                self.pause_mark = str(marks["token"])
         span = controls["span_conditioning"]
         self.span_width = int(span["context_max_phones"])
         self.context_phones = int(span.get("context_phones_each_side", 180))
@@ -198,6 +345,7 @@ class Engine:
         chunking = controls.get("chunking") or {}
         self.min_target_frames = int(chunking.get("min_target_frames", MIN_TARGET_FRAMES))
         self.max_target_frames = min(int(chunking.get("max_target_frames", MAX_TARGET_FRAMES)), self.buckets[-1][0])
+        self.min_target_phones = int(chunking.get("min_target_phones", MIN_TARGET_PHONES_V5 if self.v5 else 0))
         # Optional narrower G2P inputs, smallest first: a phrase runs at the smallest width that holds it.
         self.g2p_buckets = sorted((int(b["text_tokens"]), str(b["component"])) for b in controls.get("g2p_buckets") or [])
         # Optional narrower span graphs: padding is masked and positions are absolute, so the narrowest that holds the span
@@ -210,9 +358,11 @@ class Engine:
         self.g2p = G2PFrontend(self.bundle_dir, assets, controls, self.phone_to_id, infer=self._g2p)
 
     # --- sessions -----------------------------------------------------------------------------------------------------
-    def _onnx_session(self, name: str, spec: Mapping[str, Any]) -> OnnxSession:
-        return OnnxSession(self.bundle_dir / spec["artifacts"]["onnx"]["path"], threads=self.threads,
-                           providers=self.providers(name) if self.providers else None)
+    def _onnx_session(self, name: str, spec: Mapping[str, Any]) -> "OnnxSession | CudaGraphSession":
+        path, providers = self.bundle_dir / spec["artifacts"]["onnx"]["path"], self.providers(name) if self.providers else None
+        if self.cuda_graph and providers and providers[0] == "CUDAExecutionProvider" and name.startswith(CUDA_GRAPH_COMPONENTS):
+            return cuda_graph_session(path, threads=self.threads, providers=providers)
+        return OnnxSession(path, threads=self.threads, providers=providers)
 
     def session(self, name: str) -> Any:
         with self._lock:
@@ -293,20 +443,37 @@ class Engine:
         return windows
 
     def delivery_mode_id(self, mode: str | int | None) -> int:
-        """A delivery mode's id (``controls.delivery_modes.ids``); 0 (spoken) when the bundle has none and none is asked."""
-        if mode is None or mode == 0 or mode == "spoken":
-            return 0
+        """A delivery mode's id (``controls.delivery_modes.ids``); the spoken row (0 when the bundle has no table) when none
+        is asked."""
+        if mode is None or mode == "spoken":
+            return self.spoken_mode
         if isinstance(mode, str):
             if mode not in self.delivery_modes:
                 raise ValueError(f"Unknown delivery mode {mode!r}; this bundle has {', '.join(sorted(self.delivery_modes)) or 'spoken only'}")
             return int(self.delivery_modes[mode])
-        if not self.feeds_delivery_mode:
+        if int(mode) != 0 and not self.feeds_delivery_mode:
             raise ValueError("This bundle has no delivery modes (a v3 bundle); singing needs a v4 bundle")
         return int(mode)
 
+    def speech_style(self, style: str | None) -> tuple[int, bool]:
+        """(the style's row, whether intensity and pace are set) for speech in ``style``. Only the styles the duration and
+        pitch graphs were trained on can be spoken (``controls.delivery_modes.duration_styles_trained`` and
+        ``pitch_styles_trained``; v5): "spoken", and score-free styles such as "rap", whose training rows carried neither
+        intensity nor pace (``controls.delivery_modes.controls_absent.styles``)."""
+        name = "spoken" if style is None else str(style).strip().lower()
+        if name == "spoken":
+            return self.spoken_mode, True
+        if not self.v5:
+            raise ValueError(f"This bundle speaks in one style; --style {name} needs a v5 bundle")
+        if name not in self.speech_styles:
+            sung = " (it is a sung style: give a score to sing)" if name in self.delivery_modes else ""
+            raise ValueError(f"Style {name!r} cannot be spoken{sung}: this bundle's duration and pitch models were trained on "
+                             f"{', '.join(self.speech_styles)}")
+        return int(self.delivery_modes[name]), name not in self.uncontrolled_styles
+
     # --- text ---------------------------------------------------------------------------------------------------------
-    def phonemize(self, text: str, *, language: str) -> dict[str, Any]:
-        return self.g2p.phonemize(text, language=language)
+    def phonemize(self, text: str, *, language: str, nonverbal: bool = True) -> dict[str, Any]:
+        return self.g2p.phonemize(text, language=language, nonverbal=nonverbal)
 
     def context_ids(self, phones: Sequence[str]) -> list[int]:
         return [self.phone_to_id[p] for p in phones if p != SILENCE]
@@ -360,9 +527,35 @@ class Engine:
         pitch = (st - float(p["melody_center"])) / float(p["melody_scale"]) * voiced
         return np.stack([pitch, probability, voiced], -1).astype(np.float32)
 
+    def rendered_contour(self, contour: np.ndarray, voice: str) -> np.ndarray:
+        """The contour [2, T] as the flow heard it, in the predictor's own units: the pitch line soft-limited inside the
+        voice's edges (no pitch shift: a shift is added after the predictor, so chaining it would add it again), the
+        voicing channel as sampled. This is what the next target's predictor continues from (``controls.pitch.prefix``)."""
+        p = self.pitch
+        st = contour[0].astype(np.float64) * float(p["scale"]) + float(p["center"])
+        low, high = (float(e) for e in p["edges"][voice])
+        knee = min(float(p["knee"]), (high - low) / 4)
+        top, bottom = high - knee, low + knee
+        st = np.where(st > top, top + knee * np.tanh((st - top) / knee), st)
+        st = np.where(st < bottom, bottom - knee * np.tanh((bottom - st) / knee), st)
+        return np.stack([(st - float(p["center"])) / float(p["scale"]), contour[1].astype(np.float64)]).astype(np.float32)
+
+    def identity_feeds(self, voice_row: int) -> dict[str, np.ndarray]:
+        """{identity_reference: the voice's fixed vector} on a v5 bundle, {} otherwise."""
+        if not self.v5:
+            return {}
+        if int(voice_row) not in self.identity:
+            raise ValueError(f"This bundle has no identity vector for voice row {voice_row}")
+        return {IDENTITY_INPUT: self.identity[int(voice_row)]}
+
+    def style_feeds(self, style: int | None) -> dict[str, np.ndarray]:
+        """{style_id: the row} for the duration graph of a v5 bundle (the spoken row when none is given), {} otherwise."""
+        return {STYLE_INPUT: _scalar(self.spoken_mode if style is None else style)} if self.v5 else {}
+
     # --- synthesis ----------------------------------------------------------------------------------------------------
     def durations(self, sentence: Sentence, *, voice: int, language: int, delivery: tuple[np.ndarray, np.ndarray],
-                  speed: float = 1.0) -> list[int]:
+                  speed: float = 1.0, style: int | None = None) -> list[int]:
+        """Frames per phone of the target. ``style`` (v5): the style row fed to the duration graph; the spoken row by default."""
         target = [self.phone_to_id[p] for p in sentence.phones]
         if len(target) > self.span_width:
             raise OverlongError(f"Sentence has {len(target)} phones, but this bundle supports at most {self.span_width}.",
@@ -373,31 +566,38 @@ class Engine:
         ids, segs, mask = _pad(span, width), _pad(segments, width), _pad([True] * len(span), width, False)
         values, present = self.target_delivery(sentence.phones, delivery)
         frames = self._run(graph, span_phone_ids=ids, span_segment_ids=segs, span_mask=mask,
-                           voice_id=_scalar(voice), language_id=_scalar(language), delivery_values=values, delivery_present=present)
+                           voice_id=_scalar(voice), language_id=_scalar(language), delivery_values=values, delivery_present=present,
+                           **self.identity_feeds(voice), **self.style_feeds(style))
         offset = int(((segs == 0) & mask).sum())
-        return frames_to_durations(frames[0, offset:offset + len(target)].tolist(), sentence.phones, scale=1.0 / float(speed),
-                                   pause_scale=self.pause_scale(delivery))
+        durations = frames_to_durations(frames[0, offset:offset + len(target)].tolist(), sentence.phones, scale=1.0 / float(speed),
+                                        pause_scale=self.pause_scale(delivery), min_pauses=sentence.min_pauses,
+                                        min_pause_frames=TIGHT_DASH_PAUSE_SECONDS * LATENT_SAMPLE_RATE / LATENT_HOP)
+        return opening_minimums(sentence.phones, durations, sentence.sentence_starts) if self.v5 else durations
 
     def synthesize_sentence(self, sentence: Sentence, *, voice: str, language: str, delivery: Sequence[Any],
                             prefix: np.ndarray | None = None, steps: int = 8, sampler: str = "heun", speed: float = 1.0,
                             noise_scale: float = 1.0, rng: np.random.Generator | None = None, noise: np.ndarray | None = None,
                             durations: list[int] | None = None, voice_row: int | None = None, pitch_noise: np.ndarray | None = None,
                             pitch_steps: int | None = None, pitch_sampler: str | None = None, melody: np.ndarray | None = None,
-                            delivery_mode: int = 0, guidance: float = 1.0) -> SentenceResult:
+                            delivery_mode: int | str | None = None, guidance: float = 1.0, pitch_prefix: np.ndarray | None = None,
+                            guidance_until: float | None = None) -> SentenceResult:
         """``delivery``: (values, present[, pitch shift in semitones]) from delivery_inputs. ``voice_row``: the duration / flow
         voice row; defaults to the voice index. The pitch predictor draws its noise from ``rng`` before the flow does.
 
         ``melody``: a ready melody input [T, 3] (T = the sum of ``durations``) in the flow's layout, as a score gives it
         (:mod:`scyllasband.singing`); it replaces the pitch predictor's contour and the voice's soft limit entirely, so the
         pitch graphs do not run and the pitch shift is ignored. ``delivery_mode``: the mode id fed to a v4 flow (0 spoken;
-        a v3 bundle takes only 0). ``guidance`` > 1 contrasts the melody and mode against both switched off
-        (v = v_off + guidance * (v_on - v_off), classifier-free guidance); 1 runs the flow once per evaluation.
+        a v3 bundle takes only 0); on a v5 bundle the style row, fed to the duration and pitch graphs as well (the spoken
+        row by default). ``pitch_prefix`` (v5): the contours rendered so far in this chain [2, n]
+        (``SentenceResult.contour`` of the targets before, joined); the predictor continues from its tail. ``guidance`` > 1 contrasts the melody and mode against both switched off
+        (v = v_off + guidance * (v_on - v_off), classifier-free guidance; off = no melody and the spoken row); 1 runs the
+        flow once per evaluation. ``guidance_until``: flow time (0 to 1) from which evaluations run unguided; None guides all.
         """
         voice_id = self.voice_index(voice) if voice_row is None else int(voice_row)
         language_id = self.language_index(language)
         mode_id = self.delivery_mode_id(delivery_mode)
         if durations is None:
-            durations = self.durations(sentence, voice=voice_id, language=language_id, delivery=delivery, speed=speed)
+            durations = self.durations(sentence, voice=voice_id, language=language_id, delivery=delivery, speed=speed, style=mode_id)
         length = int(sum(durations))
         if length <= 0:
             raise ValueError("Predicted zero latent frames; cannot synthesize")
@@ -431,16 +631,32 @@ class Engine:
         mask = _pad([True] * length, frames, False)
         common = dict(expanded_phone_ids=_pad(np.repeat(target, durations), frames), voice_id=_scalar(voice_id),
                       language_id=_scalar(language_id), delivery_values=values, delivery_present=present, latent_mask=mask,
-                      **{k: _pad(v, frames, 0) for k, v in events.items()})
+                      **{k: _pad(v, frames, 0) for k, v in events.items()}, **self.identity_feeds(voice_id))
         rng = rng if rng is not None else np.random.default_rng()
         expanded_melody = np.zeros((1, frames, 3), np.float32)
+        rendered = None
+        pitch_prefix_used = 0
         if melody is None:
             if pitch_noise is None:
                 pitch_noise = rng.standard_normal((2, length)).astype(np.float32)
+            pitch_feeds = dict(common, span_context_hidden=pitch_hidden)
+            if self.v5:
+                width = self.pitch_prefix_frames
+                contour_prefix = np.zeros((1, 2, width), np.float32)
+                contour_mask = np.zeros((1, width), bool)
+                if pitch_prefix is not None and width:
+                    tail = np.asarray(pitch_prefix, np.float32).reshape(2, -1)[:, -width:]
+                    if tail.shape[-1] and (tail[1] > 0.0).any():   # a tail with no voiced frame says nothing about pitch
+                        contour_prefix[0, :, width - tail.shape[-1]:] = tail
+                        contour_mask[0, width - tail.shape[-1]:] = True
+                        pitch_prefix_used = int(tail.shape[-1])
+                pitch_feeds.update(prefix_latents=contour_prefix, prefix_mask=contour_mask)
+                pitch_feeds[DELIVERY_MODE_INPUT] = _scalar(mode_id)
             contour = self._integrate(self.pitch_graphs[frames], np.asarray(pitch_noise, np.float32).reshape(2, length), frames, mask,
-                                      dict(common, span_context_hidden=pitch_hidden), int(pitch_steps or self.pitch_steps),
+                                      pitch_feeds, int(pitch_steps or self.pitch_steps),
                                       str(pitch_sampler or self.pitch_sampler).lower() == "heun")
             expanded_melody[0, :length] = self.melody(contour, voice, shift)
+            rendered = self.rendered_contour(contour, voice)
         else:
             expanded_melody[0, :length] = melody
         feeds = dict(common, span_context_hidden=hidden, prefix_latents=prefix_latents, prefix_mask=prefix_mask, expanded_melody=expanded_melody)
@@ -456,15 +672,15 @@ class Engine:
             vector_name = self.first_graphs[frames]
         flows = self.first_flow_graphs if no_prefix and frames in self.first_flow_graphs else self.flow_graphs
         # Guidance contrasts the conditioned velocity with the melody and mode switched off; it needs the stepped graph.
-        guided = float(guidance) != 1.0 and (melody is not None or mode_id != 0)
+        guided = float(guidance) != 1.0 and (melody is not None or mode_id != self.spoken_mode)
         off = dict(feeds, expanded_melody=np.zeros_like(expanded_melody)) if guided else None
         if off is not None and self.feeds_delivery_mode:
-            off[DELIVERY_MODE_INPUT] = _scalar(0)
+            off[DELIVERY_MODE_INPUT] = _scalar(self.spoken_mode)
         fused = flows.get(frames) if (str(sampler).lower(), int(steps)) == self.fused_flow and not guided else None
 
         def velocity(current: np.ndarray, t: float) -> np.ndarray:
             on = self._run(vector_name, noise=current, time=np.array([t], np.float32), **feeds)
-            if off is None:
+            if off is None or (guidance_until is not None and t >= float(guidance_until) - 1e-6):
                 return on
             base = self._run(vector_name, noise=current, time=np.array([t], np.float32), **off)
             return base + float(guidance) * (on - base)
@@ -487,7 +703,9 @@ class Engine:
                         context_after=min(len(sentence.after_ids), self.context_phones))
         if self.feeds_delivery_mode or melody is not None:
             metadata.update(delivery_mode=mode_id, melody_source="pitch_predictor" if melody is None else "score", guidance=float(guidance))
-        return SentenceResult(latents=x[0, :, :length].copy(), durations=durations, bucket=frames, metadata=metadata)
+        if self.v5:
+            metadata.update(pitch_prefix_frames=pitch_prefix_used)
+        return SentenceResult(latents=x[0, :, :length].copy(), durations=durations, bucket=frames, metadata=metadata, contour=rendered)
 
     def _integrate(self, graph: str, noise: np.ndarray, frames: int, mask: np.ndarray, feeds: Mapping[str, np.ndarray], steps: int,
                    heun: bool) -> np.ndarray:

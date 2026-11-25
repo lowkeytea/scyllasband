@@ -14,7 +14,8 @@ CUDA) stay on the Python engine unless the native engine is asked for.
 
 A library is found at SCYLLASBAND_NATIVE_LIB, else in scyllasband/_native/<backend>/ (``python -m scyllasband
 build-native``), else in a checkout's libscyllasband/build/<backend>/. It must be ABI 3.1 or later and built for the
-bundle's backend (litert, apple or onnx).
+bundle's backend (litert, apple or onnx); a v5 bundle's speech styles (rap) and its own score styles in ``score_parse`` need
+ABI 3.2.
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ from typing import Any, Callable, Iterator, Mapping, Sequence, TextIO
 
 import numpy as np
 
+from .contract import GRAPH_CONTRACTS_V5
 from .planner import PlanChunk, SynthesisPlan, records_from_text
 from .runtime import SUPPORTED_SAMPLERS, ScyllasBandRuntime, SynthesisRequest, SynthesisResult, VoiceSpec, _bundle_backend
 from .streaming import StreamingEvent
@@ -182,6 +184,11 @@ class NativeLibrary:
             ("scyllasband_warmup_singing", c.c_int, [c.c_void_p, c.c_char_p, c.c_char_p]),
         ):
             self._declare(name, restype, argtypes)
+        # ABI 3.2: speech styles and score parsing with a bundle's own styles (v5 bundles).
+        self.has_styles = minor >= 2
+        if self.has_styles:
+            self._declare("scyllasband_synthesize_records_style_stream", c.c_int, [c.c_void_p, c.c_void_p, c.c_char_p, EventCallback, c.c_void_p])
+            self._declare("scyllasband_score_parse_for", c.c_int, [c.c_void_p, c.c_char_p, c.c_int32, c.POINTER(c.c_void_p)])
         # Test entry points (src/scyllasband_test_api.h), used by the parity harness; not part of the public ABI.
         self.has_test_api = hasattr(lib, "scyllasband_test_set_noise")
         if self.has_test_api:
@@ -546,14 +553,32 @@ class NativeRuntime:
         return self.plan_records(records_from_text(text, voice=voice_id, language=language, delivery=delivery, intensity=intensity,
                                                    pace=pace, pitch=pitch), normalize=normalize)
 
+    def speech_styles(self) -> list[str]:
+        """The styles a request may speak in (``style``): spoken, and on a v5 bundle the score-free styles it trained (rap)."""
+        return list(self.info.get("speech_styles") or ["spoken"])
+
+    def _style(self, style: str | None) -> bytes | None:
+        """``style`` for the C API (None: spoken). A style other than spoken needs a library of ABI 3.2 or later."""
+        name = "spoken" if style is None else str(style).strip().lower()
+        if name == "spoken":
+            return None
+        if not self.library.has_styles:
+            raise ValueError(f"{self.library.path} is ABI {self.library.version}, which speaks in one style; style {name} needs "
+                             "ABI 3.2 or later (python -m scyllasband build-native) or --engine python")
+        return _text(name, "style")
+
     def synthesize_stream(self, records: Sequence[Mapping[str, Any]], *, normalize: bool = True, progress: TextIO | None = None,
-                          **options: Any) -> Iterator[StreamingEvent]:
-        """The records spoken target by target, as StreamingEvents (plan, chunk_started, audio_chunk, done)."""
+                          style: str | None = None, **options: Any) -> Iterator[StreamingEvent]:
+        """The records spoken target by target, as StreamingEvents (plan, chunk_started, audio_chunk, done). ``style``: a
+        speech style of the bundle (:meth:`speech_styles`); the library refuses one the bundle cannot speak."""
+        spoken_in = self._style(style)
         request = self._records_request(records, normalize=normalize, **options)
         lib = self.library.lib
-        events = self._events(lambda callback: lib.scyllasband_synthesize_records_stream(self.handle, c.byref(request), callback, None),
-                              "synthesize")
-        return self._speech_events(events, request, progress)
+        if spoken_in is None:
+            start = lambda callback: lib.scyllasband_synthesize_records_stream(self.handle, c.byref(request), callback, None)   # noqa: E731
+        else:
+            start = lambda callback: lib.scyllasband_synthesize_records_style_stream(self.handle, c.byref(request), spoken_in, callback, None)   # noqa: E731
+        return self._speech_events(self._events(start, "synthesize"), request, progress)
 
     def _speech_events(self, events: Iterator[NativeEvent], request: RecordsRequest, progress: TextIO | None) -> Iterator[StreamingEvent]:
         try:
@@ -590,8 +615,10 @@ class NativeRuntime:
         finally:
             stream.close()
         audio = np.concatenate(pieces) if pieces else np.zeros(0, np.float32)
-        return SynthesisResult(audio=audio, sample_rate=self.sample_rate,
-                               metadata=dict(summary, chunks=chunks, backend=self.backend, engine="native", noise=NOISE["native"]))
+        metadata = dict(summary, chunks=chunks, backend=self.backend, engine="native", noise=NOISE["native"])
+        if self.info.get("graph_contract") in GRAPH_CONTRACTS_V5:
+            metadata.update(style="spoken" if options.get("style") is None else str(options["style"]).strip().lower())
+        return SynthesisResult(audio=audio, sample_rate=self.sample_rate, metadata=metadata)
 
     def synthesize(self, request: SynthesisRequest, *, progress: TextIO | None = None) -> SynthesisResult:
         records = records_from_text(request.text, voice=request.voice_id, language=request.language, delivery=request.delivery,
@@ -599,7 +626,7 @@ class NativeRuntime:
         steps = request.steps or self.default_steps
         sampler = (request.sampler or self.default_sampler).lower()
         result = self.render_records(records, normalize=request.normalize_text, progress=progress, steps=steps, sampler=sampler,
-                                     speed=request.speed, seed=request.seed, temperature=request.temperature)
+                                     speed=request.speed, seed=request.seed, temperature=request.temperature, style=request.style)
         if not result.metadata["chunks"]:
             raise ValueError("Nothing to speak: the text has no words")
         first = result.metadata["chunks"][0]
@@ -666,7 +693,15 @@ class NativeRuntime:
         return SynthesisResult(audio=audio, sample_rate=self.sample_rate, metadata=metadata)
 
     def score_parse(self, score: Mapping[str, Any] | str, transpose: int = 0) -> dict[str, Any]:
-        return self.library.score_parse(score, transpose)
+        """The score checked and normalized with this bundle's styles (a v5 bundle's own, and its note ``x``; ABI 3.2)."""
+        if not self.library.has_styles:
+            return self.library.score_parse(score, transpose)
+        out = c.c_void_p()
+        status = self.library.lib.scyllasband_score_parse_for(self.handle, _score_bytes(score), int(transpose), c.byref(out))
+        text = self.library.take_string(out)
+        data = json.loads(text) if text else {}
+        self.library.check(status, "score_parse", data)
+        return data
 
     def sing_plan(self, score: Mapping[str, Any] | str, voice_id: str, language: str | None = None, **options: Any) -> dict[str, Any]:
         out = c.c_void_p()
@@ -706,7 +741,7 @@ class NativeRuntime:
         return dict(backend=self.backend, bundle_dir=str(self.bundle_dir), voices=self.available_voices(), engine="native",
                     noise=NOISE["native"], library=str(self.library.path), abi=self.library.version, accelerator=self.info.get("accelerator"),
                     graph_contract=self.info.get("graph_contract"), singing=bool(singing.get("supported")),
-                    decoders=sorted(singing.get("decoders") or []))
+                    speech_styles=self.speech_styles(), decoders=sorted(singing.get("decoders") or []))
 
 
 # --- choosing the engine -------------------------------------------------------------------------------------------------

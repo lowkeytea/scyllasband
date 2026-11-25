@@ -10,7 +10,11 @@ from dataclasses import dataclass
 import hashlib
 import json
 import re
+from typing import Any, Mapping
 import unicodedata
+
+from .g2p_phrases import mark_tight_dashes
+from .text_data import TEXT_DATA, forms as _written_forms
 
 
 SPOKEN_TEXT_NORMALIZER_CONTRACT = {
@@ -161,25 +165,36 @@ def _fallback_spanish_number(n: int) -> str:
 
 
 def _fallback_italian_number(n: int) -> str:
+    """Italian writes numbers below a million as one word ("trentacinque", "duemilacinquecento"), with an accent on a final
+    "tre" ("ventitré")."""
+    words = _italian_number_words(n)
+    return words[:-3] + "tré" if len(words) > 3 and words.endswith("tre") and not words.endswith(" tre") else words
+
+
+def _italian_number_words(n: int) -> str:
     if n < 0:
-        return "meno " + _fallback_italian_number(-n)
+        return "meno " + _italian_number_words(-n)
     if n < 20:
         return _IT_UNDER_20[n]
     if n < 100:
-        tens = (n // 10) * 10
-        rest = n % 10
-        return _IT_TENS[tens] if rest == 0 else f"{_IT_TENS[tens]} {_fallback_italian_number(rest)}"
+        tens, rest = (n // 10) * 10, n % 10
+        if rest == 0:
+            return _IT_TENS[tens]
+        return (_IT_TENS[tens][:-1] if rest in (1, 8) else _IT_TENS[tens]) + _IT_UNDER_20[rest]   # "ventuno", "trentotto"
     if n < 1000:
-        rest = n % 100
-        head = "cento" if n // 100 == 1 else f"{_fallback_italian_number(n // 100)} cento"
-        return head if rest == 0 else f"{head} {_fallback_italian_number(rest)}"
+        head = "cento" if n // 100 == 1 else _IT_UNDER_20[n // 100] + "cento"
+        tail = _italian_number_words(n % 100) if n % 100 else ""
+        return (head[:-1] if tail.startswith("ott") else head) + tail   # "centotto", "duecentottanta"
     if n < 1_000_000:
-        rest = n % 1000
-        head = "mille" if n // 1000 == 1 else f"{_fallback_italian_number(n // 1000)} mila"
-        return head if rest == 0 else f"{head} {_fallback_italian_number(rest)}"
+        head = "mille" if n // 1000 == 1 else _italian_number_words(n // 1000) + "mila"
+        return head + (_italian_number_words(n % 1000) if n % 1000 else "")
+    if n >= 1_000_000_000:
+        rest = n % 1_000_000_000
+        head = "un miliardo" if n // 1_000_000_000 == 1 else f"{_italian_number_words(n // 1_000_000_000)} miliardi"
+        return head if rest == 0 else f"{head} {_italian_number_words(rest)}"
     rest = n % 1_000_000
-    head = "un milione" if n // 1_000_000 == 1 else f"{_fallback_italian_number(n // 1_000_000)} milioni"
-    return head if rest == 0 else f"{head} {_fallback_italian_number(rest)}"
+    head = "un milione" if n // 1_000_000 == 1 else f"{_italian_number_words(n // 1_000_000)} milioni"
+    return head if rest == 0 else f"{head} {_italian_number_words(rest)}"
 
 
 def _fallback_french_number(n: int) -> str:
@@ -220,7 +235,10 @@ def _fallback_french_number(n: int) -> str:
                 head = singular
             else:
                 unit = singular if count == 1 else plural
-                head = f"{_fallback_french_number(count)} {unit}"
+                count_words = _fallback_french_number(count)
+                if scale == 1000 and count_words.endswith(("cents", "vingts")):
+                    count_words = count_words[:-1]   # no plural s before "mille": "deux cent mille", "quatre-vingt mille"
+                head = f"{count_words} {unit}"
             return head if rest == 0 else f"{head} {_fallback_french_number(rest)}"
     return str(n)
 
@@ -329,6 +347,335 @@ def _fallback_ordinal_number(n: int, lang: str) -> str:
     return _fallback_number_to_words(n, lang)
 
 
+# ---- spoken-form tables (text_data/<language>.json): matching shared by the normalizer rules ----
+
+
+def _word(lang: str, key: str) -> str:
+    """A word the rules insert, from the language's ``words`` table (English when the language has none)."""
+    return (TEXT_DATA.get(lang) or {}).get("words", {}).get(key) or TEXT_DATA["en"]["words"][key]
+
+
+def _compact(text: str) -> str:
+    return re.sub(r"\s+", "", text)
+
+
+def _form_pattern(form: str, left_boundary: bool) -> str:
+    """One written form as a pattern for a whole token: a space after a dot is optional, other spaces match any run."""
+    parts = []
+    for index, char in enumerate(form):
+        if char == " ":
+            parts.append(r"\s*" if index and form[index - 1] == "." else r"\s+")
+        else:
+            parts.append(re.escape(char))
+    left = r"(?<![\w.'’])" if left_boundary and form[0].isalnum() else ""
+    right = r"(?!\w)" if form[-1].isalnum() else ""
+    return left + "".join(parts) + right
+
+
+def _sentence_start(text: str, start: int) -> bool:
+    index = start
+    while index > 0 and (text[index - 1].isspace() or text[index - 1] in "\"'“‘«(¿¡["):
+        index -= 1
+    return index == 0 or text[index - 1] in ".!?…" or "\n" in text[index:start]
+
+
+def _capitals_text(text: str) -> bool:
+    """Text written all in capitals (and with at least one letter)."""
+    return any(ch.isupper() for ch in text) and not any(ch.islower() for ch in text)
+
+
+def _case_matches(matched: str, form: str, case: str, text: str, start: int, capitals_text: bool) -> bool:
+    """Whether ``matched`` (spaces removed) is an accepted spelling of ``form`` under the entry's ``case`` policy:
+    "any" any casing; "exact" as written (in capitals too when the whole text is); "sentence" as written or in lower case,
+    capitalised at the start of a sentence, in capitals when the whole text is."""
+    if matched == form or case == "any":
+        return True
+    if case == "exact":
+        return capitals_text and matched == form.upper()
+    if matched == form.lower() or (capitals_text and matched == form.upper()):
+        return True
+    if matched in (form[:1].upper() + form[1:], form[:1].upper() + form[1:].lower()):
+        return _sentence_start(text, start)
+    return False
+
+
+def _cased(spoken: str, matched: str) -> str:
+    """The replacement, with a capital first letter when the written form had one."""
+    if matched[:1].isupper() and spoken[:1].islower():
+        return spoken[:1].upper() + spoken[1:]
+    return spoken
+
+
+def _after_capitalised_word(text: str, start: int) -> bool:
+    before = text[:start].rstrip()
+    word = before.split()[-1].strip("\"'“‘«(") if before else ""
+    return bool(word) and word[0].isupper() and word[-1].isalpha()
+
+
+class _FormTable:
+    """One section of a language's tables: every written form in one pattern, longest first, and the entries by their
+    lower-case form with spaces removed."""
+
+    def __init__(self, entries: Any, default_case: str, *, after_number: bool = False) -> None:
+        self.keys: dict[str, list[tuple[Mapping[str, Any], str, str]]] = {}
+        written: list[str] = []
+        for entry in entries:
+            for form in _written_forms(entry["written"]):
+                written.append(form)
+                self.keys.setdefault(_compact(form).lower(), []).append((entry, form, entry.get("case", default_case)))
+        written.sort(key=lambda form: (-len(form), form))
+        alternatives = "|".join(_form_pattern(form, not after_number) for form in written)
+        if not written:
+            self.pattern = None
+        elif after_number:
+            # A unit after a number, with or without one space: "5 km", "100ms", "1,5 t".
+            self.pattern = re.compile(rf"(?<![\w.,])(\d+(?:[.,]\d+)*)( ?)({alternatives})", re.IGNORECASE)
+        else:
+            self.pattern = re.compile(alternatives, re.IGNORECASE)
+
+    def find(self, text: str, matched: str, start: int, capitals: bool) -> tuple[Mapping[str, Any], str] | None:
+        compact = _compact(matched)
+        for entry, form, case in self.keys.get(compact.lower(), ()):
+            if _case_matches(compact, _compact(form), case, text, start, capitals):
+                return entry, form
+        return None
+
+
+_TABLES: dict[str, dict[str, _FormTable]] = {}
+
+
+def _tables(lang: str) -> dict[str, _FormTable]:
+    tables = _TABLES.get(lang)
+    if tables is None:
+        data = TEXT_DATA.get(lang, {})
+        tables = {
+            "abbreviations": _FormTable(data.get("abbreviations", ()), "sentence"),
+            "titles": _FormTable(data.get("titles", ()), "sentence"),
+            "before_number": _FormTable(data.get("before_number", ()), "any"),
+            "units": _FormTable(data.get("units", ()), "any", after_number=True),
+        }
+        _TABLES[lang] = tables
+    return tables
+
+
+_UNIT_FORMS: dict[str, frozenset[str]] = {}
+
+
+def _unit_words_of(lang: str) -> frozenset[str]:
+    """The language's unit forms in lower case: a unit in capitals ("300 MPH") is not an initialism."""
+    if lang not in _UNIT_FORMS:
+        units = TEXT_DATA.get(lang, {}).get("units", ())
+        _UNIT_FORMS[lang] = frozenset(form.lower().rstrip(".") for entry in units for form in _written_forms(entry["written"]))
+    return _UNIT_FORMS[lang]
+
+
+_ORDINAL_SUFFIX_PATTERNS: dict[str, re.Pattern[str]] = {}
+
+
+def _ordinal_suffix_pattern(lang: str) -> re.Pattern[str]:
+    """A number with one of the language's ordinal suffixes: "2nd", "1er", "XXe", "1.º", "3ª"."""
+    if lang not in _ORDINAL_SUFFIX_PATTERNS:
+        suffixes = sorted(TEXT_DATA[lang]["ordinal_suffixes"], key=lambda suffix: (-len(suffix), suffix))
+        _ORDINAL_SUFFIX_PATTERNS[lang] = re.compile(
+            r"(?<![\w.,])(\d+)(" + "|".join(map(re.escape, suffixes)) + r")(?!\w)", re.IGNORECASE)
+    return _ORDINAL_SUFFIX_PATTERNS[lang]
+
+
+_CURRENCY_PATTERNS: dict[str, tuple[re.Pattern[str], re.Pattern[str]]] = {}
+
+
+def _currency_patterns(lang: str) -> tuple[re.Pattern[str], re.Pattern[str]]:
+    """A currency symbol before an amount (with an optional scale word: "$5bn") and after one ("40€", "40 EUR")."""
+    if lang not in _CURRENCY_PATTERNS:
+        data = TEXT_DATA[lang]
+        symbols = "".join(re.escape(symbol) for symbol in data["currency"])
+        scales = sorted(data.get("currency_scales", {}), key=lambda scale: (-len(scale), scale))
+        scale = rf"(?:\s?({'|'.join(map(re.escape, scales))})(?!\w))?" if scales else "()"
+        amount = r"([0-9](?:[0-9.,]*[0-9])?)"
+        _CURRENCY_PATTERNS[lang] = (
+            re.compile(rf"([{symbols}])\s*{amount}{scale}"),
+            re.compile(rf"(?<![\w.,]){amount}\s*([{symbols}]|EUR)(?!\w)", re.IGNORECASE),
+        )
+    return _CURRENCY_PATTERNS[lang]
+
+
+_ENGLISH_YEAR_PATTERN: list[re.Pattern[str]] = []
+
+
+_FIRST_OF_MONTH_PATTERNS: dict[str, re.Pattern[str]] = {}
+
+
+def _first_of_month_pattern(lang: str) -> re.Pattern[str]:
+    """A "1" before one of the language's month names, in any case."""
+    if lang not in _FIRST_OF_MONTH_PATTERNS:
+        months = "|".join(map(re.escape, sorted(TEXT_DATA[lang]["months"], key=len, reverse=True)))
+        _FIRST_OF_MONTH_PATTERNS[lang] = re.compile(rf"(?<![\w.,\-])1(?=\s+(?:{months})(?!\w))", re.IGNORECASE)
+    return _FIRST_OF_MONTH_PATTERNS[lang]
+
+
+_LOWERED: dict[int, frozenset[str]] = {}
+
+
+def _lowered(words: Any) -> frozenset[str]:
+    key = id(words)
+    if key not in _LOWERED:
+        _LOWERED[key] = frozenset(str(word).lower() for word in words)
+    return _LOWERED[key]
+
+
+def _previous_word(text: str, end: int) -> str:
+    """The word that ends right before ``end``, past spaces."""
+    index = end
+    while index > 0 and text[index - 1].isspace():
+        index -= 1
+    start = index
+    while start > 0 and (text[start - 1].isalnum() or text[start - 1] in "'’"):
+        start -= 1
+    return text[start:index]
+
+
+def _next_word(text: str, start: int) -> str:
+    """The word that starts after ``start``, past spaces."""
+    index = start
+    while index < len(text) and text[index].isspace():
+        index += 1
+    end = index
+    while end < len(text) and text[end].isalnum():
+        end += 1
+    return text[index:end]
+
+
+def _feminine(noun: str, table: Mapping[str, Any]) -> bool:
+    """Whether ``noun`` takes the feminine "one": listed words first, then (German) a lower-case adjective's ending, then
+    the noun's ending."""
+    lower = noun.lower()
+    if lower in _lowered(table.get("masculine_words", ())):
+        return False
+    if lower in _lowered(table.get("feminine_words", ())):
+        return True
+    adjective = table.get("adjective_feminine_endings")
+    if adjective is not None and noun[:1].islower():
+        return any(lower.endswith(ending) for ending in adjective)   # "eine neue Nachricht", "ein neuer Termin"
+    return any(lower.endswith(ending) for ending in table.get("feminine_endings", ()))
+
+
+def _english_year_pattern() -> re.Pattern[str]:
+    """A year 1100-2099 after an English year word ("in 1776", "since 1990", "July 1969"), read "seventeen seventy six"."""
+    if not _ENGLISH_YEAR_PATTERN:
+        cues = "|".join(map(re.escape, TEXT_DATA["en"].get("year_cues", ())))
+        _ENGLISH_YEAR_PATTERN.append(re.compile(rf"\b({cues})\s+(1[1-9]\d\d|20\d\d)(?![\d.,]\d|\w)", re.IGNORECASE))
+    return _ENGLISH_YEAR_PATTERN[0]
+
+
+_GERMAN_YEAR_PATTERN: list[re.Pattern[str]] = []
+
+
+def _german_year_pattern() -> re.Pattern[str]:
+    """A year 1100-1999 after a German month or another year word ("Oktober 1990", "im Jahr 1759")."""
+    if not _GERMAN_YEAR_PATTERN:
+        cues = "|".join(map(re.escape, TEXT_DATA["de"].get("year_cues", ())))
+        _GERMAN_YEAR_PATTERN.append(re.compile(rf"\b({cues})\s+(1[1-9]\d\d)(?![\d.,]\d|\w)"))
+    return _GERMAN_YEAR_PATTERN[0]
+
+
+# ---- non-verbal words (text_data/<language>.json "nonverbal"; English only) ----
+
+# Punctuation that marks a token as an interjection where the spelling alone cannot say ("Er, no", "Sh!", "HMM...").
+_NONVERBAL_PUNCTUATION = ",.!?…"
+# Characters that tie a token to a word on the other side of them: "uh-oh", "um's", "src/mm", "sh.exe".
+_NONVERBAL_TIES = "-'’/."
+_NonverbalRun = tuple[str, int, bool]   # letter ("-" for the joiner), least count, open-ended
+
+
+def _nonverbal_runs(shape: str) -> tuple[_NonverbalRun, ...]:
+    """A shape as runs of one letter: "mm+" is two or more "m", "he+h+" one "h", "e"s, "h"s. "-" is the place where
+    the word may be written with one hyphen or space ("mm-hmm", "mm hmm") or closed up ("mmhmm")."""
+    runs: list[_NonverbalRun] = []
+    index = 0
+    while index < len(shape):
+        letter = shape[index]
+        open_ended = shape[index + 1:index + 2] == "+"
+        index += 2 if open_ended else 1
+        if letter != "-" and runs and runs[-1][0] == letter:
+            runs[-1] = (letter, runs[-1][1] + 1, runs[-1][2] or open_ended)
+        else:
+            runs.append((letter, 0 if letter == "-" else 1, open_ended))
+    return tuple(runs)
+
+
+def _ascii_lower(char: str) -> str:
+    return chr(ord(char) + 32) if "A" <= char <= "Z" else char
+
+
+def _nonverbal_match(runs: tuple[_NonverbalRun, ...], text: str, start: int) -> int:
+    """Where the shape ends when it matches at ``start`` (ASCII letters in either case), or -1."""
+    pos = start
+    size = len(text)
+    previous: tuple[str, int, int, bool] | None = None   # the last letter run: letter, count found, least, open-ended
+    index = 0
+    while index < len(runs):
+        letter, least, open_ended = runs[index]
+        if letter == "-":
+            following = runs[index + 1]
+            if pos + 1 < size and text[pos] in "- " and _ascii_lower(text[pos + 1]) == following[0]:
+                pos += 1
+            elif previous is not None and previous[0] == following[0] and previous[3]:
+                # Closed up, with the same letter on both sides ("uhhuh"): one run that holds both.
+                if previous[1] < previous[2] + following[1]:
+                    return -1
+                index += 1
+            index += 1
+            continue
+        count = 0
+        while pos + count < size and _ascii_lower(text[pos + count]) == letter:
+            count += 1
+        if count < least:
+            return -1
+        taken = count if open_ended else least
+        previous = (letter, taken, least, open_ended)
+        pos += taken
+        index += 1
+    return pos
+
+
+def _word_char(char: str) -> bool:
+    return char.isalnum() or char == "_"   # re \w
+
+
+def _nonverbal_token(text: str, start: int, end: int) -> bool:
+    """Whether text[start:end] stands as a token of its own: not inside a word, and not tied to one by a hyphen,
+    apostrophe, slash or dot. An ellipsis ("Well...hmm") does not tie."""
+    if start > 0:
+        before = text[start - 1]
+        if _word_char(before) or (before in _NONVERBAL_TIES and start > 1 and _word_char(text[start - 2])):
+            return False
+    if end < len(text):
+        after = text[end]
+        if _word_char(after) or (after in _NONVERBAL_TIES and end + 1 < len(text) and _word_char(text[end + 1])):
+            return False
+    return True
+
+
+class _NonverbalTable:
+    """A language's non-verbal words: (spoken, shapes, when) in table order, and the tokens kept as initialisms."""
+
+    def __init__(self, data: Mapping[str, Any]) -> None:
+        section = data.get("nonverbal") or {}
+        self.words = [(str(entry["spoken"]), tuple(_nonverbal_runs(shape) for shape in entry["shapes"]), str(entry.get("when", "")))
+                      for entry in section.get("words", ())]
+        initialisms = data.get("initialisms", {})
+        self.initialisms = frozenset(initialisms.get("spell", ())) | frozenset(initialisms.get("capitals_only", ()))
+
+
+_NONVERBAL_TABLES: dict[str, _NonverbalTable] = {}
+
+
+def _nonverbal_table(lang: str) -> _NonverbalTable:
+    if lang not in _NONVERBAL_TABLES:
+        _NONVERBAL_TABLES[lang] = _NonverbalTable(TEXT_DATA.get(lang, {}))
+    return _NONVERBAL_TABLES[lang]
+
+
 @dataclass(frozen=True)
 class SpokenTextNormalizerConfig:
     expand_currency: bool = True
@@ -361,95 +708,6 @@ class SpokenTextNormalizer:
         "vi_vn": "vi",
         "vi_hn": "vi",
     }
-    _MONTHS = {
-        "en": (
-            "January",
-            "February",
-            "March",
-            "April",
-            "May",
-            "June",
-            "July",
-            "August",
-            "September",
-            "October",
-            "November",
-            "December",
-        ),
-        "es": (
-            "enero",
-            "febrero",
-            "marzo",
-            "abril",
-            "mayo",
-            "junio",
-            "julio",
-            "agosto",
-            "septiembre",
-            "octubre",
-            "noviembre",
-            "diciembre",
-        ),
-        "it": (
-            "gennaio",
-            "febbraio",
-            "marzo",
-            "aprile",
-            "maggio",
-            "giugno",
-            "luglio",
-            "agosto",
-            "settembre",
-            "ottobre",
-            "novembre",
-            "dicembre",
-        ),
-        "fr": (
-            "janvier", "février", "mars", "avril", "mai", "juin",
-            "juillet", "août", "septembre", "octobre", "novembre", "décembre",
-        ),
-        "de": (
-            "Januar", "Februar", "März", "April", "Mai", "Juni",
-            "Juli", "August", "September", "Oktober", "November", "Dezember",
-        ),
-        "vi": (
-            "tháng một", "tháng hai", "tháng ba", "tháng tư", "tháng năm", "tháng sáu",
-            "tháng bảy", "tháng tám", "tháng chín", "tháng mười", "tháng mười một", "tháng mười hai",
-        ),
-    }
-    _CURRENCY_UNITS = {
-        "en": {
-            "$": ("dollar", "dollars", "cent", "cents"),
-            "£": ("pound", "pounds", "penny", "pence"),
-            "€": ("euro", "euros", "cent", "cents"),
-        },
-        "es": {
-            "$": ("dólar", "dólares", "centavo", "centavos"),
-            "£": ("libra", "libras", "penique", "peniques"),
-            "€": ("euro", "euros", "céntimo", "céntimos"),
-        },
-        "it": {
-            "$": ("dollaro", "dollari", "cent", "cent"),
-            "£": ("sterlina", "sterline", "penny", "pence"),
-            "€": ("euro", "euro", "centesimo", "centesimi"),
-        },
-        "fr": {
-            "$": ("dollar", "dollars", "centime", "centimes"),
-            "£": ("livre", "livres", "penny", "pence"),
-            "€": ("euro", "euros", "centime", "centimes"),
-        },
-        "de": {
-            "$": ("Dollar", "Dollar", "Cent", "Cent"),
-            "£": ("Pfund", "Pfund", "Penny", "Pence"),
-            "€": ("Euro", "Euro", "Cent", "Cent"),
-        },
-        "vi": {
-            "$": ("đô la", "đô la", "xu", "xu"),
-            "£": ("bảng Anh", "bảng Anh", "xu", "xu"),
-            "€": ("euro", "euro", "xu", "xu"),
-        },
-    }
-
     _UNICODE_TRANSLATION = str.maketrans(
         {
             "\u00a0": " ",
@@ -502,38 +760,16 @@ class SpokenTextNormalizer:
     _DOT_RUN_RE = re.compile(r"\.{2,}")
     _LEXICAL_HYPHENS = ("\u2010", "\u2011")
     _SYNTACTIC_DASHES = ("\u2012", "\u2013", "\u2014", "\u2015", "\u2212", "\ufe58", "\ufe63", "\uff0d")
+    # A hyphen or minus sign (U+2212) right before a digit, not after a letter, digit, dot, comma or another dash ("1939-1945",
+    # "COVID-19") and not after a number and a space ("10 -12" is a range).
+    _MINUS_RE = re.compile(r"(?<![\w.,\-\u2212])(?<!\d )[-\u2212](?=\d)")
+    _MINUS_MARK = "\ue000"
     _EN_MONTH_DATE_RE = re.compile(
         r"\b("
         r"Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
         r"Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?"
         r")\.?\s+(\d{1,2})(?:,\s*(\d{2,4}))?\b",
         re.IGNORECASE,
-    )
-    # Honorific abbreviations the G2P mispronounces. Each spelling here was
-    # chosen by matching the model's output for the expansion against espeak's
-    # output for the *abbreviation*, which is the target the model was distilled
-    # toward -- so "Mrs." expands to "misses" (espeak: mˈɪsɪz) rather than the
-    # etymological "missus", which the model renders mˈɪʃəs.
-    #
-    # Deliberately minimal. "Mr." is NOT listed: the model already handles it
-    # correctly before a name (7/8 across a name sample, matching the ceiling set
-    # by the names themselves), so expanding it would add risk for no gain.
-    # "Prof." and "vs" are likewise already correct. Titles whose expansion does
-    # not reproduce espeak's reading of the abbreviation (Ms., Jr., Sr., etc.,
-    # Ave., Rd.) are omitted rather than guessed at.
-    #
-    # This cannot help bare initialisms (FBI, USA, BBC). Spelling them as
-    # separate words gives each its own primary stress -- "bee bee see" becomes
-    # bˈiːbˈiːsˈiː where espeak has bˌiːbˌiːsˈiː -- so that class needs a G2P-side
-    # fix, not a normalizer one.
-    _TITLE_ABBREVIATIONS = {
-        "en": {"mrs": "misses", "dr": "doctor"},
-    }
-    # Only expand when a capitalised word follows, i.e. the honorific use
-    # ("Dr. Smith"). This leaves the street sense alone, where the abbreviation
-    # trails the name ("Main Dr.") and is not followed by a capitalised token.
-    _TITLE_ABBREVIATION_RE = re.compile(
-        r"(?<![A-Za-zÀ-ÖØ-öø-ÿÑñ])([A-Za-z]{2,4})\.?\s+(?=[A-ZÀ-ÖØ-Þ])"
     )
     # Letters glued to digits ("V3", "MP3", "H2O", "4K", "Python3") reach the G2P as one unknown word and come out garbled.
     # They are split into letter and digit runs, the digits left for the number rules that follow ("v3.5" becomes "vee
@@ -543,18 +779,8 @@ class SpokenTextNormalizer:
     _ALPHANUMERIC_RE = re.compile(r"(?<!\w)[A-Za-z0-9]*(?:[A-Za-z][0-9]|[0-9][A-Za-z])[A-Za-z0-9]*(?!\w)")
     _ALPHANUMERIC_RUN_RE = re.compile(r"[A-Za-z]+|[0-9]+")
     _VOWEL_RE = re.compile(r"[AEIOUYaeiouy]")
-    # English numbers glued to a unit, to "x", or to a plural "s"; the digits are left for the number rules.
+    # English numbers glued to "x" or to a plural "s"; the digits are left for the number rules.
     _EN_NUMBER = r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?"
-    # Units, also after one space: "100ms" and "4 GB" become "100 milliseconds" and "4 gigabytes".
-    _EN_UNIT_RE = re.compile(
-        rf"(?<![\w.,])({_EN_NUMBER}) ?(ms|secs?|mins?|hrs?|Hz|kHz|MHz|GHz|km|cm|mm|kg|mg|KB|kB|MB|GB|TB|fps|mph)(?!\w)"
-    )
-    _EN_UNITS = {
-        "ms": "millisecond", "sec": "second", "secs": "second", "min": "minute", "mins": "minute", "hr": "hour", "hrs": "hour",
-        "Hz": "hertz", "kHz": "kilohertz", "MHz": "megahertz", "GHz": "gigahertz", "km": "kilometer", "cm": "centimeter",
-        "mm": "millimeter", "kg": "kilogram", "mg": "milligram", "KB": "kilobyte", "kB": "kilobyte", "MB": "megabyte",
-        "GB": "gigabyte", "TB": "terabyte", "fps": "frame per second", "mph": "mile per hour",
-    }
     # Multipliers and sizes: "68x" becomes "68 times", "4x4" becomes "4 by 4".
     _EN_TIMES_RE = re.compile(rf"(?<![\w.,])({_EN_NUMBER})[xX×](\d+(?:\.\d+)?)?(?!\w)")
     # Plural numbers: "4s" fours, "100s" hundreds, "1990s" and "1990's" nineteen nineties, "'80s" eighties; a decimal is
@@ -566,57 +792,13 @@ class SpokenTextNormalizer:
     # Callbacks check Unicode word boundaries, including combining marks.
     _DASH_LEFT_SINGLE_LETTER_RE = re.compile(r"([A-Za-zÑñ])\s*-\s*")
     _DASH_RIGHT_SINGLE_LETTER_RE = re.compile(r"\s*-\s*([A-Za-zÑñ])")
-    _LETTER_NAMES = {
-        "en": {
-            "A": "ay", "B": "bee", "C": "see", "D": "dee", "E": "ee", "F": "eff",
-            "G": "gee", "H": "aitch", "I": "eye", "J": "jay", "K": "kay", "L": "ell",
-            "M": "em", "N": "en", "O": "oh", "P": "pee", "Q": "cue", "R": "are",
-            "S": "ess", "T": "tee", "U": "you", "V": "vee", "W": "double you",
-            "X": "ex", "Y": "why", "Z": "zee",
-        },
-        "es": {
-            "A": "a", "B": "be", "C": "ce", "D": "de", "E": "e", "F": "efe",
-            "G": "ge", "H": "hache", "I": "i", "J": "jota", "K": "ka", "L": "ele",
-            "M": "eme", "N": "ene", "Ñ": "eñe", "O": "o", "P": "pe", "Q": "cu",
-            "R": "erre", "S": "ese", "T": "te", "U": "u", "V": "uve", "W": "doble uve",
-            "X": "equis", "Y": "ye", "Z": "zeta",
-        },
-        "it": {
-            "A": "a", "B": "bi", "C": "ci", "D": "di", "E": "e", "F": "effe",
-            "G": "gi", "H": "acca", "I": "i", "J": "i lunga", "K": "cappa", "L": "elle",
-            "M": "emme", "N": "enne", "O": "o", "P": "pi", "Q": "cu", "R": "erre",
-            "S": "esse", "T": "ti", "U": "u", "V": "vu", "W": "doppia vu",
-            "X": "ics", "Y": "ipsilon", "Z": "zeta",
-        },
-        "fr": {
-            "A": "a", "B": "bé", "C": "cé", "D": "dé", "E": "e", "F": "effe",
-            "G": "gé", "H": "ache", "I": "i", "J": "ji", "K": "ka", "L": "elle",
-            "M": "emme", "N": "enne", "O": "o", "P": "pé", "Q": "ku", "R": "erre",
-            "S": "esse", "T": "té", "U": "u", "V": "vé", "W": "double vé",
-            "X": "iks", "Y": "i grec", "Z": "zède",
-        },
-        "de": {
-            "A": "a", "B": "be", "C": "tse", "D": "de", "E": "e", "F": "eff",
-            "G": "ge", "H": "ha", "I": "i", "J": "jot", "K": "ka", "L": "ell",
-            "M": "emm", "N": "enn", "O": "o", "P": "pe", "Q": "ku", "R": "err",
-            "S": "ess", "T": "te", "U": "u", "V": "fau", "W": "we",
-            "X": "iks", "Y": "ypsilon", "Z": "tset",
-        },
-        "vi": {
-            "A": "a", "B": "bê", "C": "xê", "D": "dê", "E": "e", "F": "ép",
-            "G": "giê", "H": "hát", "I": "i", "J": "giây", "K": "ca", "L": "e lờ",
-            "M": "e mờ", "N": "e nờ", "O": "o", "P": "pê", "Q": "quy", "R": "e rờ",
-            "S": "ét", "T": "tê", "U": "u", "V": "vê", "W": "vê kép",
-            "X": "ích", "Y": "i dài", "Z": "dét",
-        },
-    }
-
     def __init__(self, config: SpokenTextNormalizerConfig | None = None) -> None:
         self.config = config or SpokenTextNormalizerConfig()
         self._inflect = inflect.engine() if inflect is not None else None
 
     def normalize(self, text: str, *, language: str) -> str:
         lang = self._normalizer_language(language)
+        british = str(language or "").replace("-", "_").lower() == "en_gb"   # dates day first ("1/9/2026" the first of September)
         value = unicodedata.normalize("NFC", str(text or ""))
         if self.config.normalize_punctuation:
             value = self._normalize_punctuation(value, lang)
@@ -627,53 +809,554 @@ class SpokenTextNormalizer:
             value = self._EN_OK_RE.sub("okay", value)
         if self.config.normalize_at_sign:
             value = self._normalize_at_symbols(value, lang)
+        # Text written all in capitals: casing tells nothing about names or initialisms, and the result stays in capitals.
+        capitals = _capitals_text(value)
+        minus = _word(lang, "minus")
+        value = value.replace(self._MINUS_MARK, minus.upper() if capitals else minus)
+        value = self._expand_abbreviations(value, lang, capitals)
+        value = self._expand_symbols(value, lang)
         value = self._expand_dotted_initialisms(value, lang)
-        value = self._expand_title_abbreviations(value, lang)
+        if lang in self._SPACE_GROUPED_LANGUAGES:
+            value = self._SPACE_GROUPED_RE.sub(lambda m: m.group(0).replace(" ", ""), value)
         if self.config.expand_currency:
-            value = re.sub(
-                r"([$£€])\s*([0-9](?:[0-9.,]*[0-9])?)",
-                lambda m: self._expand_currency_prefix(m, lang),
-                value,
-            )
-            value = re.sub(
-                r"(?<![\w.,])([0-9](?:[0-9.,]*[0-9])?)\s*(€|EUR)(?!\w)",
-                lambda m: self._expand_currency_suffix(m, lang),
-                value,
-                flags=re.IGNORECASE,
-            )
+            value = self._expand_currency(value, lang)
+        if self.config.expand_numbers:
+            # Units before titles and initialisms: "7 SQ FT" and "300 MPH" are units, not "Fort" or a spelled initialism.
+            value = self._expand_units(value, lang, capitals)
+        value = self._expand_titles(value, lang, capitals)
+        value = self._expand_before_number(value, lang, capitals)
+        value = self._NAME_INITIAL_RE.sub(lambda m: self._expand_name_initial(m, lang), value)
+        value = self._SPACED_INITIALS_RE.sub(lambda m: self._expand_spaced_initials(m, lang), value)
+        if lang in self._ROMAN_LANGUAGES and not capitals:
+            value = self._expand_roman_numerals(value, lang)
+        # Non-verbal words take one spelling ("Hmmmm" "hmm", "mm-hmm" "mhm"): after the rules above, which tell a sentence
+        # start by its capital, and before the lexicon would spell them as initialisms and the hyphen becomes a space.
+        value = self._normalize_nonverbal(value, lang, capitals)
+        if lang in self._INITIALISM_LANGUAGES:
+            value = self._LETTER_WORD_RE.sub(lambda m: self._expand_initialism(m, lang, capitals), value)
+        if lang == "de" and self.config.expand_dates:
+            value = self._GERMAN_DATE_RE.sub(self._expand_german_date, value)
+        value = (self._EN_NUMBER_RANGE_RE if lang == "en" else self._NUMBER_RANGE_RE).sub(
+            lambda m: self._expand_number_range(m, lang), value)
         if self.config.expand_times:
-            value = re.sub(r"\b(\d{1,2}):(\d{2})(?:\s*([AaPp][Mm]))?\b", lambda m: self._expand_time(m, lang), value)
+            value = self._time_pattern(lang).sub(lambda m: self._expand_time(m, lang), value)
             if lang == "en":
                 value = self._EN_BARE_AMPM_RE.sub(lambda m: self._expand_bare_ampm(m, lang), value)
+            if lang in self._CLOCK_LANGUAGES:
+                value = self._CLOCK_RE.sub(lambda m: self._expand_clock(m, lang), value)
         if self.config.expand_percentages:
-            value = re.sub(r"(?<![\d.,])(\d[\d.,]*)%", lambda m: f"{self._decimal_to_words(m.group(1), lang)} {self._percent_word(lang)}", value)
+            # "31%" and, as French and German print it, "31 %"; "0.5 ‰".
+            for sign, key in (("%", "percent"), ("‰", "permille")):
+                value = re.sub(rf"(?<![\d.,])(\d[\d.,]*) ?{sign}",
+                               lambda m, key=key: f"{self._decimal_to_words(m.group(1), lang)} {_word(lang, key)}", value)
+        if lang == "en" and self.config.expand_dates:
+            value = _english_year_pattern().sub(lambda m: f"{m.group(1)} {self._year_words(int(m.group(2)))}", value)
+        if self.config.expand_dates:
+            if lang == "en":
+                # A day before a month name ("1 September", "the 1st September") is "the first of September".
+                value = self._EN_DAY_MONTH_RE.sub(lambda m: self._expand_day_month(m), value)
+            elif lang in ("fr", "it"):
+                # The first of a month is an ordinal: "le 1 septembre" "le premier septembre", "1 maggio" "primo maggio".
+                value = _first_of_month_pattern(lang).sub(lambda m: self._ordinal_word(1, lang), value)
         if self.config.expand_ordinals:
-            value = re.sub(r"\b(\d+)(st|nd|rd|th|o|a)\b", lambda m: self._to_words(int(m.group(1)), lang, ordinal=True), value, flags=re.IGNORECASE)
-            value = re.sub(r"\b(\d+)(?:º|ª)\b", lambda m: self._to_words(int(m.group(1)), lang, ordinal=True), value)
+            value = self._expand_ordinal_suffixes(value, lang)
+            if lang == "de":
+                value = self._GERMAN_ORDINAL_RE.sub(self._expand_german_ordinal, value)
+                value = _german_year_pattern().sub(lambda m: f"{m.group(1)} {self._german_year(int(m.group(2)))}", value)
         if self.config.expand_numbers:
             if lang == "en":
-                value = self._EN_UNIT_RE.sub(self._expand_unit, value)
                 value = self._EN_TIMES_RE.sub(lambda m: f"{m.group(1)} by {m.group(2)}" if m.group(2) else f"{m.group(1)} times", value)
                 value = self._EN_PLURAL_NUMBER_RE.sub(self._expand_plural_number, value)
+            # "One" agrees with a noun written after it, before letters glued to digits are split ("1K" is no noun).
+            if self._data(lang).get("one_before_noun"):
+                value = self._ONE_BEFORE_NOUN_RE.sub(lambda m: self._expand_one_before_noun(m, lang), value)
             value = self._ALPHANUMERIC_RE.sub(lambda m: self._split_alphanumeric(m, lang), value)
             if self.config.expand_dates:
                 value = self._EN_MONTH_DATE_RE.sub(lambda m: self._expand_named_month_date(m, lang), value)
-                value = re.sub(r"\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b", lambda m: self._expand_slash_date(m, lang), value)
-                value = re.sub(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b", lambda m: self._expand_date(m.group(2), m.group(3), m.group(1), lang), value)
+                value = re.sub(r"\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b", lambda m: self._expand_slash_date(m, lang, british), value)
+                value = re.sub(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b",
+                               lambda m: self._expand_date(m.group(2), m.group(3), m.group(1), lang, british=british), value)
             value = self._MIXED_FRACTION_RE.sub(lambda m: f"{m.group(1)} {self._and_word(lang)} {m.group(2)}", value)
             value = self._SIMPLE_FRACTION_RE.sub(lambda m: self._expand_fraction(m, lang), value)
             if lang in {"es", "it", "fr", "de", "vi"}:
+                # Two or more groups after commas are a whole number written the English way ("1,000,000"), not a decimal.
+                value = re.sub(r"\b\d{1,3}(?:,\d{3}){2,}\b", lambda m: self._to_words(int(self._whole_number_digits(m.group(0))), lang), value)
                 value = re.sub(r"\b\d[\d.]*,\d+\b", lambda m: self._decimal_to_words(m.group(0), lang), value)
                 value = re.sub(r"\b\d{1,3}(?:\.\d{3})+\b", lambda m: self._to_words(int(self._whole_number_digits(m.group(0))), lang), value)
             value = re.sub(r"\b\d[\d,]*\.\d+\b(?!\.\d)", lambda m: self._decimal_to_words(m.group(0), lang), value)
             value = re.sub(r"\b\d{1,3}(?:,\d{3})+\b", lambda m: self._to_words(int(self._whole_number_digits(m.group(0))), lang), value)
             value = re.sub(r"\b\d+\b", lambda m: self._to_words(int(m.group(0)), lang), value)
+        # "to/from", "and/or": the slash is not spoken; left in, the G2P reads it as stray consonants.
+        value = self._WORD_SLASH_RE.sub(" ", value)
         value = self._expand_dash_letter_names(value, lang)
         # The target backend is dictionary-based, so hyphenated compounds and
         # number words are safer as separate lookup tokens. Inference uses the
         # same normalizer, preserving the train/runtime contract.
         value = value.replace("-", " ")
+        if capitals:
+            value = value.upper()
         return self._WHITESPACE_RE.sub(" ", value).strip()
+
+    # A single capital with a dot inside a name: "W. C. Handy", "Kenneth A. Schmied", "D. K. Arya". It is read as a letter
+    # and loses its dot, which would otherwise end the sentence. The word after the initials must be capitalised and not
+    # one that opens a sentence ("... in group B. The others ...").
+    _NAME_INITIAL_RE = re.compile(r"(?<![A-Za-zÀ-ÖØ-öø-ÿ.'’])([A-Z])\.(?=\s+(?:[A-Z]\.\s+)*([A-ZÀ-ÖØ-Þ][a-zß-öø-ÿ'’]+))")
+    # Two or three initials not followed by a name: "Washington D. C. was"; "J. S. Bach" is taken by the rule above.
+    _SPACED_INITIALS_RE = re.compile(r"(?<![A-Za-zÀ-ÖØ-öø-ÿ.'’])[A-Z]\.(?: [A-Z]\.){1,2}(?![A-Za-zÀ-ÖØ-öø-ÿ])")
+    # "4.2-3.9 million", "1939-1945", "pages 10-15": a range is read with the language's "to". Left alone: descending whole
+    # numbers (scores, "3-2") and a three-digit group before a four-digit one (telephone numbers).
+    _EN_NUMBER_RANGE_RE = re.compile(r"(?<![\w.,-])(\d+(?:\.\d+)?)\s?-\s?(\d+(?:\.\d+)?)(?![\w-])(?!\.\d)")
+    _NUMBER_RANGE_RE = re.compile(r"(?<![\w.,-])(\d+(?:,\d+)?)\s?-\s?(\d+(?:,\d+)?)(?![\w-])(?![.,]\d)")
+    _DEGREE_SCALE_RE = re.compile(r"\s?°\s?([CF])(?![A-Za-z])")
+    # A degree sign right after a letter is the French and Italian number sign ("n° 5"), not degrees.
+    _DEGREE_RE = re.compile(r"(?<![^\W\d_])°")
+    _WORD_SLASH_RE = re.compile(r"(?<=[^\W\d_])\s?/\s?(?=[^\W\d_])")
+    # "5 000 000", "104 500": thousands set apart by spaces, as French, Spanish, Italian and German print them. Not after
+    # another number ("0800 123 456").
+    _SPACE_GROUPED_LANGUAGES = frozenset({"fr", "es", "it", "de", "vi"})
+    _SPACE_GROUPED_RE = re.compile(r"(?<![\w.,])(?<!\d )[1-9]\d{0,2}(?: \d{3})+(?![\w])(?! \d)")
+    # Clock times written with "h": French "7 h 19", "21 h", "7h30"; Vietnamese "5h30".
+    _CLOCK_LANGUAGES = frozenset({"fr", "vi"})
+    # Languages that read a colon time with their word for the hour ("15:30" "quinze heures trente").
+    _CLOCK_TIME_LANGUAGES = frozenset({"fr", "vi", "de"})
+    _DECIMAL_AS_NUMBER_LANGUAGES = frozenset({"fr", "es", "it", "vi"})
+    _CLOCK_RE = re.compile(r"(?<![\w.,])(\d{1,2}) ?h(?: ?(\d{2}))?(?![\w])")
+    # Initialisms outside English (English ones are spelled by the pronunciation lexicon): a word of two to eight letters
+    # checked against the language's `initialisms` and `spell_unlisted`.
+    _INITIALISM_LANGUAGES = frozenset({"de", "fr", "es", "it"})
+    _LETTER_WORD_RE = re.compile(r"(?<![\w.])([^\W\d_]{2,8})(?![\w'’]|-?\d)")
+    # Roman numerals: centuries ("XVIIe siècle", "siglo XX", "XV secolo") and after a name ("Isabel II", "Henry VIII"). Only
+    # I, V and X, up to 39.
+    _ROMAN_LANGUAGES = frozenset({"en", "fr", "es", "it"})
+    _EN_ROMAN_RE = re.compile(r"(?<![\w.'’])(X{0,3}(?:IX|IV|V?I{0,3}))(?=(?:['’]s)?(?![\w'’]))")
+    _EN_ROMAN_ONE_FOLLOW_RE = re.compile(r"['’]s(?![\w'’])|\s*(?:$|[.,;:!?)\"”]|of(?![\w'’]))")
+    _ROMAN_RE = re.compile(r"(?<![\w.'’])(X{0,3}(?:IX|IV|V?I{0,3}))(er|re|e|ème)?(?![\w'’])")
+    # German ordinals are written with a dot ("am 3. Oktober", "der 2. Weltkrieg"); left alone the dot ends the sentence.
+    _GERMAN_ORDINAL_RE = re.compile(r"(?<![\w.,])(\d{1,3})\.(?=\s+([^\W\d_][\w-]*))")
+    _GERMAN_DATE_RE = re.compile(r"(?<![\w.,])(\d{1,2})\.\s?(\d{1,2})\.\s?(\d{4})(?!\w|\.\d)")
+    _NUMBER_FOLLOWS_RE = re.compile(r"\s*\d")
+    _NEXT_WORD_RE = re.compile(r"\s+[\"'“‘«(\[]?([^\W\d_][\w'’-]*)")
+
+    @staticmethod
+    def _data(lang: str) -> dict[str, Any]:
+        return TEXT_DATA.get(lang) or TEXT_DATA["en"]
+
+    @classmethod
+    def _sentence_follows(cls, text: str, end: int, lang: str) -> bool:
+        """Whether a sentence ends at ``end``: the text ends there, or a capitalised word follows (in German, where every
+        noun is capitalised, a word from the language's ``sentence_openers``)."""
+        if not text[end:].strip(" \t\r\n\"'”’»)]"):
+            return True
+        match = cls._NEXT_WORD_RE.match(text, end)
+        if not match or not match.group(1)[0].isupper():
+            return False
+        following = text[match.start(1):].split(maxsplit=1)[0].rstrip(",;:!?)\"'”’»").lower()
+        tables = _tables(lang)
+        if any(following in tables[name].keys for name in ("abbreviations", "titles")):
+            return False   # "Smith Bros. Inc.": the next word is another abbreviation
+        return lang != "de" or match.group(1) in cls._data(lang).get("sentence_openers", ())
+
+    @staticmethod
+    def _normalize_nonverbal(text: str, lang: str, capitals: bool = False) -> str:
+        """Non-verbal words (the language's ``nonverbal`` table; English only) recognised by shape and rewritten to one
+        spelling: "Hm", "hhhmmm" "hmm"; "mm-hmm", "mm hmm", "mmhm" "mhm"; "uh-huh", "uh huh" "uhhuh"; "ah-hah", "ah hah" "aha"; "shhh", "sssh" "shh";
+        "uhh" "uh"; "umm" "um". Whole tokens in any case ("HMM" is "hmm"; the dotted "H.M.M." is letters), never right
+        after a number ("5 mm" is millimetres). The result is in lower case, in capitals in text written all in capitals.
+        A listed initialism in capitals inside mixed-case text stays ("the ER.")."""
+        table = _nonverbal_table(lang)
+        if not table.words:
+            return text
+        size = len(text)
+
+        def punctuated(end: int) -> bool:
+            return end < size and text[end] in _NONVERBAL_PUNCTUATION
+
+        def applies(when: str, start: int, end: int) -> bool:
+            if text[start - 1:start].isdecimal() or (start > 1 and text[start - 1].isspace() and text[start - 2].isdecimal()):
+                return False
+            if when == "before_punctuation" and not punctuated(end):
+                return False
+            if when == "sentence_start_before_punctuation" and not (punctuated(end) and _sentence_start(text, start)):
+                return False
+            letters = [char for char in text[start:end] if char not in "- "]
+            return capitals or "".join(letters) not in table.initialisms
+
+        out: list[str] = []
+        last = pos = 0
+        while pos < size:
+            found_end, found = -1, ""
+            if _ascii_lower(text[pos]) != text[pos] or "a" <= text[pos] <= "z":
+                for spoken, shapes, when in table.words:
+                    for runs in shapes:
+                        end = _nonverbal_match(runs, text, pos)
+                        if end > found_end and _nonverbal_token(text, pos, end) and applies(when, pos, end):
+                            found_end, found = end, spoken
+            if found_end < 0:
+                pos += 1
+                continue
+            out.append(text[last:pos])
+            out.append(found.upper() if capitals else found)
+            last = pos = found_end
+        out.append(text[last:])
+        return "".join(out)
+
+    def _expand_abbreviations(self, text: str, lang: str, capitals: bool = False) -> str:
+        table = _tables(lang)["abbreviations"]
+        if table.pattern is None:
+            return text
+
+        def replace(match: re.Match[str]) -> str:
+            found = table.find(match.string, match.group(0), match.start(), capitals)
+            if found is None:
+                return match.group(0)
+            entry, form = found
+            spoken = _cased(entry["spoken"], match.group(0))
+            if entry.get("ends") and form.endswith(".") and self._sentence_follows(match.string, match.end(), lang):
+                spoken += "."
+            return spoken
+
+        return table.pattern.sub(replace, text)
+
+    def _expand_symbols(self, text: str, lang: str) -> str:
+        for symbol, word in self._data(lang).get("symbols", {}).items():
+            text = text.replace(symbol, f" {word} ")
+        return text
+
+    def _expand_titles(self, text: str, lang: str, capitals: bool = False) -> str:
+        table = _tables(lang)["titles"]
+        if table.pattern is None:
+            return text
+
+        def replace(match: re.Match[str]) -> str:
+            found = table.find(match.string, match.group(0), match.start(), capitals)
+            if found is None:
+                return match.group(0)
+            entry, form = found
+            if re.search(r"\d\s?$", match.string[:match.start()]):
+                return match.group(0)   # "7 FT", "5 MS": a unit after a number, not a title
+            name = self._NEXT_WORD_RE.match(match.string, match.end())
+            openers = self._data(lang).get("sentence_openers", ())
+            if name and name.group(1)[0].isupper() and name.group(1) not in openers:
+                return _cased(entry["spoken"], match.group(0))
+            spoken = entry.get("after_name") if _after_capitalised_word(match.string, match.start()) else None
+            spoken = spoken or entry.get("otherwise")
+            if not spoken:
+                return match.group(0)
+            dot = "." if form.endswith(".") and self._sentence_follows(match.string, match.end(), lang) else ""
+            return _cased(spoken, match.group(0)) + dot
+
+        return table.pattern.sub(replace, text)
+
+    def _expand_before_number(self, text: str, lang: str, capitals: bool = False) -> str:
+        table = _tables(lang)["before_number"]
+        if table.pattern is None:
+            return text
+
+        def replace(match: re.Match[str]) -> str:
+            found = table.find(match.string, match.group(0), match.start(), capitals)
+            if found is None or not self._NUMBER_FOLLOWS_RE.match(match.string, match.end()):
+                return match.group(0)
+            return _cased(found[0]["spoken"], match.group(0)) + " "
+
+        return table.pattern.sub(replace, text)
+
+    def _expand_units(self, text: str, lang: str, capitals: bool = False) -> str:
+        table = _tables(lang)["units"]
+        if table.pattern is None:
+            return text
+
+        def replace(match: re.Match[str]) -> str:
+            found = table.find(match.string, match.group(3), match.start(3), capitals)
+            if found is None:
+                return match.group(0)
+            entry, form = found
+            dot = "." if form.endswith(".") and self._sentence_follows(match.string, match.end(), lang) else ""
+            return self._unit_words(match.group(1), entry, lang) + dot
+
+        return table.pattern.sub(replace, text)
+
+    _GENDERED_ONE = frozenset({"de", "fr", "es", "it"})
+
+    def _unit_words(self, raw: str, entry: Mapping[str, Any], lang: str) -> str:
+        """A number and its unit: the unit in the singular for 1 (French: below 2), and the word for 1 agreeing with the
+        unit's gender ("eine Tonne", "veintiún kilómetros", "vingt et une tonnes")."""
+        whole, frac = self._split_decimal(raw, lang)
+        value = int(self._whole_number_digits(whole) or "0")
+        singular = (value == 1 and frac is None) or (lang == "fr" and value < 2)
+        number = raw
+        if frac is None and lang in self._GENDERED_ONE:
+            gender = entry.get("gender", "m")
+            if value == 1:
+                number = self._data(lang)["one"][gender]
+            elif value % 10 == 1 and value % 100 != 11 and lang in ("es", "fr"):
+                words = self._to_words(value, lang)
+                if lang == "es" and words.endswith("uno"):
+                    number = words[:-3] + ("una" if gender == "f" else "ún" if words.endswith("veintiuno") else "un")
+                elif lang == "fr" and gender == "f" and words.endswith("un"):
+                    number = words + "e"
+        return f"{number} {entry['one'] if singular else entry['many']}"
+
+    def _expand_name_initial(self, match: re.Match[str], lang: str) -> str:
+        letter, following = match.group(1), match.group(2)
+        data = self._data(lang)
+        if following in data.get("sentence_openers", ()):
+            return match.group(0)
+        before = match.string[:match.start()].rstrip()
+        previous = before.split()[-1] if before else ""
+        another_initial = match.string[match.end():].lstrip()[1:2] == "."
+        leader = previous.lower() in data.get("name_leaders", ())
+        in_name = not previous or previous[0].isupper() or leader or another_initial
+        if not in_name or (lang == "en" and letter == "I" and not (previous and previous[0].isupper())):
+            return match.group(0)
+        return self._letter_name(letter, lang)
+
+    def _expand_spaced_initials(self, match: re.Match[str], lang: str) -> str:
+        spoken = " ".join(self._letter_name(letter, lang) for letter in match.group(0) if letter.isalpha())
+        return spoken + "." if self._SENTENCE_FOLLOWS_RE.match(match.string, match.end()) else spoken
+
+    def _expand_number_range(self, match: re.Match[str], lang: str) -> str:
+        first, second = match.group(1), match.group(2)
+        whole = first.isdigit() and second.isdigit()
+        if whole and (int(second) <= int(first) or (len(first) == 3 and len(second) == 4) or first.startswith("0") or second.startswith("0")):
+            return match.group(0)
+        if lang == "en" and whole and len(first) == len(second) == 4 and 1100 <= int(first) and int(second) <= 2099:
+            return f"{self._year_words(int(first))} to {self._year_words(int(second))}"   # "1939-1945"
+        if lang == "de" and whole and len(first) == len(second) == 4 and 1100 <= int(first) and int(second) <= 2099:
+            return f"{self._german_year(int(first))} {_word(lang, 'range')} {self._german_year(int(second))}"
+        return f"{first} {_word(lang, 'range')} {second}"
+
+    def _expand_initialism(self, match: re.Match[str], lang: str, capitals: bool) -> str:
+        """Spell a word with letter names when the language's tables say it is an initialism. ``spell`` entries are never
+        words, so they match in capitals or in lower case, also in text written all in capitals; ``capitals_only``
+        entries and unlisted ones (``spell_unlisted``: capitals, no vowel) only in capitals inside mixed-case text."""
+        word = match.group(1)
+        upper = word.upper()
+        data = self._data(lang)
+        initialisms = data.get("initialisms", {})
+        if not (upper in initialisms.get("spell", ()) and word in (upper, word.lower())):
+            if word != upper or capitals:
+                return word
+            unlisted = data.get("spell_unlisted", {})
+            vowels = unlisted.get("vowels", "")
+            spelled = upper in initialisms.get("capitals_only", ()) or (
+                unlisted.get("min", 0) <= len(word) <= unlisted.get("max", 0) and not any(ch in vowels for ch in word))
+            after_number = re.search(r"\d\s?$", match.string[:match.start()]) is not None
+            if not spelled or (after_number and word.lower() in _unit_words_of(lang)):
+                return word
+        return " ".join(self._letter_name(letter, lang) for letter in upper)
+
+    @staticmethod
+    def _roman_value(numeral: str) -> int:
+        values = {"I": 1, "V": 5, "X": 10}
+        total = 0
+        for index, letter in enumerate(numeral):
+            value = values[letter]
+            total += -value if index + 1 < len(numeral) and values[numeral[index + 1]] > value else value
+        return total
+
+    def _ordinal_word(self, value: int, lang: str, kind: str = "m") -> str:
+        """An ordinal number word: ``kind`` is the gender ("m", "f"), "short" for the Spanish forms before a noun ("primer",
+        "tercer"), or a French "m1"/"f1"/"m2"/"f2" form for "premier"/"première"/"second"/"seconde"."""
+        if lang == "fr":
+            special = {("m1", 1): "premier", ("f1", 1): "première", ("m2", 2): "second", ("f2", 2): "seconde"}
+            return special.get((kind, value)) or self._to_words(value, lang, ordinal=True)
+        ordinals = self._data(lang).get("ordinals")
+        if lang in ("es", "it") and ordinals:
+            if value < 1:
+                return self._to_words(value, lang)
+            if value <= len(ordinals):
+                word = ordinals[value - 1]
+            elif lang == "it":
+                cardinal = self._to_words(value, lang)
+                word = (cardinal if cardinal.endswith(("tre", "tré", "sei")) else cardinal[:-1]).replace("tré", "tre") + "esimo"
+            else:
+                return self._to_words(value, lang)
+            if kind == "short" and value in (1, 3):
+                return word[:-1]
+            return word[:-1] + "a" if kind == "f" and word.endswith("o") else word
+        return self._to_words(value, lang, ordinal=True)
+
+    def _expand_roman_numerals(self, text: str, lang: str) -> str:
+        data = self._data(lang)
+
+        def context(match: re.Match[str]) -> tuple[str, str, bool]:
+            before = match.string[:match.start()].rstrip()
+            tokens = [token.strip("\"'“‘«(,") for token in before.split()[-3:]]
+            previous = tokens[-1] if tokens else ""
+            named = len(previous) > 2 and previous[0].isupper() and previous[1:].islower()
+            return previous, " ".join(tokens[:-1]), named
+
+        if lang == "en":
+            titles, names = set(data.get("regnal_titles", ())), set(data.get("regnal_names", ()))
+
+            def english(match: re.Match[str]) -> str:
+                numeral = match.group(1)
+                previous, earlier, named = context(match)
+                regnal = previous in names or any(word in titles for word in earlier.split())
+                if not numeral or not named or (len(numeral) < 2 and not regnal):
+                    return match.group(0)
+                if numeral == "I" and not any(word in titles for word in earlier.split()):
+                    # A lone "I" after a ruler's name is nearly always the pronoun ("Listen, Stephen, I have ..."): read
+                    # it as "the first" only with a title before the name, when it closes the phrase ("Charles I of
+                    # England", "under James I.") or is possessive ("Henry I's court").
+                    before = match.string[:match.start()].rstrip()
+                    if before.endswith(",") or not self._EN_ROMAN_ONE_FOLLOW_RE.match(match.string, match.end()):
+                        return match.group(0)
+                value = self._roman_value(numeral)
+                return f"the {self._ordinal_word(value, lang)}" if regnal else self._to_words(value, lang)
+
+            return self._EN_ROMAN_RE.sub(english, text)
+        century = data["words"].get("century", "")
+        feminine_titles = set(data.get("feminine_titles", ()))
+        suffixes = data.get("ordinal_suffixes", {})
+
+        def replace(match: re.Match[str]) -> str:
+            numeral, suffix = match.group(1), match.group(2)
+            if not numeral or (len(numeral) == 1 and not suffix):
+                return match.group(0)
+            value = self._roman_value(numeral)
+            previous, earlier, named = context(match)
+            following = match.string[match.end():].lstrip().split(" ")[0].strip(".,;:!?\"'()")
+            if lang == "fr":
+                if suffix:
+                    return self._ordinal_word(value, lang, suffixes.get(suffix, "m"))
+                return self._to_words(value, lang) if named else match.group(0)
+            if suffix:
+                return match.group(0)
+            if previous.lower() == century:
+                return self._to_words(value, lang) if lang == "es" else self._ordinal_word(value, lang)
+            if lang == "it" and following.lower() == century:
+                return self._ordinal_word(value, lang)
+            if not named:
+                return match.group(0)
+            if lang == "es" and value > 10:
+                return self._to_words(value, lang)   # Spanish reads rulers above ten with cardinals: "Alfonso trece"
+            feminine = previous.endswith("a") or bool(earlier.split()) and earlier.split()[-1].lower() in feminine_titles
+            return self._ordinal_word(value, lang, "f" if feminine else "m")
+
+        return self._ROMAN_RE.sub(replace, text)
+
+    def _expand_ordinal_suffixes(self, text: str, lang: str) -> str:
+        suffixes = self._data(lang).get("ordinal_suffixes")
+        if not suffixes:
+            return text
+        pattern = _ordinal_suffix_pattern(lang)
+
+        def replace(match: re.Match[str]) -> str:
+            return self._ordinal_word(int(match.group(1)), lang, suffixes.get(match.group(2).lower(), suffixes.get(match.group(2), "m")))
+
+        return pattern.sub(replace, text)
+
+    def _expand_german_ordinal(self, match: re.Match[str]) -> str:
+        data = self._data("de")
+        before = match.string[:match.start()].rstrip()
+        if not before:
+            return match.group(0)   # a numbered list item ("1. Einleitung")
+        previous = before.split()[-1].strip("\"'„“(").lower()
+        following = match.group(2)
+        leaders = data.get("ordinal_leaders", {})
+        months = {month.lower() for month in data["months"]}
+        if previous not in leaders and following.lower() not in months and not following[0].islower():
+            return match.group(0)
+        return self._to_words(int(match.group(1)), "de", ordinal=True) + leaders.get(previous, "n")
+
+    def _german_year(self, year: int) -> str:
+        """German years 1100-1999 are read in hundreds: 1990 "neunzehnhundertneunzig"."""
+        if 1100 <= year <= 1999:
+            high, low = divmod(year, 100)
+            return self._to_words(high, "de") + "hundert" + (self._to_words(low, "de") if low else "")
+        return self._to_words(year, "de")
+
+    def _expand_german_date(self, match: re.Match[str]) -> str:
+        day, month, year = int(match.group(1)), int(match.group(2)), int(match.group(3))
+        if not (1 <= day <= 31 and 1 <= month <= 12):
+            return match.group(0)
+        months = self._data("de")["months"]
+        return f"{self._to_words(day, 'de', ordinal=True)}n {months[month - 1]} {self._german_year(year)}"
+
+    def _clock_hour(self, hour: int, lang: str) -> str:
+        """The hour of a clock time with the language's word for it: "quinze heures", "une heure", "fünfzehn Uhr"."""
+        words = self._to_words(hour, lang)
+        if lang == "fr" and words.endswith("un"):
+            words += "e"   # "une heure", "vingt et une heures"
+        elif lang == "de" and words == "eins":
+            words = "ein"   # "ein Uhr"
+        return f"{words} {_word(lang, 'hour' if hour <= 1 else 'hours')}"
+
+    _TIME = r"\b(\d{1,2}):(\d{2})(?:\s*([AaPp][Mm]))?\b"
+    _TIME_PATTERNS: dict[str, re.Pattern[str]] = {}
+
+    @classmethod
+    def _time_pattern(cls, lang: str) -> re.Pattern[str]:
+        """Clock times; in the languages that name the hour, with the hour word written after them ("15:00 Uhr")."""
+        if lang not in cls._TIME_PATTERNS:
+            pattern = cls._TIME
+            if lang in cls._CLOCK_TIME_LANGUAGES:
+                words = sorted({_word(lang, "hour"), _word(lang, "hours")}, key=len, reverse=True)
+                pattern += rf"(?:\s*(?:{'|'.join(map(re.escape, words))})(?!\w))?"
+            cls._TIME_PATTERNS[lang] = re.compile(pattern)
+        return cls._TIME_PATTERNS[lang]
+
+    _EN_MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November",
+                  "December")
+    # Months in capitals only, so that "5 may" stays a verb.
+    _EN_DAY_MONTH_RE = re.compile(rf"(?<![\w.,])(?:([Tt]he)\s+)?(\d{{1,2}})(?:st|nd|rd|th)?\s+({'|'.join(_EN_MONTHS)})\b")
+
+    def _expand_day_month(self, match: re.Match[str]) -> str:
+        day = int(match.group(2))
+        if not 1 <= day <= 31:
+            return match.group(0)
+        return f"{match.group(1) or 'the'} {self._to_words(day, 'en', ordinal=True)} of {match.group(3)}"
+
+    # A whole number and the word after it ("21 años", "1 Stunde"): the number agrees with the word.
+    _ONE_BEFORE_NOUN_RE = re.compile(r"(?<![\w.,\-])(\d+)(?![.,]\d)(\s+)([^\W\d_]+)")
+
+    def _expand_one_before_noun(self, match: re.Match[str], lang: str) -> str:
+        """A number read with "one" takes the form a noun after it needs: "un mensaje", "una alarma", "veintiún años",
+        "uno studente", "un'ora", "ein Termin", "eine Stunde", "eine neue Nachricht". The noun's gender comes from the
+        language's ``one_before_noun`` table; a label before the number ("Kapitel 1 Abschnitt") keeps it a number."""
+        table = self._data(lang)["one_before_noun"]
+        digits, space, noun = match.group(1), match.group(2), match.group(3)
+        one = table["one"]
+        words = self._to_words(int(digits), lang)
+        if not (words == one or (table.get("compounds") and words.endswith(one))):   # "uno", and in Spanish "veintiuno", "ciento uno"
+            return match.group(0)
+        lower = noun.lower()
+        if lower in _lowered(table.get("not_nouns", ())):
+            return match.group(0)
+        previous = _previous_word(match.string, match.start())
+        if previous and previous.lower() in _lowered(table.get("labels", ())):
+            return match.group(0)
+        feminine = _feminine(noun, table)
+        if words == one and previous and previous.lower() in _lowered(table.get("dative_after", ())):
+            if noun[:1].islower():
+                # A dative adjective ends in -en whatever the gender ("mit einer neuen Nachricht"): the noun after it decides.
+                following = _next_word(match.string, match.end())
+                feminine = bool(following) and following[:1].isupper() and _feminine(following, table)
+            return f"{table['dative_feminine' if feminine else 'dative_masculine']}{space}{noun}"   # "in einer Stunde", "seit einem Jahr"
+        if words == one:
+            if feminine:
+                elided = table.get("feminine_before_vowel")
+                if elided and lower[:1] in table.get("vowels", ""):
+                    return elided + noun   # "un'ora"
+                return f"{table['feminine']}{space}{noun}"
+            if any(lower.startswith(prefix) for prefix in table.get("keep_before", ())):
+                return f"{one}{space}{noun}"   # "uno studente", "uno zaino"
+            return f"{table['masculine']}{space}{noun}"
+        stem = words[:-len(one)]
+        if feminine:
+            return f"{stem}{table['feminine']}{space}{noun}"   # "veintiuna casas", "treinta y una semanas"
+        for ending, form in table.get("compound_masculine", {}).items():
+            if stem.endswith(ending):
+                return f"{stem[:-len(ending)]}{form}{space}{noun}"   # "veintiún años"
+        return f"{stem}{table['masculine']}{space}{noun}"   # "treinta y un días", "ciento un dálmatas"
+
+    def _expand_clock(self, match: re.Match[str], lang: str) -> str:
+        """"15 h 30", "7h05", "21 h"; zero minutes are not read ("15 h 00" is "quinze heures")."""
+        hour, minutes = int(match.group(1)), match.group(2)
+        if hour > 24 or (minutes and int(minutes) > 59):
+            return match.group(0)
+        return self._clock_hour(hour, lang) + (f" {int(minutes)}" if minutes and int(minutes) else "")
 
     _SENTENCE_FOLLOWS_RE = re.compile(r"\s*$|\s+[\"'“‘(\[]?[A-ZÀ-ÖØ-ÞÑ]")
 
@@ -690,17 +1373,6 @@ class SpokenTextNormalizer:
             return spoken + "." if ends_sentence else spoken
 
         return self._DOTTED_INITIALISM_RE.sub(replace, text)
-
-    def _expand_title_abbreviations(self, text: str, lang: str) -> str:
-        table = self._TITLE_ABBREVIATIONS.get(lang)
-        if not table:
-            return text
-
-        def replace(match: re.Match[str]) -> str:
-            expansion = table.get(match.group(1).lower())
-            return f"{expansion} " if expansion else match.group(0)
-
-        return self._TITLE_ABBREVIATION_RE.sub(replace, text)
 
     @staticmethod
     def _is_dash_word_char(char: str) -> bool:
@@ -728,8 +1400,7 @@ class SpokenTextNormalizer:
 
     def _letter_name(self, letter: str, lang: str) -> str:
         key = str(letter or "").upper()
-        names = self._LETTER_NAMES.get(lang, self._LETTER_NAMES["en"])
-        return names.get(key, letter)
+        return self._data(lang)["letters"].get(key) or TEXT_DATA["en"]["letters"].get(key, letter)
 
     def _split_alphanumeric(self, match: re.Match[str], lang: str) -> str:
         runs = self._ALPHANUMERIC_RUN_RE.findall(match.group(0))
@@ -748,13 +1419,6 @@ class SpokenTextNormalizer:
         if plural:
             parts[-1] = self._plural_number_words(int(parts[-1]))
         return " ".join(parts)
-
-    def _expand_unit(self, match: re.Match[str]) -> str:
-        number, unit = match.group(1), self._EN_UNITS[match.group(2)]
-        if number != "1" and not unit.endswith("hertz"):
-            head, _, tail = unit.partition(" ")
-            unit = f"{head}s {tail}".strip()
-        return f"{number} {unit}"
 
     @staticmethod
     def _plural_words(words: str) -> str:
@@ -807,21 +1471,27 @@ class SpokenTextNormalizer:
     def _normalize_punctuation(cls, text: str, lang: str) -> str:
         value = cls._ZERO_WIDTH_RE.sub("", str(text or ""))
         value = value.replace("*", " ")   # scene breaks, *emphasis* and footnote stars are not spoken
+        # A minus sign before a number, before the dash rules would read it as a pause: "-3,5 °C", "x = -2", "−4". It is
+        # marked here and written as the word once the text is known to be in capitals or not.
+        value = cls._MINUS_RE.sub(f"{cls._MINUS_MARK} ", value)
         value = cls._normalize_dash_contract(value)
         value = value.translate(cls._UNICODE_TRANSLATION)
         value = cls._DOT_RUN_RE.sub("...", value)
         value = cls._MIXED_TERMINAL_PUNCTUATION_RE.sub(lambda match: match.group(1), value)
-        equals_word = {"en": "equals", "es": "igual", "it": "uguale", "fr": "égal", "de": "gleich", "vi": "bằng"}.get(lang, "equals")
-        degrees_word = {"en": "degrees", "es": "grados", "it": "gradi", "fr": "degrés", "de": "Grad", "vi": "độ"}.get(lang, "degrees")
-        value = value.replace("=", f" {equals_word} ")
-        value = value.replace("°", f" {degrees_word} ")
+        degrees_word = _word(lang, "degrees")
+        value = value.replace("=", f" {_word(lang, 'equals')} ")
+        # "30 °C" is read "thirty degrees Celsius"; a bare letter after "degrees" is heard as a stray word.
+        value = cls._DEGREE_SCALE_RE.sub(lambda m: f" {degrees_word} {_word(lang, 'celsius' if m.group(1) == 'C' else 'fahrenheit')}", value)
+        value = cls._DEGREE_RE.sub(f" {degrees_word} ", value)
         return cls._WHITESPACE_RE.sub(" ", value).strip()
 
     @classmethod
     def _normalize_dash_contract(cls, text: str) -> str:
-        value = str(text or "")
+        value = mark_tight_dashes(text)
         for hyphen in cls._LEXICAL_HYPHENS:
             value = value.replace(hyphen, "-")
+        # An en dash between numbers is a range ("1939–1945"), read by the range rule rather than as a pause.
+        value = re.sub(r"(?<=\d)\s?[\u2012\u2013]\s?(?=\d)", "-", value)
         for dash in cls._SYNTACTIC_DASHES:
             value = value.replace(dash, " — ")
         value = re.sub(r"-{2,}", " — ", value)
@@ -831,8 +1501,8 @@ class SpokenTextNormalizer:
     @classmethod
     def _normalize_identifier_fragment(cls, fragment: str, lang: str) -> str:
         out = str(fragment or "")
-        plus_word = {"en": "plus", "es": "más", "it": "più", "fr": "plus", "de": "plus", "vi": "cộng"}.get(lang, "plus")
-        dot_word = {"en": "dot", "es": "punto", "it": "punto", "fr": "point", "de": "Punkt", "vi": "chấm"}.get(lang, "dot")
+        plus_word = _word(lang, "plus")
+        dot_word = _word(lang, "dot")
         out = out.replace("+", f" {plus_word} ")
         out = out.replace("_", " ")
         out = out.replace("-", " ")
@@ -840,10 +1510,7 @@ class SpokenTextNormalizer:
         return out
 
     def _normalize_at_symbols(self, text: str, lang: str) -> str:
-        word = {
-            "en": "at", "es": "arroba", "it": "chiocciola",
-            "fr": "arobase", "de": "at", "vi": "a còng",
-        }.get(lang, "at")
+        word = _word(lang, "at")
 
         def replace_email(match: re.Match[str]) -> str:
             local = self._normalize_identifier_fragment(match.group("local"), lang)
@@ -853,6 +1520,15 @@ class SpokenTextNormalizer:
         return self._EMAIL_RE.sub(replace_email, text).replace("@", f" {word} ")
 
     def _to_words(self, value: int, lang: str, *, ordinal: bool = False) -> str:
+        words = self._number_words(value, lang, ordinal=ordinal)
+        if lang == "es" and not ordinal:
+            # "veintiún mil", "treinta y un millones": a number ending in "uno" loses its o before a scale word.
+            words = self._ES_SCALE_APOCOPE_RE.sub(lambda m: "veintiún" if m.group(1) else "un", words)
+        return words
+
+    _ES_SCALE_APOCOPE_RE = re.compile(r"\b(veinti)?uno(?= (?:mil|millones|billones)\b)")
+
+    def _number_words(self, value: int, lang: str, *, ordinal: bool = False) -> str:
         if lang == "en" and not ordinal and self._inflect is not None:
             try:
                 return self._inflect.number_to_words(str(value)).replace(",", "")
@@ -872,19 +1548,39 @@ class SpokenTextNormalizer:
         whole, frac = self._split_decimal(raw, lang)
         if frac is None:
             return self._to_words(int(self._whole_number_digits(whole) or "0"), lang)
-        point = {"en": "point", "es": "coma", "it": "virgola", "fr": "virgule", "de": "Komma", "vi": "phẩy"}.get(lang, "point")
+        point = _word(lang, "point")
         words = [self._to_words(int(self._whole_number_digits(whole) or "0"), lang), point]
-        words.extend(self._to_words(int(ch), lang) for ch in frac if ch.isdigit())
+        if lang in self._DECIMAL_AS_NUMBER_LANGUAGES and 0 < len(frac) <= 3:
+            # A short decimal part read as a number, each leading zero on its own: "3,14" "trois virgule quatorze", "tres coma
+            # catorce", "tre virgola quattordici", "ba phẩy mười bốn"; "0,05" "zéro virgule zéro cinq".
+            significant = frac.lstrip("0")
+            words.extend(self._to_words(0, lang) for _ in range(len(frac) - len(significant)))
+            if significant:
+                words.append(self._to_words(int(significant), lang))
+        else:
+            words.extend(self._to_words(int(ch), lang) for ch in frac if ch.isdigit())
         return " ".join(words)
 
-    def _expand_currency_prefix(self, match: re.Match[str], lang: str) -> str:
-        return self._currency_to_words(match.group(2), match.group(1), lang)
+    def _expand_currency(self, text: str, lang: str) -> str:
+        """"$3.50", "£12", "40€", "50.000 ₫"; with a scale word "$5bn" and "$3.5 million" ("three point five million
+        dollars")."""
+        currency = self._data(lang).get("currency", {})
+        if not currency:
+            return text
+        prefix, suffix = _currency_patterns(lang)
+        scales = self._data(lang).get("currency_scales", {})
 
-    def _expand_currency_suffix(self, match: re.Match[str], lang: str) -> str:
-        return self._currency_to_words(match.group(1), "€", lang)
+        def replace(match: re.Match[str]) -> str:
+            symbol, raw, scale = match.group(1), match.group(2), match.group(3)
+            if scale:
+                return f"{self._decimal_to_words(raw, lang)} {scales[scale]} {currency[symbol][1]}"
+            return self._currency_to_words(raw, symbol, lang)
+
+        text = prefix.sub(replace, text)
+        return suffix.sub(lambda m: self._currency_to_words(m.group(1), "€" if m.group(2).upper() == "EUR" else m.group(2), lang), text)
 
     def _currency_to_words(self, raw: str, symbol: str, lang: str) -> str:
-        units = self._CURRENCY_UNITS.get(lang, self._CURRENCY_UNITS["en"]).get(symbol, self._CURRENCY_UNITS["en"]["$"])
+        units = self._data(lang).get("currency", {}).get(symbol) or TEXT_DATA["en"]["currency"]["$"]
         major_singular, major_plural, minor_singular, minor_plural = units
         whole, cents = self._split_decimal(raw, lang, currency=True)
         major = int(self._whole_number_digits(whole) or "0")
@@ -895,7 +1591,7 @@ class SpokenTextNormalizer:
         if minor == 0:
             return major_words
         minor_words = f"{self._to_words(minor, lang)} {minor_singular if minor == 1 else minor_plural}"
-        return f"{major_words} {self._and_word(lang)} {minor_words}"
+        return f"{major_words} {_word(lang, 'and')} {minor_words}"
 
     @classmethod
     def _split_decimal(cls, raw: str, lang: str, *, currency: bool = False) -> tuple[str, str | None]:
@@ -908,7 +1604,11 @@ class SpokenTextNormalizer:
         if comma >= 0 and dot >= 0:
             decimal_sep = "," if comma > dot else "."
         elif comma >= 0:
-            if not cls._is_grouped_integer(value, ",") and (lang in {"es", "it", "fr", "de", "vi"} or currency):
+            grouped = cls._is_grouped_integer(value, ",")
+            # In French a single comma is the decimal sign even before three digits ("2,125 kg"); an amount of money keeps
+            # "1,000 €" a thousand.
+            french = lang == "fr" and value.count(",") == 1 and not (currency and grouped)
+            if french or (not grouped and (lang in {"es", "it", "fr", "de", "vi"} or currency)):
                 decimal_sep = ","
         elif dot >= 0:
             if not cls._is_grouped_integer(value, ".") and (lang == "en" or currency or len(value.rsplit(".", maxsplit=1)[-1]) != 3):
@@ -931,6 +1631,18 @@ class SpokenTextNormalizer:
         hour = int(match.group(1))
         minute = int(match.group(2))
         ampm = (match.group(3) or "").upper()
+        if lang in self._CLOCK_TIME_LANGUAGES and hour <= 24 and minute <= 59:
+            # "15:30" as "quinze heures trente", "fünfzehn Uhr dreißig", "mười lăm giờ ba mươi"; "15:00" as the hour alone.
+            minute_words = f" {self._to_words(minute, lang)}" if minute else ""
+            return f"{self._clock_hour(hour, lang)}{minute_words} {ampm}".strip()
+        if minute == 0 and lang in {"es", "it"} and hour <= 24:
+            return f"{self._to_words(hour, lang)} {ampm}".strip()   # "a las quince", "alle quindici"
+        if lang == "it" and hour <= 24 and minute <= 59:
+            return f"{self._to_words(hour, lang)} e {self._to_words(minute, lang)} {ampm}".strip()   # "le quindici e trenta"
+        if lang == "en" and minute == 0 and not ampm and hour in (0, 24):
+            return "midnight"
+        if lang == "en" and minute == 0 and not ampm and 13 <= hour <= 23:
+            return f"{self._to_words(hour, lang)} hundred"   # a 24-hour time on the hour: "fifteen hundred"
         if minute == 0 and lang == "en":
             minute_words = "o'clock"
         elif minute < 10 and lang == "en":
@@ -941,11 +1653,11 @@ class SpokenTextNormalizer:
             ampm = self._ampm_words(ampm[0], lang)   # the G2P reads a bare "AM" as the word "am"
         return f"{self._to_words(hour, lang)} {minute_words} {ampm}".strip()
 
-    def _expand_slash_date(self, match: re.Match[str], lang: str) -> str:
+    def _expand_slash_date(self, match: re.Match[str], lang: str, british: bool = False) -> str:
         first, second, year = match.group(1), match.group(2), match.group(3)
-        if lang == "en":
-            return self._expand_date(first, second, year, lang)
-        return self._expand_date(second, first, year, lang)
+        if lang == "en" and not british and not (first.isdigit() and second.isdigit() and int(first) > 12 >= int(second)):
+            return self._expand_date(first, second, year, lang)   # American month first, unless the first can only be a day
+        return self._expand_date(second, first, year, lang, british=lang == "en")
 
 
     def _expand_named_month_date(self, match: re.Match[str], lang: str) -> str:
@@ -972,14 +1684,14 @@ class SpokenTextNormalizer:
         day = int(match.group(2))
         if day < 1 or day > 31:
             return match.group(0)
-        month_name = self._MONTHS["en"][month - 1]
+        month_name = self._data("en")["months"][month - 1]
         day_words = self._to_words(day, lang, ordinal=True)
         year_s = match.group(3)
         if not year_s:
             return f"{month_name} {day_words}"
         return f"{month_name} {day_words}, {self._year_words(int(year_s))}"
 
-    def _expand_date(self, month_s: str, day_s: str, year_s: str, lang: str) -> str:
+    def _expand_date(self, month_s: str, day_s: str, year_s: str, lang: str, *, british: bool = False) -> str:
         try:
             month = int(month_s)
             day = int(day_s)
@@ -988,11 +1700,19 @@ class SpokenTextNormalizer:
             return f"{month_s}/{day_s}/{year_s}"
         if month < 1 or month > 12 or day < 1 or day > 31:
             return f"{month_s}/{day_s}/{year_s}"
-        month_name = self._MONTHS.get(lang, self._MONTHS["en"])[month - 1]
+        month_name = self._data(lang)["months"][month - 1]
+        if lang == "en" and british:
+            return f"the {self._to_words(day, lang, ordinal=True)} of {month_name} {self._year_words(year)}"
         if lang == "en":
             return f"{month_name} {self._to_words(day, lang, ordinal=True)}, {self._year_words(year)}"
+        if lang == "vi":
+            return f"{day} {month_name} {_word(lang, 'year')} {year}"   # "một tháng chín năm hai nghìn ..."
         if lang == "es":
             return f"{day} de {month_name} de {year}"
+        if lang == "de":
+            return f"{self._to_words(day, lang, ordinal=True)}n {month_name} {self._german_year(year)}"
+        if day == 1 and lang in ("fr", "it"):
+            return f"{self._ordinal_word(1, lang)} {month_name} {year}"   # "premier mai", "primo maggio"
         return f"{day} {month_name} {year}"
 
     def _expand_fraction(self, match: re.Match[str], lang: str) -> str:
@@ -1014,21 +1734,38 @@ class SpokenTextNormalizer:
                 singular, plural = names[denominator]
                 return f"{self._to_words(numerator, lang)} {singular if numerator == 1 else plural}"
             return f"{self._to_words(numerator, lang)} over {self._to_words(denominator, lang)}"
-        if lang == "vi":
-            return f"{self._to_words(numerator, lang)} phần {self._to_words(denominator, lang)}"
-        over = {"es": "sobre", "it": "su", "fr": "sur", "de": "durch"}.get(lang, "over")
-        return f"{self._to_words(numerator, lang)} {over} {self._to_words(denominator, lang)}"
+        return f"{self._to_words(numerator, lang)} {_word(lang, 'over')} {self._to_words(denominator, lang)}"
 
     @staticmethod
     def _and_word(lang: str) -> str:
-        return {"en": "and", "es": "y", "it": "e", "fr": "et", "de": "und", "vi": "và"}.get(lang, "and")
-
-    @staticmethod
-    def _percent_word(lang: str) -> str:
-        return {"en": "percent", "es": "por ciento", "it": "per cento", "fr": "pour cent", "de": "Prozent", "vi": "phần trăm"}.get(lang, "percent")
+        return _word(lang, "and")
 
 
 _DEFAULT_NORMALIZER: SpokenTextNormalizer | None = None
+
+
+_NONVERBAL_SPELLINGS: dict[str, list[tuple[re.Pattern[str], str]]] = {}
+
+
+def nonverbal_spellings(text: str, *, language: str) -> str:
+    """Typed variants of a non-verbal word written the way a v5 model's training rows are (the language's
+    ``nonverbal_spellings`` rules; English only): "Uhuh" "Uh-uh", "Hehheh" "Heh heh", "A-hem" "Ahem", "Pst" "Psst". Run on
+    the typed text, before the normalizer. A capital first letter is kept, and a variant in capitals stays in capitals."""
+    lang = SpokenTextNormalizer._normalizer_language(language)
+    if lang not in _NONVERBAL_SPELLINGS:
+        _NONVERBAL_SPELLINGS[lang] = [(re.compile(rule["pattern"]), str(rule["replace"]))
+                                      for rule in TEXT_DATA.get(lang, {}).get("nonverbal_spellings", ())]
+
+    def written(match: re.Match[str], spelling: str) -> str:
+        typed = match.group(0)
+        if typed.isupper() and len(typed) > 1:
+            return spelling.upper()
+        return spelling[0].upper() + spelling[1:] if typed[0].isupper() else spelling
+
+    value = str(text or "")
+    for pattern, spelling in _NONVERBAL_SPELLINGS[lang]:
+        value = pattern.sub(lambda match, spelling=spelling: written(match, spelling), value)
+    return value
 
 
 def normalize_spoken_text(text: str, *, language: str, enabled: bool = True) -> str:

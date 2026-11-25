@@ -1,7 +1,9 @@
 // Speech streaming (see streaming.py): within a chain, the plan's sentences are read as one stream of phones and spoken as
 // targets, spans of that stream from one silence to another sized by the predicted durations to stay within the lengths
 // the model was trained on; each target continues from the latents of the one before it, and decoding with the previous
-// latents as left context joins consecutive targets as one continuous waveform.
+// latents as left context joins consecutive targets as one continuous waveform. On a v5 bundle no target holds fewer than
+// Engine::min_target_phones phones while the passage has a neighbour for them to join: a sentence of a word or two is spoken
+// in one pass with the next (the last one with the one before).
 #pragma once
 
 #include "scyllasband_engine.h"
@@ -28,6 +30,10 @@ using ChunkNoiseFn = std::function<void(int, uint64_t, bool, int64_t, float*)>;
 // Plans `options.text` and speaks it target by target; `emit` returns false to stop. Returns the final metadata.
 Json synthesize_stream(Engine& engine, const SynthesisOptions& options, const std::function<bool(const StreamEvent&)>& emit,
                        const ChunkNoiseFn& chunk_noise = nullptr);
+
+// Engine::delivery_tensors for a chunk spoken in `style`. A style trained without intensity and pace (rap) gets neither, and
+// a request that sets one is refused; its pitch shift stays. `resolved` (optional) receives {intensity, pace, pitch} as used.
+DeliveryTensors style_delivery(const Engine& engine, const std::string& style, const PlanChunk& chunk, Json* resolved = nullptr);
 
 // Speaks `plan` target by target (the text fields of `options` are unused).
 Json synthesize_plan_stream(Engine& engine, const Plan& plan, const SynthesisOptions& options, const std::function<bool(const StreamEvent&)>& emit,

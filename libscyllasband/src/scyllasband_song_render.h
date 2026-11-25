@@ -2,7 +2,8 @@
 //
 // Each phrase is rendered with the score's durations and melody, the delivery mode, the singing sampler, steps and
 // guidance, no delivery request and no acoustic prefix, then decoded with the chosen decoder (BigVGAN, or Vocos for
-// "turbo") and placed on the song's timeline, so the rests between phrases are silence.
+// "turbo") and placed on the song's timeline, so the rests between phrases are silence. A v5 bundle also says which flow
+// evaluations the guidance runs on (controls.delivery_modes.singing.guidance_steps).
 #pragma once
 
 #include "scyllasband_engine.h"
@@ -20,7 +21,7 @@ namespace scyllasband {
 class EngineSongFrontend : public SongFrontend {
 public:
     explicit EngineSongFrontend(Engine& engine) : engine_(engine) {}
-    Phonemized phonemize(const std::string& text, const std::string& language) override { return engine_.phonemize(text, language); }
+    Phonemized phonemize(const std::string& text, const std::string& language) override { return engine_.phonemize(text, language, false); }
     std::string resolve_language(const std::string& voice, const std::string& language) const override {
         return engine_.resolve_language(voice, language);
     }

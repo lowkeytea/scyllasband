@@ -40,10 +40,12 @@ struct SynthesisOptions {
     double temperature = 1.0;
     bool normalize = true;
     double pause_ms = 0.0;   // silence before the first target of every chain after the first
+    std::string style;       // a speech style of the bundle (Engine::speech_styles; v5: spoken, rap); empty: spoken
 };
 
 // planner.plan_records: `records` is a JSON array of {"text", "voice", "language"?, "delivery"?, "intensity"?, "pace"?,
-// "pitch"?} objects; delivery is a control=value string or a mapping, or the controls are given as fields (not both).
+// "pitch"?} objects; delivery is a control=value string or a mapping, or the controls are given as fields (not both). On a v5
+// bundle, typed variants of a non-verbal word take the spelling the model was trained on before the text is normalized.
 Plan plan_records(Engine& engine, const Json& records, bool normalize = true, const std::string& source_kind = "text");
 
 // One record: options.text with its voice, language and delivery.

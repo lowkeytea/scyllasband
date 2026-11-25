@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(libscyllasband VERSION 3.1.0 LANGUAGES CXX)
+project(libscyllasband VERSION 3.2.0 LANGUAGES CXX)
 
 set(SCYLLASBAND_BACKEND "litert" CACHE STRING "Graph runtime linked into libscyllasband: litert, onnx or apple (Core ML and Core AI)")
 set_property(CACHE SCYLLASBAND_BACKEND PROPERTY STRINGS litert onnx apple)
@@ -182,7 +182,7 @@ if(SCYLLASBAND_BUILD_TESTS)
         add_executable(scyllasband_unit_test tests/scyllasband_unit_test.cpp)
         target_link_libraries(scyllasband_unit_test PRIVATE scyllasband_core)
         set_target_properties(scyllasband_unit_test PROPERTIES BUILD_RPATH "${_scyllasband_sdk_library_dir}")
-        foreach(_scyllasband_suite events durations context delivery sentences segments normalizer unicode targets singing records)
+        foreach(_scyllasband_suite events durations context delivery sentences segments normalizer unicode targets singing records v5)
             add_test(NAME scyllasband_${_scyllasband_suite}
                      COMMAND scyllasband_unit_test ${_scyllasband_suite} "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
         endforeach()

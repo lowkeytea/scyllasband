@@ -11,6 +11,7 @@
 #include <list>
 #include <map>
 #include <mutex>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -21,6 +22,7 @@ struct Phonemized {
     std::vector<std::string> phones;
     std::vector<int> word_starts;
     std::vector<int> word_boundary_candidates;
+    std::vector<int> min_pause_phones;  // silences after a dash typed with no spaces around it
     Json punctuation{Json::Array{}};
     std::vector<std::string> segments;
     double confidence = 0.0;
@@ -37,7 +39,8 @@ public:
     G2P(const std::string& bundle_dir, const Json& manifest, const std::map<std::string, int>& phone_to_id, Infer infer);
 
     std::string model_language(const std::string& language) const;
-    Phonemized phonemize(const std::string& text, const std::string& language);
+    // `nonverbal`: false reads the text without the v5 non-verbal table (sung lyrics were labelled without it).
+    Phonemized phonemize(const std::string& text, const std::string& language, bool nonverbal = true);
 
 private:
     struct Prediction {
@@ -47,14 +50,21 @@ private:
         Json repairs{Json::Array{}};
     };
 
-    Phonemized run(const Text& text, const std::string& language);
-    Prediction predict_segment(const Text& text, const std::string& language);
+    Phonemized run(const Text& text, const std::string& language, bool nonverbal);
+    Prediction predict_segment(const Text& text, const std::string& language, bool nonverbal);
     Prediction predict_repaired(const Text& text, const std::string& language);
     Prediction predict_raw(const Text& text, const std::string& language);
     void apply_overrides(Prediction& prediction, const Text& text, const std::string& language) const;
-    // The runtime lexicon (lexicon.py): an entry's phones, or empty.
-    std::vector<std::string> lexicon_entry(const Text& token, const std::string& language, bool initialisms) const;
-    void apply_lexicon(Prediction& prediction, const Text& text, const std::string& language);
+    // The runtime lexicon (lexicon.py): an entry's phones, or empty. `mixed_case` is false inside text written all in capitals.
+    std::vector<std::string> lexicon_entry(const Text& token, const std::string& language, bool mixed_case) const;
+    // Lexicon.nonverbal_hits: {token index: phones} for the whitespace tokens that are a listed non-verbal word standing
+    // alone, or part of a listed phrase (longest first; each word takes the entry's next part). Empty without the table (a
+    // bundle before v5) or outside its dialects.
+    std::map<std::size_t, std::vector<std::string>> nonverbal_hits(const std::vector<Text>& tokens, const std::string& language) const;
+    // Lexicon.context_hits: {token index: phones} for the whitespace tokens of one phrase that a context entry reads (French
+    // numbers: "vingt" in "vingt deux", a final "huit").
+    std::map<std::size_t, std::vector<std::string>> context_hits(const std::vector<Text>& tokens, const std::string& language) const;
+    void apply_lexicon(Prediction& prediction, const Text& text, const std::string& language, bool nonverbal);
     std::vector<int64_t> encode_text(const Text& text, const std::string& language) const;
 
     std::map<std::string, int> phone_to_id_;
@@ -62,6 +72,20 @@ private:
     Json language_map_;
     Json overrides_;
     std::map<std::string, std::map<std::string, std::vector<std::string>>> lexicon_words_, lexicon_initialisms_;
+    std::map<std::string, std::set<std::string>> lexicon_capitals_only_;
+    // Words read by context (lexicon.CONTEXT_WORDS), in order per G2P language; the first entry that applies wins.
+    struct ContextWord {
+        std::string word;
+        std::vector<std::string> phones;
+        std::set<std::string> after, before;
+        bool phrase_end = false;
+    };
+    std::map<std::string, std::vector<ContextWord>> context_words_;
+    // The v5 non-verbal table: word -> its parts, each a list of phones; the word sequences that spell such a sound, longest
+    // first; the G2P languages it covers.
+    std::map<std::string, std::vector<std::vector<std::string>>> nonverbal_;
+    std::vector<std::pair<std::vector<Text>, std::string>> nonverbal_phrases_;
+    std::set<std::string> nonverbal_languages_;
     std::map<std::string, int64_t> text_symbols_;
     std::map<int64_t, std::string> phoneme_symbols_;
     std::string word_boundary_symbol_ = " ";

@@ -11,8 +11,8 @@ import numpy as np
 from .contract import validate_bundle_layout
 from .engine import Engine, onnx_providers
 from .planner import SynthesisPlan, plan_records, records_from_text
-from .streaming import StreamingEvent, StreamOptions, render_plan, synthesize_plan_stream
-from .text_normalizer import normalize_spoken_text
+from .streaming import StreamingEvent, StreamOptions, render_plan, style_delivery, synthesize_plan_stream
+from .text_normalizer import nonverbal_spellings, normalize_spoken_text
 
 SUPPORTED_BACKENDS = ("onnx", "litert", "coreml", "coreai")
 SUPPORTED_SAMPLERS = ("heun", "euler")
@@ -34,6 +34,7 @@ class SynthesisRequest:
     seed: int | None = None
     temperature: float = 1.0
     normalize_text: bool = True
+    style: str = "spoken"             # a speech style of the bundle (v5: spoken, or rap, which takes no intensity or pace)
 
 
 @dataclass(frozen=True)
@@ -80,10 +81,12 @@ class ScyllasBandRuntime:
     @classmethod
     def from_bundle(cls, bundle_dir: str | Path, *, backend: str | None = None, backends: Sequence[str] | None = None,
                     threads: int | None = None, compute_units: str | Mapping[str, str] | None = None, validate: bool = True,
-                    **_: Any) -> "ScyllasBandRuntime":
+                    cuda_graph: bool | None = None, **_: Any) -> "ScyllasBandRuntime":
         """``compute_units``: for Core ML and Core AI, auto (the bundle's recommendation), cpu, gpu, ane (the graphs the bundle
         lists as accurate on the Neural Engine, the rest on the CPU), or per asset ("gpu,g2p=cpu"); for ONNX Runtime, cpu (the
-        default) or gpu (NVIDIA GPUs through CUDA; use the webgpu bundle, whose 8-bit weights run there), also per asset."""
+        default) or gpu (NVIDIA GPUs through CUDA; use the webgpu bundle, whose 8-bit weights run there), also per asset.
+        ``cuda_graph``: on CUDA, whether the flow and pitch estimators run as captured CUDA graphs (None: yes, unless
+        SCYLLASBAND_CUDA_GRAPH is 0); a graph that cannot be captured runs as before."""
         bundle_dir = Path(bundle_dir)
         if validate:
             validate_bundle_layout(bundle_dir)
@@ -104,7 +107,7 @@ class ScyllasBandRuntime:
             else:
                 from .coreai import coreai_session_factory
                 factory = coreai_session_factory(bundle_dir, compute_units=units)
-        return cls(Engine(bundle_dir, backend=chosen, threads=threads, session_factory=factory, providers=providers),
+        return cls(Engine(bundle_dir, backend=chosen, threads=threads, session_factory=factory, providers=providers, cuda_graph=cuda_graph),
                    bundle_dir=bundle_dir, backend=chosen)
 
     # --- voices and text ----------------------------------------------------------------------------------------------
@@ -128,11 +131,18 @@ class ScyllasBandRuntime:
         return value
 
     def normalize_text(self, text: str, *, language: str = "en_us") -> str:
+        if self.engine.v5:
+            text = nonverbal_spellings(text, language=language)
         return normalize_spoken_text(text, language=language)
+
+    def speech_styles(self) -> list[str]:
+        """The styles a request may speak in (``style``): spoken, and on a v5 bundle the score-free styles it trained (rap)."""
+        return list(self.engine.speech_styles)
 
     # --- planning -----------------------------------------------------------------------------------------------------
     def plan_records(self, records: Sequence[Mapping[str, Any]], *, normalize: bool = True, source_kind: str = "text") -> SynthesisPlan:
-        return plan_records(records, resolve_language=self.resolve_language_for_voice, normalize=normalize, source_kind=source_kind)
+        return plan_records(records, resolve_language=self.resolve_language_for_voice, normalize=normalize, source_kind=source_kind,
+                            nonverbal_spellings=self.engine.v5)
 
     def plan_text(self, text: str, *, voice_id: str, language: str | None = None, delivery: Any = None, intensity: float | None = None,
                   pace: float | None = None, pitch: float | None = None, normalize: bool = True) -> SynthesisPlan:
@@ -141,14 +151,22 @@ class ScyllasBandRuntime:
 
     # --- synthesis ----------------------------------------------------------------------------------------------------
     def stream_options(self, *, steps: int | None = None, sampler: str | None = None, speed: float = 1.0, seed: int | None = None,
-                       temperature: float = 1.0, pause_ms: float = 0.0) -> StreamOptions:
+                       temperature: float = 1.0, pause_ms: float = 0.0, style: str | None = None) -> StreamOptions:
         sampler = (sampler or self.default_sampler).lower()
         if sampler not in SUPPORTED_SAMPLERS:
             raise ValueError(f"Unsupported sampler {sampler!r}; choose one of {', '.join(SUPPORTED_SAMPLERS)}")
         if float(speed) <= 0:
             raise ValueError("speed must be positive")
+        style = "spoken" if style is None else str(style).strip().lower()
+        self.engine.speech_style(style)   # an unknown or sung style is refused before anything is spoken
         return StreamOptions(steps=int(steps or self.default_steps), sampler=sampler, speed=float(speed), seed=seed,
-                             temperature=float(temperature), pause_ms=float(pause_ms))
+                             temperature=float(temperature), pause_ms=float(pause_ms), style=style)
+
+    def _styled(self, plan: SynthesisPlan, options: StreamOptions) -> SynthesisPlan:
+        """``plan`` once every chain's delivery is checked against the style (rap takes no intensity or pace)."""
+        for chunk in plan.chunks:
+            style_delivery(self.engine, options.style, chunk)
+        return plan
 
     def synthesize(self, request: SynthesisRequest, *, progress: TextIO | None = None) -> SynthesisResult:
         plan = self.plan_text(request.text, voice_id=request.voice_id, language=request.language, delivery=request.delivery,
@@ -156,29 +174,36 @@ class ScyllasBandRuntime:
         if not plan.chunks:
             raise ValueError("Nothing to speak: the text has no words")
         options = self.stream_options(steps=request.steps, sampler=request.sampler, speed=request.speed, seed=request.seed,
-                                      temperature=request.temperature)
-        audio, sample_rate, metadata = render_plan(self.engine, plan, options, progress=progress)
+                                      temperature=request.temperature, style=request.style)
+        audio, sample_rate, metadata = render_plan(self.engine, self._styled(plan, options), options, progress=progress)
         metadata.update(backend=self.backend, bundle_dir=str(self.bundle_dir), voice_id=request.voice_id,
                         language=plan.chunks[0].language,
-                        delivery=self.engine.delivery_inputs(request.voice_id, plan.chunks[0].delivery)[3], steps=options.steps,
+                        delivery=style_delivery(self.engine, options.style, plan.chunks[0])[3], steps=options.steps,
                         sampler=options.sampler, speed=options.speed, seed=request.seed, engine="python", noise=PYTHON_NOISE)
+        if self.engine.v5:
+            metadata.update(style=options.style)
         return SynthesisResult(audio=audio, sample_rate=sample_rate, metadata=metadata)
 
     def synthesize_stream(self, records: Sequence[Mapping[str, Any]], *, normalize: bool = True, progress: TextIO | None = None,
                           **options: Any) -> Iterator[StreamingEvent]:
         plan = self.plan_records(records, normalize=normalize)
-        return synthesize_plan_stream(self.engine, plan, self.stream_options(**options), progress=progress)
+        options = self.stream_options(**options)
+        return synthesize_plan_stream(self.engine, self._styled(plan, options), options, progress=progress)
 
     def render_records(self, records: Sequence[Mapping[str, Any]], *, normalize: bool = True, progress: TextIO | None = None,
                        **options: Any) -> SynthesisResult:
         plan = self.plan_records(records, normalize=normalize)
-        audio, sample_rate, metadata = render_plan(self.engine, plan, self.stream_options(**options), progress=progress)
-        return SynthesisResult(audio=audio, sample_rate=sample_rate, metadata=dict(metadata, backend=self.backend, engine="python", noise=PYTHON_NOISE))
+        options = self.stream_options(**options)
+        audio, sample_rate, metadata = render_plan(self.engine, self._styled(plan, options), options, progress=progress)
+        metadata = dict(metadata, backend=self.backend, engine="python", noise=PYTHON_NOISE)
+        if self.engine.v5:
+            metadata.update(style=options.style)
+        return SynthesisResult(audio=audio, sample_rate=sample_rate, metadata=metadata)
 
     # --- singing ------------------------------------------------------------------------------------------------------
     @property
     def supports_singing(self) -> bool:
-        """True on a v4 bundle with delivery modes (``controls.delivery_modes.enabled``)."""
+        """True on a v4 or v5 bundle with delivery modes (``controls.delivery_modes.enabled``)."""
         return bool(self.engine.delivery_modes)
 
     def sing(self, score: Mapping[str, Any], voice_id: str, language: str | None = None, *, seed: int | None = None,
@@ -209,7 +234,7 @@ class ScyllasBandRuntime:
     def runtime_status(self) -> dict[str, Any]:
         return dict(backend=self.backend, bundle_dir=str(self.bundle_dir), voices=self.available_voices(),
                     buckets=[b[0] for b in self.engine.buckets], sessions=sorted(self.engine._sessions),
-                    graph_contract=self.engine.graph_contract, singing=self.supports_singing,
+                    graph_contract=self.engine.graph_contract, singing=self.supports_singing, speech_styles=self.speech_styles(),
                     decoders=sorted(name for name, graphs in self.engine.decoder_graphs.items() if graphs))
 
 

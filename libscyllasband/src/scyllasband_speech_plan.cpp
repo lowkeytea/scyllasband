@@ -95,6 +95,7 @@ Plan plan_records(Engine& engine, const Json& records, bool normalize, const std
         std::vector<Text> paragraphs = split_paragraphs(unicode::decode(record_text(record, "text")));
         for (std::size_t p = 0; p < paragraphs.size(); ++p) {
             std::string paragraph = unicode::encode(paragraphs[p]);
+            if (normalize && engine.v5()) paragraph = nonverbal_spellings(paragraph, language);
             Text spoken = normalize ? unicode::decode(normalize_spoken_text(paragraph, language)) : paragraphs[p];
             std::vector<Text> sentences = split_sentences(spoken);
             for (std::size_t s = 0; s < sentences.size(); ++s) {

@@ -109,6 +109,7 @@ def _add_synthesis_args(parser: argparse.ArgumentParser, *, group: bool) -> None
                                                    "deviations (-2 to 2; default: the voice's own)")
     parser.add_argument("--pitch", type=float, help="pitch shift in semitones (-2 to 2; default 0)")
     parser.add_argument("--delivery", help="the same as one string, e.g. intensity=1,pace=-0.5,pitch=0")
+    parser.add_argument("--style", help="speech style: spoken (default) or another of the bundle's speech styles")
     parser.add_argument("--speed", type=float, default=1.0)
     parser.add_argument("--steps", type=int)
     parser.add_argument("--sampler", choices=SUPPORTED_SAMPLERS)
@@ -276,7 +277,7 @@ def _build_native(args: argparse.Namespace) -> int:
 
 def _options(args: argparse.Namespace) -> dict:
     return dict(steps=args.steps, sampler=args.sampler, speed=args.speed, seed=args.seed, temperature=args.temperature,
-                pause_ms=args.pause_ms)
+                pause_ms=args.pause_ms, style=args.style)
 
 
 def _progress(args: argparse.Namespace):

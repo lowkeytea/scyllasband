@@ -3,7 +3,8 @@
 // A score (JSON) is "text", "bpm", "style" and "notes", an ordered list of [label, note, beats]: note a pitch name with
 // octave (C4, F#3, Bb3) or "rest" (label "-"); label a word on one note, or "word~n" for the n-th of consecutive parts of
 // one word (syllables, or a melisma holding one syllable over several pitches). The style picks the delivery mode: pop (or
-// sung) and ballad (rap is parsed but only sung when a bundle lists it).
+// sung) and ballad (rap is parsed but only sung when a bundle lists it); a v5 bundle's styles are its own style rows, which
+// the caller passes to parse_score, and its scores may write the note "x" for a word sung with no pitch.
 //
 // parse_score validates a score (with Python's messages, and the index of the note at fault), turns notes into MIDI and
 // beats into seconds, and groups labels into words; register_shift moves a song by octaves into a voice's sung range;
@@ -33,12 +34,13 @@ private:
 
 struct ScoreNote {
     std::string label;
-    std::optional<int> midi;        // nullopt for a rest
+    std::optional<int> midi;        // nullopt for a rest, and for a word sung with no pitch (the note "x" of a v5 score)
     double start = 0.0, end = 0.0;  // seconds
     double beats = 0.0;
     int word = -1;                  // index into Score::words; -1 for a rest
     int part = 0;                   // the note's part number within its word (1 for a one-note word); 0 for a rest
-    std::string name() const;
+    bool rest() const { return label == "-"; }
+    std::string name() const;       // the pitch name, "rest", or "x" for a word with no pitch
 };
 
 struct ScoreWord {
@@ -75,9 +77,14 @@ std::string style_mode(const std::string& style);
 // Every style the format knows, in the order styles are listed (pop, sung, ballad, rap).
 const std::vector<std::pair<std::string, std::string>>& style_modes();
 
-Score parse_score(const Json& data);
+// {style: delivery mode}, in the order styles are listed.
+using StyleTable = std::vector<std::pair<std::string, std::string>>;
+
+// `styles`: the styles the score may name (the bundle's, song_plan.h style_table); the v4 styles (style_modes) by default.
+// `unvoiced` (v5 bundles): the note "x" is accepted, for a word sung with no pitch.
+Score parse_score(const Json& data, const StyleTable* styles = nullptr, bool unvoiced = false);
 // The score in `text` (a JSON document); invalid JSON throws ScoreError.
-Score parse_score_text(const std::string& text);
+Score parse_score_text(const std::string& text, const StyleTable* styles = nullptr, bool unvoiced = false);
 
 // Octaves (as semitones: -24 .. 24) that move the score's mean pitch into [center - 3, center + 5], or as close as an octave
 // step allows (ties go up); 0 without a centre.

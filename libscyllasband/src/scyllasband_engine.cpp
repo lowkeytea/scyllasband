@@ -1,5 +1,6 @@
 #include "scyllasband_engine.h"
 
+#include "scyllasband_score.h"
 #include "scyllasband_text.h"
 
 #include <algorithm>
@@ -14,10 +15,16 @@ namespace scyllasband {
 
 const char* const kGraphContract = "scyllasband_measured_controls_v3";
 const char* const kGraphContractV4 = "scyllasband_measured_controls_v4";
+const char* const kGraphContractV5 = "scyllasband_measured_controls_v5";
+const char* const kGraphContractV5_1 = "scyllasband_measured_controls_v5_1";
+
+bool is_v5_contract(const std::string& contract) { return contract == kGraphContractV5 || contract == kGraphContractV5_1; }
 
 namespace {
 
 const char* const kContractVersion = "1.0.0";
+// A dash typed with no spaces around it ("a\u2014dream") interrupts the word before it: its pause lasts at least this long.
+const double kTightDashPauseSeconds = 0.3;
 const std::vector<std::string> kDurationInputs = {"span_phone_ids", "span_segment_ids", "span_mask", "voice_id", "language_id",
                                                   "delivery_values", "delivery_present"};
 const std::vector<std::string> kContextInputs = {"span_context_phone_ids", "span_context_segment_ids", "span_context_mask"};
@@ -42,6 +49,18 @@ std::vector<std::string> with_mode(std::vector<std::string> inputs) {
 }
 const std::vector<std::string> kVectorInputsV4 = with_mode(kVectorInputs);
 const std::vector<std::string> kFlowInputsV4 = with_mode(kFlowInputs);
+// v5 (contract.py DURATION_INPUTS_V5, VECTOR_INPUTS_V5, PITCH_INPUTS_V5): the duration, pitch and flow graphs take the voice's
+// identity vector and then a style row (style_id on the duration graph, delivery_mode_id on the pitch and flow graphs); the
+// pitch graphs take the contour rendered so far as a prefix before them.
+std::vector<std::string> with_inputs(std::vector<std::string> inputs, std::initializer_list<const char*> more) {
+    for (const char* name : more) inputs.emplace_back(name);
+    return inputs;
+}
+const char* const kIdentityInput = "identity_reference";
+const std::vector<std::string> kDurationInputsV5 = with_inputs(kDurationInputs, {kIdentityInput, "style_id"});
+const std::vector<std::string> kVectorInputsV5 = with_inputs(kVectorInputs, {kIdentityInput, kDeliveryModeInput});
+const std::vector<std::string> kFlowInputsV5 = with_inputs(kFlowInputs, {kIdentityInput, kDeliveryModeInput});
+const std::vector<std::string> kPitchInputsV5 = with_inputs(kPitchInputs, {"prefix_latents", "prefix_mask", kIdentityInput, kDeliveryModeInput});
 const std::vector<std::string> kRequiredAssets = {"phone_vocab", "voice_index", "language_index", "g2p_config", "g2p_tokenizer", "g2p_language_map"};
 
 std::map<std::string, int64_t> load_index(const std::string& path) {
@@ -80,7 +99,12 @@ Engine::Engine(const BackendOptions& options, std::unique_ptr<Backend> backend) 
     const Json& assets = manifest_.get("assets");
     const Json& controls = manifest_.get("controls");
     graph_contract_ = controls.get("graph_input_contract").str();
-    feeds_delivery_mode_ = graph_contract_ == kGraphContractV4;
+    // v5: each voice's fixed identity vector is a graph input, the duration and pitch graphs take the style row too, the
+    // pitch predictor takes the contour rendered so far as a prefix, and pauses after punctuation carry the sounded-pause
+    // mark by default (controls.pause_marks).
+    v5_ = is_v5_contract(graph_contract_);
+    // v4 and v5 flows take the delivery mode id on every call (the spoken row for speech); v3 flows have no such input.
+    feeds_delivery_mode_ = graph_contract_ == kGraphContractV4 || v5_;
     const Json& modes = controls.get("delivery_modes");
     if (feeds_delivery_mode_ && modes.get("enabled").boolean(false)) {
         for (const auto& [mode, id] : modes.get("ids").items()) singing_.mode_ids[mode] = id.integer();
@@ -90,10 +114,30 @@ Engine::Engine(const BackendOptions& options, std::unique_ptr<Backend> backend) 
         singing_.steps = static_cast<int>(singing.get("steps").integer(8));
         singing_.decoder = singing.get("decoder").str("vocos");
         singing_.guidance = singing.get("guidance").num(1.0);
+        singing_.guidance_stated = singing.has("guidance");
+        if (!singing.get("guidance_steps").str().empty()) singing_.guidance_steps = singing.get("guidance_steps").str();
+        const Json& floor = singing.get("register_floor");  // a note name such as F2, or a MIDI number
+        if (floor.is_number()) singing_.register_floor = static_cast<int>(floor.integer());
+        else if (!floor.is_null()) singing_.register_floor = note_to_midi(floor.str());
         singing_.midi_center = singing.get("melody").get("midi_center").num(60.0);
         singing_.midi_scale = singing.get("melody").get("midi_scale").num(24.0);
         for (const auto& [voice_id, center] : singing.get("voice_midi_center").items()) singing_.voice_center[voice_id] = center.num();
+        singing_.v5 = v5_;
+        for (const auto& [alias, style] : modes.get("aliases").items()) singing_.aliases.emplace_back(alias, style.str());
     }
+    auto spoken = singing_.mode_ids.find("spoken");
+    spoken_mode_ = spoken == singing_.mode_ids.end() ? 0 : spoken->second;
+    if (v5_) {
+        // The styles speech may ask for: the rows the duration graph was trained on, and the pitch graph too where the
+        // bundle lists its own (validate_v5 checked the table).
+        const Json& pitched = modes.get("pitch_styles_trained");
+        speech_styles_.clear();
+        for (const Json& style : modes.get("duration_styles_trained").elements()) {
+            const auto listed = [&](const Json& item) { return item.str() == style.str(); };
+            if (pitched.is_null() || std::any_of(pitched.elements().begin(), pitched.elements().end(), listed)) speech_styles_.push_back(style.str());
+        }
+    }
+    for (const Json& style : modes.get("controls_absent").get("styles").elements()) uncontrolled_styles_.insert(style.str());
     auto asset = [&](const std::string& key) { return bundle_dir_ + "/" + assets.get(key).str(); };
 
     Json vocab = Json::parse_file(asset("phone_vocab"));
@@ -106,6 +150,22 @@ Engine::Engine(const BackendOptions& options, std::unique_ptr<Backend> backend) 
     voice_to_id_ = load_index(asset("voice_index"));
     language_to_id_ = load_index(asset("language_index"));
     bits_ = modifier_bits(phone_to_id_);
+    if (v5_) {
+        const Json table = Json::parse_file(asset("voice_identity"));
+        identity_dim_ = table.get("dim").integer();
+        for (const auto& [voice_id, vector] : table.get("voices").items()) {
+            auto row = voice_to_id_.find(voice_id);
+            if (row == voice_to_id_.end()) continue;
+            std::vector<float> values;
+            for (const Json& value : vector.elements()) values.push_back(static_cast<float>(value.num()));
+            if (static_cast<int64_t>(values.size()) != identity_dim_) throw std::invalid_argument("Identity vector of " + voice_id + " has the wrong size");
+            identity_[row->second] = std::move(values);
+        }
+        const Json& prefix = controls.get("pitch").get("prefix");
+        pitch_prefix_width_ = prefix.get("enabled").boolean(false) ? static_cast<int>(prefix.get("max_frames").integer(0)) : 0;
+        const Json& marks = controls.get("pause_marks");
+        if (marks.get("default").str() == "all") pause_mark_ = marks.get("token").str();  // in the vocabulary: validate_v5
+    }
 
     const Json& span = controls.get("span_conditioning");
     span_width_ = static_cast<std::size_t>(span.get("context_max_phones").integer(512));
@@ -124,11 +184,16 @@ Engine::Engine(const BackendOptions& options, std::unique_ptr<Backend> backend) 
     }
     std::sort(buckets_.begin(), buckets_.end(), [](const Bucket& a, const Bucket& b) { return a.frames < b.frames; });
     load_decoders();
+    auto singing_decoder = decoders_.find(singing_.decoder);
+    singing_.decoder_required = v5_ && !(singing_decoder != decoders_.end() && singing_decoder->second.optional);
     // v2 was trained on targets of 64 to 420 latent frames (about 1.4 to 9 seconds): shorter targets lose their prosody and
     // longer ones their intelligibility. A bundle can state its own as controls.chunking.min/max_target_frames.
     min_target_frames_ = controls.get("chunking").get("min_target_frames").integer(64);
     max_target_frames_ = controls.get("chunking").get("max_target_frames").integer(420);
     if (!buckets_.empty()) max_target_frames_ = std::min(max_target_frames_, buckets_.back().frames);
+    // v5: a target never holds fewer phones than this (stress and length marks and <tokens> not counted) while the passage
+    // has a neighbour to join; shorter than anything the flow trained on, a lone "Really." came out squeezed.
+    min_target_phones_ = controls.get("chunking").get("min_target_phones").integer(v5_ ? 12 : 0);
     // Optional (Apple bundles): fused flow graphs for one sampler and step count, and narrower G2P inputs.
     fused_sampler_ = controls.get("fused_flow").get("sampler").str();
     fused_steps_ = static_cast<int>(controls.get("fused_flow").get("steps").integer(0));
@@ -212,13 +277,15 @@ void Engine::validate() const {
     }
     const Json& controls = manifest_.get("controls");
     const std::string contract = controls.get("graph_input_contract").str();
-    if (contract != kGraphContract && contract != kGraphContractV4) {
-        throw std::invalid_argument("Bundle graph contract '" + contract + "' is not supported by this runtime (expected '" + kGraphContract +
-                                    "' or '" + kGraphContractV4 + "'). Download the current model.");
+    const bool v4 = contract == kGraphContractV4, v5 = is_v5_contract(contract);
+    if (contract != kGraphContract && !v4 && !v5) {
+        throw std::invalid_argument("Bundle graph contract '" + contract + "' is not supported by this runtime (expected one of '" + kGraphContract +
+                                    "', '" + kGraphContractV4 + "', '" + kGraphContractV5 + "', '" + kGraphContractV5_1 + "'). Download the current model.");
     }
-    const bool v4 = contract == kGraphContractV4;
-    const std::vector<std::string>& vector_inputs = v4 ? kVectorInputsV4 : kVectorInputs;
-    const std::vector<std::string>& flow_inputs = v4 ? kFlowInputsV4 : kFlowInputs;
+    const std::vector<std::string>& vector_inputs = v5 ? kVectorInputsV5 : v4 ? kVectorInputsV4 : kVectorInputs;
+    const std::vector<std::string>& duration_inputs = v5 ? kDurationInputsV5 : kDurationInputs;
+    const std::vector<std::string>& pitch_inputs = v5 ? kPitchInputsV5 : kPitchInputs;
+    const std::vector<std::string>& flow_inputs = v5 ? kFlowInputsV5 : v4 ? kFlowInputsV4 : kFlowInputs;
     const Json& assets = manifest_.get("assets");
     for (const std::string& key : kRequiredAssets) {
         const std::string rel = assets.get(key).str();
@@ -229,19 +296,19 @@ void Engine::validate() const {
     const Json& buckets = controls.get("target_buckets").get("buckets");
     if (buckets.size() == 0) throw std::invalid_argument("Bundle declares no latent-frame buckets");
     std::vector<std::pair<std::string, const std::vector<std::string>*>> expected = {
-        {"g2p", nullptr}, {"duration_predictor", &kDurationInputs}, {"vector_context_encoder", &kContextInputs},
+        {"g2p", nullptr}, {"duration_predictor", &duration_inputs}, {"vector_context_encoder", &kContextInputs},
         {controls.get("pitch").get("context_encoder").str("pitch_context_encoder"), &kContextInputs}};
     for (const Json& b : buckets.elements()) {
         if (b.get("pitch_estimator").str().empty()) throw std::invalid_argument("Bundle bucket has no pitch_estimator");
         expected.emplace_back(b.get("vector_estimator").str(), &vector_inputs);
-        expected.emplace_back(b.get("pitch_estimator").str(), &kPitchInputs);
+        expected.emplace_back(b.get("pitch_estimator").str(), &pitch_inputs);
         expected.emplace_back(b.get("vocoder").str(), &kVocoderInputs);
         if (!b.get("vector_estimator_first").str().empty()) expected.emplace_back(b.get("vector_estimator_first").str(), &vector_inputs);
         if (!b.get("vector_flow").str().empty()) expected.emplace_back(b.get("vector_flow").str(), &flow_inputs);
         if (!b.get("vector_flow_first").str().empty()) expected.emplace_back(b.get("vector_flow_first").str(), &flow_inputs);
     }
     for (const Json& b : controls.get("span_buckets").elements()) {
-        if (!b.get("duration_predictor").str().empty()) expected.emplace_back(b.get("duration_predictor").str(), &kDurationInputs);
+        if (!b.get("duration_predictor").str().empty()) expected.emplace_back(b.get("duration_predictor").str(), &duration_inputs);
         if (!b.get("vector_context_encoder").str().empty()) expected.emplace_back(b.get("vector_context_encoder").str(), &kContextInputs);
         if (!b.get("pitch_context_encoder").str().empty()) expected.emplace_back(b.get("pitch_context_encoder").str(), &kContextInputs);
     }
@@ -263,6 +330,7 @@ void Engine::validate() const {
             throw std::invalid_argument("Bundle component '" + name + "' has no " + backend + " artifact at " + artifact.get("path").str());
         }
     }
+    if (v5) validate_v5();
     const Json& voices = manifest_.get("voices");
     if (voices.size() == 0) throw std::invalid_argument("Bundle voices must each declare their languages");
     for (const Json& v : voices.elements()) {
@@ -273,11 +341,61 @@ void Engine::validate() const {
     }
 }
 
+// What a v5 bundle declares beside its graphs (contract.py _validate_v5): an identity vector for every voice, the style
+// table with the rows speech may use, and the pause mark it asks for.
+void Engine::validate_v5() const {
+    const Json& controls = manifest_.get("controls");
+    const Json& assets = manifest_.get("assets");
+    const std::string rel = assets.get("voice_identity").str();
+    if (rel.empty() || !std::filesystem::is_regular_file(std::filesystem::path(bundle_dir_) / rel)) {
+        throw std::invalid_argument("Bundle asset 'voice_identity' is missing (" + rel + ")");
+    }
+    const Json table = Json::parse_file(bundle_dir_ + "/" + rel);
+    if (!table.get("dim").is_number() || !table.get("voices").is_object()) {
+        throw std::invalid_argument("Bundle asset 'voice_identity' must hold dim and voices {voice: vector}");
+    }
+    const int64_t dim = table.get("dim").integer();
+    for (const Json& voice : manifest_.get("voices").elements()) {
+        const std::string id = voice.get("id").str();
+        if (static_cast<int64_t>(table.get("voices").get(id).elements().size()) != dim) {
+            throw std::invalid_argument("Bundle asset 'voice_identity' has no " + std::to_string(dim) + "-value vector for voice '" + id + "'");
+        }
+    }
+    const Json& modes = controls.get("delivery_modes");
+    const Json& ids = modes.get("ids");
+    if (!modes.get("enabled").boolean(false) || !ids.is_object() || !ids.has("spoken")) {
+        throw std::invalid_argument("A v5 bundle must enable controls.delivery_modes and give its style rows (ids) with a 'spoken' row");
+    }
+    const Json& trained = modes.get("duration_styles_trained");
+    bool spoken = false, known = trained.is_array();
+    for (const Json& style : trained.elements()) {
+        spoken = spoken || style.str() == "spoken";
+        known = known && style.is_string() && ids.has(style.str());
+    }
+    if (!spoken || !known) {
+        throw std::invalid_argument("A v5 bundle must list the styles its duration graph was trained on "
+                                    "(controls.delivery_modes.duration_styles_trained: rows of ids, 'spoken' among them)");
+    }
+    const Json& marks = controls.get("pause_marks");
+    const std::string marked = marks.get("default").str();
+    if (!marks.is_object() || (marked != "all" && marked != "none")) {
+        throw std::invalid_argument("A v5 bundle must state controls.pause_marks.default (all or none)");
+    }
+    if (marked == "all") {
+        const Json vocab = Json::parse_file(bundle_dir_ + "/" + assets.get("phone_vocab").str());
+        const Json& token_to_id = vocab.has("token_to_id") ? vocab.get("token_to_id") : vocab;
+        if (!marks.get("token").is_string() || !token_to_id.has(marks.get("token").str())) {
+            throw std::invalid_argument("Bundle pause mark '" + marks.get("token").str() + "' is not in the phone vocabulary");
+        }
+    }
+}
+
 void Engine::load_decoders() {
     // controls.decoders (v4); a bundle without it has the Vocos vocoder only, as v3 manifests describe it.
     const Json& declared = manifest_.get("controls").get("decoders");
     for (const auto& [name, spec] : declared.items()) {
         DecoderSpec decoder{name, spec.get("component").str("vocoder"), static_cast<int>(spec.get("samples_per_frame").integer(512)), 0};
+        decoder.optional = spec.get("required").type() == Json::Type::boolean && !spec.get("required").boolean();
         // "latent_frames * 512" or "latent_frames * 512 - 256" (engine.py _OUTPUT_RULE).
         std::string rule;
         for (char c : spec.get("output_samples").str()) {
@@ -528,7 +646,23 @@ int64_t Engine::language_index(const std::string& language) const {
     return it->second;
 }
 
-Phonemized Engine::phonemize(const std::string& text, const std::string& language) { return g2p_->phonemize(text, language); }
+Phonemized Engine::phonemize(const std::string& text, const std::string& language, bool nonverbal) {
+    return g2p_->phonemize(text, language, nonverbal);
+}
+
+std::pair<int64_t, bool> Engine::speech_style(const std::string& style) const {
+    std::string name = unicode::encode(unicode::lower(unicode::strip(unicode::decode(style))));
+    if (name.empty() || name == "spoken") return {spoken_mode_, true};
+    if (!v5_) throw std::invalid_argument("This bundle speaks in one style; --style " + name + " needs a v5 bundle");
+    if (std::find(speech_styles_.begin(), speech_styles_.end(), name) == speech_styles_.end()) {
+        std::string list;
+        for (const std::string& known : speech_styles_) list += (list.empty() ? "" : ", ") + known;
+        throw std::invalid_argument("Style '" + name + "' cannot be spoken" +
+                                    (singing_.mode_ids.count(name) ? " (it is a sung style: give a score to sing)" : "") +
+                                    ": this bundle's duration and pitch models were trained on " + list);
+    }
+    return {singing_.mode_ids.at(name), uncontrolled_styles_.count(name) == 0};
+}
 
 std::vector<int64_t> Engine::context_ids(const std::vector<std::string>& phones) const {
     std::vector<int64_t> out;
@@ -574,7 +708,14 @@ const Engine::SpanBucket* Engine::span_bucket(std::size_t phones) const {
     return nullptr;
 }
 
-std::vector<int> Engine::durations(const Sentence& sentence, int64_t voice, int64_t language, const DeliveryTensors& delivery, double speed) {
+const std::vector<float>& Engine::identity(int64_t voice_row) const {
+    auto found = identity_.find(voice_row);
+    if (found == identity_.end()) throw std::invalid_argument("This bundle has no identity vector for voice row " + std::to_string(voice_row));
+    return found->second;
+}
+
+std::vector<int> Engine::durations(const Sentence& sentence, int64_t voice, int64_t language, const DeliveryTensors& delivery, double speed,
+                                   std::optional<int64_t> style) {
     std::vector<int64_t> target;
     for (const std::string& phone : sentence.phones) target.push_back(phone_to_id_.at(phone));
     if (target.size() > span_width_) {
@@ -594,14 +735,22 @@ std::vector<int> Engine::durations(const Sentence& sentence, int64_t voice, int6
     float values[5];
     uint8_t present[5];
     target_delivery(sentence.phones, delivery, values, present);
-    GraphOutput frames = run(narrow && !narrow->duration.empty() ? narrow->duration : std::string("duration_predictor"), {view(DType::i64, {1, width}, ids.data()), view(DType::i64, {1, width}, segs.data()),
-                                                    view(DType::b8, {1, width}, mask.data()), view(DType::i64, {1}, &voice_id),
-                                                    view(DType::i64, {1}, &language_id), view(DType::f32, {1, 5}, values),
-                                                    view(DType::b8, {1, 5}, present)});
+    std::vector<TensorView> duration_inputs = {view(DType::i64, {1, width}, ids.data()), view(DType::i64, {1, width}, segs.data()),
+                                               view(DType::b8, {1, width}, mask.data()), view(DType::i64, {1}, &voice_id),
+                                               view(DType::i64, {1}, &language_id), view(DType::f32, {1, 5}, values),
+                                               view(DType::b8, {1, 5}, present)};
+    int64_t style_id = style.value_or(spoken_mode_);
+    if (v5_) {
+        duration_inputs.push_back(view(DType::f32, {1, identity_dim_}, identity(voice).data()));
+        duration_inputs.push_back(view(DType::i64, {1}, &style_id));
+    }
+    GraphOutput frames = run(narrow && !narrow->duration.empty() ? narrow->duration : std::string("duration_predictor"), duration_inputs);
     std::size_t offset = static_cast<std::size_t>(std::count(segments.begin(), segments.end(), int64_t{0}));
     std::vector<float> predicted(frames.values.begin() + static_cast<std::ptrdiff_t>(offset),
                                  frames.values.begin() + static_cast<std::ptrdiff_t>(offset + target.size()));
-    return frames_to_durations(predicted, sentence.phones, 1.0 / speed, pause_scale(delivery));
+    std::vector<int> out = frames_to_durations(predicted, sentence.phones, 1.0 / speed, pause_scale(delivery), sentence.min_pauses,
+                                               kTightDashPauseSeconds * sample_rate_ / latent_hop_);
+    return v5_ ? opening_minimums(sentence.phones, out, sentence.sentence_starts) : out;
 }
 
 SentenceResult Engine::synthesize_sentence(const Sentence& sentence, const SentenceRequest& request) {
@@ -619,10 +768,11 @@ SentenceResult Engine::synthesize_sentence(const Sentence& sentence, const Sente
     const SungConditioning* sung = request.sung;
     int64_t voice_id = voice_index(voice), language_id = language_index(language);
     const std::vector<float>* score_melody = sung ? sung->melody : nullptr;
-    int64_t mode_id = sung ? sung->mode : 0;
+    // The style row: a sung target's mode, a spoken target's style (v5), else the spoken row (0 when the bundle has no table).
+    int64_t mode_id = sung ? sung->mode : request.mode.value_or(spoken_mode_);
     const double guidance = sung ? sung->guidance : 1.0;
     if (mode_id != 0 && !feeds_delivery_mode_) throw std::invalid_argument("This bundle has no delivery modes (a v3 bundle); singing needs a v4 bundle");
-    std::vector<int> durations = forced_durations ? *forced_durations : this->durations(sentence, voice_id, language_id, delivery, speed);
+    std::vector<int> durations = forced_durations ? *forced_durations : this->durations(sentence, voice_id, language_id, delivery, speed, mode_id);
     if (durations.size() != sentence.phones.size()) throw std::invalid_argument("Durations must match the phones");
     int64_t length = 0;
     for (int frames : durations) length += frames;
@@ -695,6 +845,27 @@ SentenceResult Engine::synthesize_sentence(const Sentence& sentence, const Sente
     // A sung target takes its melody from the score instead: no pitch predictor, no pitch shift, no soft limit.
     std::vector<float> expanded_melody(F * 3, 0.0f);
     const int pitch_steps = pitch_steps_;
+    static const std::vector<float> kNoIdentity;
+    const std::vector<float>& identity_vector = v5_ ? identity(voice_id) : kNoIdentity;
+    // v5: the contour rendered so far, right-aligned; a tail with no voiced frame says nothing about pitch (no prefix).
+    const std::size_t W = static_cast<std::size_t>(pitch_prefix_width_);
+    std::vector<float> contour_prefix(2 * W, 0.0f);
+    std::vector<uint8_t> contour_mask(W, 0);
+    std::size_t contour_kept = 0;
+    if (v5_ && request.pitch_prefix && request.pitch_prefix_frames > 0 && W > 0) {
+        const std::size_t have = static_cast<std::size_t>(request.pitch_prefix_frames), take = std::min(have, W);
+        const std::vector<float>& given = *request.pitch_prefix;
+        bool voiced = false;
+        for (std::size_t t = have - take; t < have; ++t) voiced = voiced || given[have + t] > 0.0f;
+        if (voiced) {
+            for (std::size_t r = 0; r < 2; ++r) {
+                for (std::size_t t = 0; t < take; ++t) contour_prefix[r * W + (W - take) + t] = given[r * have + (have - take) + t];
+            }
+            for (std::size_t t = W - take; t < W; ++t) contour_mask[t] = 1;
+            contour_kept = take;
+        }
+    }
+    std::vector<float> rendered;
     if (score_melody) {
         std::copy(score_melody->begin(), score_melody->end(), expanded_melody.begin());
     } else {
@@ -703,14 +874,20 @@ SentenceResult Engine::synthesize_sentence(const Sentence& sentence, const Sente
     float pitch_time = 0.0f;
     auto pitch_velocity = [&](const std::vector<float>& state, float time) {
         pitch_time = time;
-        return run(chosen.pitch_estimator,
-                   {view(DType::f32, {1, 2, frames}, state.data()), view(DType::f32, {1}, &pitch_time),
-                    view(DType::i64, {1, frames}, expanded.data()), view(DType::i64, {1}, &voice_id), view(DType::i64, {1}, &language_id),
-                    view(DType::f32, {1, 5}, delivery_values), view(DType::b8, {1, 5}, delivery_present), view(DType::b8, {1, frames}, latent_mask.data()),
-                    view(DType::f32, pitch_hidden.shape, pitch_hidden.values.data()), view(DType::i64, {1, frames}, boundary.data()),
-                    view(DType::i64, {1, frames}, modifier.data()), view(DType::f32, {1, frames}, phase.data()),
-                    view(DType::f32, {1, frames}, log_duration.data()), view(DType::i64, {1, frames}, sentence_type.data())})
-            .values;
+        std::vector<TensorView> pitch_inputs = {
+            view(DType::f32, {1, 2, frames}, state.data()), view(DType::f32, {1}, &pitch_time),
+            view(DType::i64, {1, frames}, expanded.data()), view(DType::i64, {1}, &voice_id), view(DType::i64, {1}, &language_id),
+            view(DType::f32, {1, 5}, delivery_values), view(DType::b8, {1, 5}, delivery_present), view(DType::b8, {1, frames}, latent_mask.data()),
+            view(DType::f32, pitch_hidden.shape, pitch_hidden.values.data()), view(DType::i64, {1, frames}, boundary.data()),
+            view(DType::i64, {1, frames}, modifier.data()), view(DType::f32, {1, frames}, phase.data()),
+            view(DType::f32, {1, frames}, log_duration.data()), view(DType::i64, {1, frames}, sentence_type.data())};
+        if (v5_) {
+            pitch_inputs.push_back(view(DType::f32, {1, 2, pitch_prefix_width_}, contour_prefix.data()));
+            pitch_inputs.push_back(view(DType::b8, {1, pitch_prefix_width_}, contour_mask.data()));
+            pitch_inputs.push_back(view(DType::f32, {1, identity_dim_}, identity_vector.data()));
+            pitch_inputs.push_back(view(DType::i64, {1}, &mode_id));
+        }
+        return run(chosen.pitch_estimator, pitch_inputs).values;
     };
     const float pn = static_cast<float>(pitch_steps), pn2 = static_cast<float>(2 * pitch_steps);
     for (int step = 0; step < pitch_steps; ++step) {
@@ -730,6 +907,20 @@ SentenceResult Engine::synthesize_sentence(const Sentence& sentence, const Sente
     for (std::size_t r = 0; r < 2; ++r) std::copy_n(c.begin() + static_cast<std::ptrdiff_t>(r * F), L, contour.begin() + static_cast<std::ptrdiff_t>(r * L));
     std::vector<float> melody_values = melody(contour, length, voice, delivery.pitch);
     std::copy(melody_values.begin(), melody_values.end(), expanded_melody.begin());
+    // The contour as the flow heard it, in the predictor's units and without the pitch shift (a shift is added after the
+    // predictor: chaining it would add it again).
+    rendered = contour;
+    {
+        const auto edges = pitch_edges_.at(voice);
+        const double low = edges.first, high = edges.second, knee = std::min(knee_, (high - low) / 4.0);
+        const double top = high - knee, bottom = low + knee;
+        for (std::size_t t = 0; t < L; ++t) {
+            double st = static_cast<double>(contour[t]) * pitch_scale_ + pitch_center_;
+            if (st > top) st = top + knee * std::tanh((st - top) / knee);
+            if (st < bottom) st = bottom - knee * std::tanh((bottom - st) / knee);
+            rendered[t] = static_cast<float>((st - pitch_center_) / pitch_scale_);
+        }
+    }
     }
 
     for (std::size_t d = 0; d < D; ++d) {
@@ -742,13 +933,15 @@ SentenceResult Engine::synthesize_sentence(const Sentence& sentence, const Sente
     const std::string& flow = no_prefix && !chosen.vector_flow_first.empty() ? chosen.vector_flow_first : chosen.vector_flow;
     float time_value = 0.0f;
     std::vector<float> probe(D * F);
-    // Guidance contrasts the conditioned velocity with the melody and mode switched off; it needs the stepped graph.
-    const bool guided = guidance != 1.0 && (score_melody != nullptr || mode_id != 0);
+    // Guidance contrasts the conditioned velocity with the melody and mode switched off (no melody, the spoken row); it needs
+    // the stepped graph.
+    const bool guided = guidance != 1.0 && (score_melody != nullptr || mode_id != spoken_mode_);
     const std::vector<float> no_melody(guided ? F * 3 : 0, 0.0f);
-    int64_t no_mode = 0;
+    int64_t no_mode = spoken_mode_;
+    const std::optional<double> guidance_until = sung ? sung->guidance_until : std::nullopt;
     const float scale = static_cast<float>(guidance);
-    auto conditioned = [&](const std::vector<float>& state, float time, const std::vector<float>& melody_input, const int64_t* mode) {
-        time_value = time;
+    auto conditioned = [&](const std::vector<float>& state, double time, const std::vector<float>& melody_input, const int64_t* mode) {
+        time_value = static_cast<float>(time);
         std::vector<TensorView> inputs = {
             view(DType::f32, {1, latent_dim_, frames}, state.data()), view(DType::f32, {1}, &time_value),
             view(DType::i64, {1, frames}, expanded.data()), view(DType::i64, {1}, &voice_id), view(DType::i64, {1}, &language_id),
@@ -758,12 +951,13 @@ SentenceResult Engine::synthesize_sentence(const Sentence& sentence, const Sente
             view(DType::i64, {1, frames}, modifier.data()), view(DType::f32, {1, frames}, phase.data()),
             view(DType::f32, {1, frames}, log_duration.data()), view(DType::i64, {1, frames}, sentence_type.data()),
             view(DType::f32, {1, frames, 3}, melody_input.data())};
+        if (v5_) inputs.push_back(view(DType::f32, {1, identity_dim_}, identity_vector.data()));
         if (feeds_delivery_mode_) inputs.push_back(view(DType::i64, {1}, mode));
         return run(estimator, inputs).values;
     };
-    auto velocity = [&](const std::vector<float>& state, float time) {
+    auto velocity = [&](const std::vector<float>& state, double time) {
         std::vector<float> on = conditioned(state, time, expanded_melody, &mode_id);
-        if (!guided) return on;
+        if (!guided || (guidance_until && time >= *guidance_until - 1e-6)) return on;
         const std::vector<float> base = conditioned(state, time, no_melody, &no_mode);
         for (std::size_t i = 0; i < on.size(); ++i) on[i] = base[i] + scale * (on[i] - base[i]);
         return on;
@@ -779,15 +973,16 @@ SentenceResult Engine::synthesize_sentence(const Sentence& sentence, const Sente
             view(DType::i64, {1, frames}, boundary.data()), view(DType::i64, {1, frames}, modifier.data()), view(DType::f32, {1, frames}, phase.data()),
             view(DType::f32, {1, frames}, log_duration.data()), view(DType::i64, {1, frames}, sentence_type.data()),
             view(DType::f32, {1, frames, 3}, expanded_melody.data())};
+        if (v5_) inputs.push_back(view(DType::f32, {1, identity_dim_}, identity_vector.data()));
         if (feeds_delivery_mode_) inputs.push_back(view(DType::i64, {1}, &mode_id));
         x = run(flow, inputs).values;
     }
     const float n = static_cast<float>(steps), n2 = static_cast<float>(2 * steps);
     for (int step = 0; step < (fused ? 0 : steps); ++step) {
-        std::vector<float> a = velocity(x, static_cast<float>(static_cast<double>(step) / steps));
+        std::vector<float> a = velocity(x, static_cast<double>(step) / steps);
         if (heun) {
             for (std::size_t i = 0; i < x.size(); ++i) probe[i] = x[i] + a[i] / n;
-            std::vector<float> b = velocity(probe, static_cast<float>(static_cast<double>(step + 1) / steps));
+            std::vector<float> b = velocity(probe, static_cast<double>(step + 1) / steps);
             for (std::size_t i = 0; i < x.size(); ++i) x[i] = x[i] + (a[i] + b[i]) / n2;
         } else {
             for (std::size_t i = 0; i < x.size(); ++i) x[i] = x[i] + a[i] / n;
@@ -798,6 +993,7 @@ SentenceResult Engine::synthesize_sentence(const Sentence& sentence, const Sente
     }
 
     SentenceResult result;
+    result.contour = std::move(rendered);
     result.frames = length;
     result.bucket = frames;
     result.durations = durations;
@@ -822,6 +1018,7 @@ SentenceResult Engine::synthesize_sentence(const Sentence& sentence, const Sente
     metadata.set("prefix_frames", Json(static_cast<int64_t>(kept)));
     metadata.set("context_before", Json(std::min(sentence.before_ids.size(), context_phones_)));
     metadata.set("context_after", Json(std::min(sentence.after_ids.size(), context_phones_)));
+    if (v5_) metadata.set("pitch_prefix_frames", Json(static_cast<int64_t>(contour_kept)));
     if (feeds_delivery_mode_ || score_melody) {
         metadata.set("delivery_mode", Json(mode_id));
         metadata.set("melody_source", Json(score_melody ? "score" : "pitch_predictor"));

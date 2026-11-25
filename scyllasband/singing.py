@@ -1,9 +1,10 @@
-"""Singing: a melody score to sung audio on a v4 bundle.
+"""Singing: a melody score to sung audio on a v4 or v5 bundle.
 
 A score (JSON) is ``text``, ``bpm``, ``style`` and ``notes``, an ordered list of ``[label, note, beats]``: ``note`` a pitch
 name with octave (``C4``, ``F#3``, ``Bb3``) or ``rest`` (label ``-``); ``label`` a word on one note, or ``word~n`` for the n-th
 of consecutive parts of one word (syllables, or a melisma holding one syllable over several pitches). ``style`` picks the
-delivery mode: ``pop`` (or ``sung``) and ``ballad``.
+delivery mode: ``pop`` (or ``sung``) and ``ballad`` on a v4 bundle; on a v5 bundle one of the bundle's own style rows
+(:func:`style_modes`: ballad, pop, folk, ... as ``controls.delivery_modes.ids`` names them).
 
 The song is rendered by phrases, the way the model was trained on clips of a few seconds:
 
@@ -22,7 +23,13 @@ The song is rendered by phrases, the way the model was trained on clips of a few
    manifest's singing sampler and steps, no delivery request, no acoustic prefix), decodes it with the singing decoder
    and places it on the song's timeline, so the rests between phrases are silence.
 
-Singing needs a v4 bundle (``controls.delivery_modes.enabled``); see :mod:`scyllasband.contract`.
+Singing needs a v4 or v5 bundle (``controls.delivery_modes.enabled``); see :mod:`scyllasband.contract`. A v5 bundle's
+``controls.delivery_modes.singing`` also gives the guidance and the steps it runs on (``guidance``, ``guidance_steps``:
+all or first_half), the decoder by name (``decoder``, an entry of ``controls.decoders``) and the lowest note that decoder
+holds (``register_floor``). On a v5 bundle the lyrics are also read and timed the way its sung training rows were
+(:func:`line_phones`, :func:`score_durations`): the whole phrase through the G2P without the non-verbal table, cut back
+into the score's words, each word starting no earlier than the one before it ended, with the English pronoun "I"
+stressed; and a note written ``x`` is a word sung with no pitch.
 """
 
 from __future__ import annotations
@@ -51,7 +58,15 @@ VOWELS = frozenset("aeiouyɑɐɒæəɚɛɜɝɪɔʊʌɨʉøœɯɤɵɘɞɶ")
 # 0.51, rap 0.42 (rap at a higher share stretched vowels and squeezed consonants).
 VOWEL_SHARE = {"sung": 0.51, "ballad": 0.51, "rap": 0.42, "spoken": 0.51}
 MAX_CONSONANT_FRAMES = 8
-STYLE_MODES = {"pop": "sung", "sung": "sung", "ballad": "ballad", "rap": "rap"}
+# v5: the vowel set its sung rows were timed with (the first character of a phone once its marks are stripped).
+VOWELS_V5 = VOWELS | frozenset("ᵻ")
+UNVOICED_NOTE = "x"         # v5 scores: a word on this note is sung with no pitch (the melody input stays zero under it)
+STYLE_MODES = {"pop": "sung", "sung": "sung", "ballad": "ballad", "rap": "rap"}   # v4 bundles; v5: style_modes(engine)
+# v5 sung lyrics: the pronoun "I" as its own word (not "I'm", "I'll", "I'd", "I've") is stressed in these languages.
+STRESSED_PRONOUN = frozenset({"i", "I"})
+STRESSED_PRONOUN_LANGUAGES = frozenset({"en_us", "en_gb"})
+# controls.delivery_modes.singing.guidance_steps -> the flow time from which evaluations run unguided (None: never).
+GUIDANCE_STEPS = {"all": None, "first_half": 0.5}
 _NOTE_INDEX = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
 _NOTE_NAMES = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
 _REST_NOTES = frozenset({"rest", "-", "r", ""})
@@ -69,8 +84,12 @@ class Note:
     end: float
 
     @property
+    def rest(self) -> bool:
+        return self.label == "-"
+
+    @property
     def name(self) -> str:
-        return "rest" if self.midi is None else midi_to_note(self.midi)
+        return ("rest" if self.rest else UNVOICED_NOTE) if self.midi is None else midi_to_note(self.midi)
 
 
 @dataclass(frozen=True)
@@ -132,8 +151,10 @@ def midi_to_note(midi: int) -> str:
     return f"{_NOTE_NAMES[int(midi) % 12]}{int(midi) // 12 - 1}"
 
 
-def parse_score(data: Mapping[str, Any]) -> Score:
-    """Validate a score and give it absolute times and words.
+def parse_score(data: Mapping[str, Any], styles: Mapping[str, str] | None = None, *, unvoiced: bool = False) -> Score:
+    """Validate a score and give it absolute times and words. ``styles``: {style: delivery mode} the score may name
+    (:func:`style_modes` of the bundle); the v4 styles by default. ``unvoiced`` (v5 bundles): the note ``x`` is accepted,
+    for a word sung with no pitch.
 
     Words: a bare label is a word on one note (``row row row`` are three words); ``word~1 word~2 ...`` are consecutive
     parts of one word, written either as the whole word on every part (``baby~1 baby~2``, ``home~1 home~2``) or as its
@@ -147,9 +168,10 @@ def parse_score(data: Mapping[str, Any]) -> Score:
         raise ScoreError("Score needs a numeric bpm") from None
     if not math.isfinite(bpm) or bpm <= 0:
         raise ScoreError("Score bpm must be positive")
+    styles = STYLE_MODES if styles is None else styles
     style = str(data.get("style") or "pop").strip().lower()
-    if style not in STYLE_MODES:
-        raise ScoreError(f"Unknown style {style!r}; choose one of {', '.join(sorted(STYLE_MODES))}")
+    if style not in styles:
+        raise ScoreError(f"Unknown style {style!r}; choose one of {', '.join(sorted(styles))}")
     rows = data.get("notes")
     if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)) or not rows:
         raise ScoreError("Score notes must be a non-empty list of [label, note, beats]")
@@ -169,10 +191,11 @@ def parse_score(data: Mapping[str, Any]) -> Score:
             raise ScoreError(f"Note {index + 1} ({label!r}) has a non-numeric length {row[2]!r}") from None
         if not math.isfinite(beats) or beats <= 0:
             raise ScoreError(f"Note {index + 1} ({label!r}) must last a positive number of beats")
-        midi = note_to_midi(name)
+        pitchless = unvoiced and name.strip().lower() == UNVOICED_NOTE
+        midi = None if pitchless else note_to_midi(name)
         start, end = cursor, cursor + beats * beat
         cursor = end
-        rest = midi is None or label in ("-", "")
+        rest = (midi is None and not pitchless) or label in ("-", "")
         notes.append(Note(label if not rest else "-", None if rest else midi, start, end))
         if rest:
             open_part, pieces = 0, []
@@ -202,7 +225,7 @@ def parse_score(data: Mapping[str, Any]) -> Score:
     if [t for t in given if t] != [t for t in expected if t]:
         raise ScoreError(f"Score text does not match the note labels: text has {len(given)} words ({' '.join(text.split()[:8])} ...), "
                          f"the notes spell {len(words)} ({' '.join(w.text for w in words[:8])} ...)")
-    return Score(text=text, bpm=bpm, style=style, mode=STYLE_MODES[style], notes=tuple(notes), words=tuple(words))
+    return Score(text=text, bpm=bpm, style=style, mode=styles[style], notes=tuple(notes), words=tuple(words))
 
 
 def _norm_word(word: str) -> str:
@@ -216,10 +239,24 @@ def singing_modes(engine: Engine) -> list[str]:
     return listed or sorted(m for m in engine.delivery_modes if m != "spoken")
 
 
+def style_modes(engine: Engine) -> dict[str, str]:
+    """{score style: delivery mode} of the bundle. A v4 bundle sings its sung / ballad modes under the styles of
+    ``STYLE_MODES``. A v5 bundle's styles are its own style rows, each its own mode, named as the bundle's table names them
+    (``controls.delivery_modes.ids``), plus ``controls.delivery_modes.aliases`` {alias: style}."""
+    modes = singing_modes(engine)
+    if not engine.v5:
+        return {style: mode for style, mode in STYLE_MODES.items() if mode in modes}
+    table = {mode: mode for mode in modes}
+    for alias, style in (engine.controls["delivery_modes"].get("aliases") or {}).items():
+        if style in modes:
+            table.setdefault(str(alias), str(style))
+    return table
+
+
 def singing_styles(engine: Engine) -> list[str]:
-    """The score styles the bundle accepts, in the order of ``STYLE_MODES`` (pop before sung before ballad)."""
-    modes = set(singing_modes(engine))
-    return [style for style, mode in STYLE_MODES.items() if mode in modes]
+    """The score styles the bundle accepts: in the order of ``STYLE_MODES`` on a v4 bundle (pop before sung before
+    ballad), in the order of its style table on a v5 bundle."""
+    return list(style_modes(engine))
 
 
 # --- register ------------------------------------------------------------------------------------------------------------
@@ -238,6 +275,16 @@ def voice_sung_center(engine: Engine, voice: str) -> float | None:
     melody_center = float(engine.pitch.get("melody_center", 16.65))
     midi_center = float(engine.singing.get("melody", {}).get("midi_center", MIDI_CENTER))
     return (low + high) / 2 - melody_center + midi_center
+
+
+def register_floor(engine: Engine) -> int | None:
+    """The lowest MIDI note the register may put a song on (``controls.delivery_modes.singing.register_floor``, a note
+    name such as F2 or a MIDI number: below it the bundle's singing decoder loses the voiced tone); None when the bundle
+    gives none."""
+    value = engine.singing.get("register_floor")
+    if value is None or isinstance(value, (int, float)):
+        return None if value is None else int(value)
+    return note_to_midi(str(value))
 
 
 def register_shift(score: Score, center: float | None) -> int:
@@ -269,7 +316,7 @@ def split_phrases(score: Score, *, phrase_rest: float = PHRASE_REST, max_seconds
     """Phrases = runs of notes between rests of at least ``phrase_rest`` seconds, packed greedily up to ``max_seconds``
     (lead-in and release excluded); a single run longer than that is cut at its longest internal rest, else at the word
     boundary nearest its middle."""
-    sung = [n for n in score.notes if n.midi is not None]
+    sung = [n for n in score.notes if not n.rest]
     runs: list[list[Note]] = []
     current: list[Note] = []
     for note in sung:
@@ -348,6 +395,146 @@ def _strip_punctuation(phones: list[str], word_starts: list[int]) -> tuple[list[
             starts.append(len(kept))
         kept.append(phone)
     return kept, starts
+
+
+def _sounding(phone: str) -> str:
+    """A phone without its stress, length and combining marks; empty for a token that is only marks."""
+    return "".join(ch for ch in phone if not is_non_acoustic_phone_modifier(ch))
+
+
+def _edit_distance(a: Sequence[str], b: Sequence[str]) -> int:
+    row = list(range(len(b) + 1))
+    for i, x in enumerate(a, 1):
+        previous, row[0] = row[0], i
+        for j, y in enumerate(b, 1):
+            previous, row[j] = row[j], min(row[j] + 1, row[j - 1] + 1, previous + (x != y))
+    return row[-1]
+
+
+def line_phones(words: Sequence[str], phonemize: Callable[..., Mapping[str, Any]], language: str) -> list[list[str]]:
+    """Phones per score word as a v5 model's sung rows have them: the whole phrase is phonemized as one text (so "a" is the
+    weak vowel, "to" is reduced and a linking r is kept), never one word at a time. Where the G2P returns one group per
+    word, those are the words' phones. Where it joins or splits words ("on the" as one group), the phrase's phones are
+    cut into the words by the cut with the least summed edit distance between each piece and that word's own phones read
+    alone, marks aside; a piece is never empty, and one that starts with a length mark costs 2 more. The words read alone
+    only guide the cut. Raises ScoreError when no cut exists.
+
+    The English pronoun "I" standing as its own word is stressed, as the sung rows have it (:func:`stressed_pronoun`)."""
+    def groups(text: str) -> list[list[str]]:
+        result = phonemize(text, language=language)
+        phones, starts = list(result["phones"]), [0, *result["word_starts"], len(result["phones"])]
+        pieces = [[p for p in phones[a:b] if p != SILENCE and not is_punctuation_pause_phone(p)] for a, b in zip(starts[:-1], starts[1:])]
+        return [piece for piece in pieces if piece]
+
+    def sung(pieces: list[list[str]]) -> list[list[str]]:
+        if language not in STRESSED_PRONOUN_LANGUAGES:
+            return pieces
+        return [stressed_pronoun(piece) if word in STRESSED_PRONOUN else piece for word, piece in zip(words, pieces)]
+
+    found = groups(" ".join(words))
+    if len(found) == len(words):
+        return sung(found)
+    core = lambda phones: [c for c in (_sounding(p) for p in phones) if c]   # noqa: E731
+    alone = [[p for group in groups(word) for p in group] for word in words]
+    flat = [p for group in found for p in group]
+    count, size, far = len(words), len(flat), 10 ** 9
+    best = [[far] * (size + 1) for _ in range(count + 1)]
+    back = [[0] * (size + 1) for _ in range(count + 1)]
+    best[0][0] = 0
+    for i in range(1, count + 1):
+        wanted = core(alone[i - 1])
+        for b in range(i, size + 1):
+            for a in range(max(i - 1, b - len(alone[i - 1]) - 6), b):
+                piece = core(flat[a:b])
+                if best[i - 1][a] >= far or not piece:
+                    continue
+                cost = best[i - 1][a] + _edit_distance(piece, wanted) + (2 if flat[a] in ("ː", "ˑ") else 0)
+                if cost < best[i][b]:
+                    best[i][b], back[i][b] = cost, a
+    if best[count][size] >= far:
+        raise ScoreError(f"Could not cut the phrase's phones into its words: {' '.join(words)}")
+    out, b = [], size
+    for i in range(count, 0, -1):
+        a = back[i][b]
+        out.append(flat[a:b])
+        b = a
+    return sung(out[::-1])
+
+
+def stressed_pronoun(phones: Sequence[str]) -> list[str]:
+    """The phones of the pronoun "I" with the primary stress mark in front of its vowel. A v5 model's sung rows have the
+    word stressed ("ˈ a ɪ"); the phrase read leaves it bare ("a ɪ"). A consonant the phrase read links to it stays in
+    front ("ɹ a ɪ" after "for" becomes "ɹ ˈ a ɪ"), and a secondary stress on the vowel becomes the primary one. Phones that
+    already carry a primary stress are returned as they are."""
+    phones = list(phones)
+    if "ˈ" in phones:
+        return phones
+    vowel = next((i for i, phone in enumerate(phones) if _sounding(phone)[:1] and _sounding(phone)[0] in VOWELS_V5), None)
+    if vowel is None:
+        return phones
+    if vowel and phones[vowel - 1] == "ˌ":
+        return phones[:vowel - 1] + ["ˈ"] + phones[vowel:]
+    return phones[:vowel] + ["ˈ"] + phones[vowel:]
+
+
+def word_layout(groups: Sequence[Sequence[str]]) -> tuple[list[str], list[int]]:
+    """Per-word phones in the training layout (``<sil>``, word, ``<sil>``, word, ..., ``<sil>``) and the index of each later
+    word's first phone."""
+    phones, starts = [SILENCE], []
+    for index, group in enumerate(groups):
+        if index:
+            phones.append(SILENCE)
+            starts.append(len(phones))
+        phones.extend(group)
+    phones.append(SILENCE)
+    return phones, starts
+
+
+def score_durations(phones: Sequence[str], word_starts: Sequence[int], words: Sequence[Word], total_frames: int,
+                    vowel_share: float, *, hop: int = HOP, sample_rate: int = SAMPLE_RATE) -> list[int]:
+    """:func:`phone_durations` as a v5 model's sung rows were timed (``phones`` in the layout of :func:`word_layout`). A
+    word starts at its own first frame or where the word before ended, whichever is later, and takes its span or one
+    frame per sounding phone, whichever is more. Its consonants take ``1 - vowel_share`` of that equally (1 to 8 frames
+    each, fewer while the vowels would be left under a frame each) and its vowels (``VOWELS_V5``) the rest; tokens that
+    are only marks take none. The ``<sil>`` after a word runs from where its phones ended to the next word's start; the
+    last one to ``total_frames``, and at least 2 frames."""
+    phones = list(phones)
+    first = next((i for i, p in enumerate(phones) if p != SILENCE), len(phones))
+    starts = [first, *word_starts, len(phones)]
+    if len(starts) - 1 != len(words):
+        raise ScoreError(f"{len(starts) - 1} phonemized words for {len(words)} score words: {[w.text for w in words]}")
+    bounds = [(int(round(w.start * sample_rate / hop)), int(round(w.end * sample_rate / hop))) for w in words]
+    durations = [0] * len(phones)
+    durations[0] = cursor = bounds[0][0]
+    for gi, (g0, g1) in enumerate(zip(starts[:-1], starts[1:])):
+        last = g1 - 1                                   # the <sil> that closes the word
+        if phones[last] != SILENCE or SILENCE in phones[g0:last]:
+            raise ScoreError(f"The phones of {words[gi].text!r} are not one word between two silences")
+        f0, f1 = max(bounds[gi][0], cursor), bounds[gi][1]
+        acoustic = [i for i in range(g0, last) if _sounding(phones[i])]
+        vowels = [i for i in acoustic if _sounding(phones[i])[0] in VOWELS_V5]
+        consonants = [i for i in acoustic if i not in vowels]
+        n = max(f1 - f0, len(acoustic))
+        if vowels:
+            c = min(MAX_CONSONANT_FRAMES, max(1, int(round(n * (1 - vowel_share) / max(1, len(consonants))))))
+            while consonants and n - c * len(consonants) < len(vowels) and c > 1:
+                c -= 1
+        else:
+            c = max(1, n // max(1, len(consonants)))
+        for i in consonants:
+            durations[i] = c
+        left = n - c * len(consonants)
+        if vowels:
+            share, extra = divmod(max(left, len(vowels)), len(vowels))
+            for k, i in enumerate(vowels):
+                durations[i] = share + (1 if k < extra else 0)
+        elif consonants:
+            durations[consonants[-1]] += max(0, left)
+        end = f0 + sum(durations[g0:last])
+        following = bounds[gi + 1][0] if gi + 1 < len(bounds) else max(end + 2, total_frames)
+        durations[last] = max(0, following - end)
+        cursor = end + durations[last]
+    return durations
 
 
 def is_vowel(phone: str) -> bool:
@@ -459,15 +646,17 @@ def plan_song(score: Score | Mapping[str, Any], engine: Engine, voice: str, lang
     """Phrases ready for the engine. ``engine`` supplies the bundle's G2P (with its lexicon), phone vocabulary, manifest
     and bucket limit. ``transpose``: semitones added to the whole score first (to put a song in the voice's key; the
     register is octaves only, so a voice can otherwise sit up to six semitones from its centre). ``register``: then shift
-    the song by octaves into the voice's sung range. ``max_seconds``: the longest phrase; by default what the bundle's
-    largest bucket holds, at most ``MAX_PHRASE_SECONDS``."""
+    the song by octaves into the voice's sung range, and up by further octaves while its lowest note is under the
+    bundle's ``register_floor``. ``max_seconds``: the longest phrase; by default what the bundle's largest bucket holds,
+    at most ``MAX_PHRASE_SECONDS``."""
     if not isinstance(score, Score):
-        score = parse_score(score)
+        score = parse_score(score, style_modes(engine) if engine.v5 else None, unvoiced=engine.v5)
     if not engine.delivery_modes:
         raise ValueError("Singing needs a v4 bundle with delivery modes (controls.delivery_modes); this bundle has none")
-    allowed = singing_styles(engine)
-    if score.style not in allowed:
-        raise ScoreError(f"Style {score.style!r} ({score.mode}) is not a singing style of this bundle; choose one of {', '.join(allowed)}")
+    styles = style_modes(engine)
+    if score.style not in styles:
+        raise ScoreError(f"Style {score.style!r} ({score.mode}) is not a singing style of this bundle; choose one of {', '.join(styles)}")
+    mode = styles[score.style]
     sample_rate = int(engine.manifest.get("audio", {}).get("sample_rate", SAMPLE_RATE))
     hop = int(engine.manifest.get("audio", {}).get("latent_hop_length", HOP))
     melody_spec = engine.singing.get("melody") or {}
@@ -476,16 +665,24 @@ def plan_song(score: Score | Mapping[str, Any], engine: Engine, voice: str, lang
     if transpose:
         score = score.transposed(transpose)
     shift = register_shift(score, voice_sung_center(engine, voice)) if register else 0
+    floor = register_floor(engine)
+    while register and floor is not None and score.pitched and min(score.pitched) + shift < floor:
+        shift += 12
     score = score.transposed(shift)
     longest = (engine.max_frames - 2) * hop / sample_rate - 2 * pad
     max_seconds = min(MAX_PHRASE_SECONDS if max_seconds is None else float(max_seconds), longest)
-    share = VOWEL_SHARE.get(score.mode, VOWEL_SHARE["sung"]) if vowel_share is None else float(vowel_share)
-    plan = SongPlan(score=score, voice=voice, language=language, mode=score.mode, mode_id=engine.delivery_modes[score.mode],
+    share = VOWEL_SHARE.get(mode, VOWEL_SHARE["sung"]) if vowel_share is None else float(vowel_share)
+    plan = SongPlan(score=score, voice=voice, language=language, mode=mode, mode_id=engine.delivery_modes[mode],
                     register_shift=shift, transpose=transpose)
     for index, phrase in enumerate(split_phrases(score, phrase_rest=phrase_rest, max_seconds=max_seconds, pad=pad)):
-        phones, starts = word_phones([w.text for w in phrase.words], engine.phonemize, language)
         total = int(round(phrase.notes[-1].end * sample_rate / hop)) + 2
-        durations = phone_durations(phones, starts, phrase.words, total, share, hop=hop, sample_rate=sample_rate)
+        if engine.v5:   # read and timed as the model's sung rows were: no non-verbal table, the phrase read once
+            plain = lambda text, language: engine.phonemize(text, language=language, nonverbal=False)   # noqa: E731
+            phones, starts = word_layout(line_phones([w.text for w in phrase.words], plain, language))
+            durations = score_durations(phones, starts, phrase.words, total, share, hop=hop, sample_rate=sample_rate)
+        else:
+            phones, starts = word_phones([w.text for w in phrase.words], engine.phonemize, language)
+            durations = phone_durations(phones, starts, phrase.words, total, share, hop=hop, sample_rate=sample_rate)
         frames = int(sum(durations))
         if frames > engine.max_frames:
             raise OverlongError(f"Phrase {index + 1} ({phrase.text[:40]!r}) needs {frames} latent frames, but this bundle holds at most "
@@ -523,9 +720,10 @@ def gate_phrase(audio: np.ndarray, sample_rate: int, *, first: float, last: floa
 def sing(engine: Engine, score: Score | Mapping[str, Any], voice: str, language: str, *, seed: int | None = None,
          steps: int | None = None, sampler: str | None = None, decoder: str | None = None, guidance: float | None = None,
          register: bool = True, transpose: int = 0, progress: TextIO | None = None, **planning: Any) -> "SynthesisResult":
-    """Render a score as one waveform. ``steps``, ``sampler`` and ``decoder`` default to the bundle's singing settings
-    (``controls.delivery_modes.singing``); a preferred decoder the bundle does not carry falls back to vocos. ``seed``:
-    phrase ``i`` draws from ``seed + i``. Extra keyword arguments go to :func:`plan_song`."""
+    """Render a score as one waveform. ``steps``, ``sampler``, ``decoder`` and ``guidance`` default to the bundle's singing
+    settings (``controls.delivery_modes.singing``); on a v4 bundle a preferred decoder the bundle does not carry falls
+    back to vocos, on a v5 bundle only when the manifest marks that decoder ``required: false``. ``seed``: phrase ``i``
+    draws from ``seed + i``. Extra keyword arguments go to :func:`plan_song`."""
     from .runtime import SynthesisResult
     plan = plan_song(score, engine, voice, language, register=register, transpose=transpose, **planning)
     singing = engine.singing
@@ -535,10 +733,17 @@ def sing(engine: Engine, score: Score | Mapping[str, Any], voice: str, language:
         raise ValueError(f"Unsupported sampler {sampler!r}; choose heun or euler")
     preferred = str(singing.get("decoder") or "vocos")
     if decoder is None:
-        decoder = preferred if engine.decoder_graphs.get(preferred) else "vocos"
+        needed = engine.v5 and engine.decoders.get(preferred, {}).get("required") is not False
+        decoder = preferred if engine.decoder_graphs.get(preferred) or needed else "vocos"
     if not engine.decoder_graphs.get(decoder):
         raise ValueError(f"This bundle has no {decoder!r} decoder; it has {', '.join(k for k, v in engine.decoder_graphs.items() if v)}")
+    if guidance is None and engine.v5 and "guidance" not in singing:
+        raise ValueError("This v5 bundle states no singing guidance (controls.delivery_modes.singing.guidance); pass guidance")
     guidance = float(singing.get("guidance", 1.0) if guidance is None else guidance)
+    guidance_steps = str(singing.get("guidance_steps") or "all")
+    if guidance_steps not in GUIDANCE_STEPS:
+        raise ValueError(f"Unknown controls.delivery_modes.singing.guidance_steps {guidance_steps!r}; "
+                         f"this runtime knows {', '.join(GUIDANCE_STEPS)}")
     sample_rate = int(engine.manifest.get("audio", {}).get("sample_rate", SAMPLE_RATE))
     # No delivery request: sung clips were trained without intensity or pace, and the score sets the timing.
     delivery = (np.zeros((1, 5), np.float32), np.zeros((1, 5), bool))
@@ -552,9 +757,9 @@ def sing(engine: Engine, score: Score | Mapping[str, Any], voice: str, language:
         rng = np.random.default_rng(None if seed is None else int(seed) + item.index)
         result = engine.synthesize_sentence(item.sentence, voice=voice, language=language, delivery=delivery, steps=steps, sampler=sampler,
                                             rng=rng, durations=item.durations, melody=item.melody, delivery_mode=plan.mode_id,
-                                            guidance=guidance)
+                                            guidance=guidance, guidance_until=GUIDANCE_STEPS[guidance_steps])
         audio = gate_phrase(engine.decode(result.latents, voice=voice, language=language, decoder=decoder), sample_rate,
-                            first=phrase.notes[0].start, last=max(n.end for n in phrase.notes if n.midi is not None))
+                            first=phrase.notes[0].start, last=max(n.end for n in phrase.notes if not n.rest))
         offset = int(round(phrase.start * sample_rate))
         if offset < 0:
             audio, offset = audio[-offset:], 0
@@ -565,4 +770,6 @@ def sing(engine: Engine, score: Score | Mapping[str, Any], voice: str, language:
     song = np.clip(song[:int(math.ceil(plan.seconds * sample_rate))], -1.0, 1.0)
     metadata = dict(plan.to_dict(), phrases=rendered, steps=steps, sampler=sampler, decoder=decoder, guidance=guidance, seed=seed,
                     graph_contract=engine.graph_contract)
+    if guidance_steps != "all":
+        metadata.update(guidance_steps=guidance_steps)
     return SynthesisResult(audio=song, sample_rate=sample_rate, metadata=metadata)

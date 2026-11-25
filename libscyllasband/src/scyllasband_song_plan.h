@@ -7,6 +7,10 @@
 // flow's layout (frame_melody: per frame (midi - midi_center) / midi_scale, the phase inside the note and 1 where a note
 // sounds; zeros on rests). resolve_sing_request is the one place a request is checked (voice, language, style, decoder,
 // steps, sampler, guidance); song_fit reports how a song sits in a voice's range without any graph.
+//
+// On a v5 bundle the lyrics are read and timed the way its sung training rows were (line_phones, word_layout,
+// score_durations): the whole phrase through the G2P without the non-verbal table, cut back into the score's words, each
+// word starting no earlier than the one before it ended, with the English pronoun "I" stressed.
 #pragma once
 
 #include "scyllasband_errors.h"
@@ -28,6 +32,7 @@ namespace scyllasband {
 class SongFrontend {
 public:
     virtual ~SongFrontend() = default;
+    // The lyrics' phones: read without the v5 non-verbal table (sung rows were labelled without it).
     virtual Phonemized phonemize(const std::string& text, const std::string& language) = 0;
     // The language to sing `voice` in (empty `language`: the voice's default); throws for an unknown voice or language.
     virtual std::string resolve_language(const std::string& voice, const std::string& language) const = 0;
@@ -45,10 +50,40 @@ public:
 // lists none), and the score styles it accepts, in the order styles are listed.
 std::vector<std::string> singing_modes(const SingingControls& controls);
 std::vector<std::string> singing_styles(const SingingControls& controls);
+// {score style: delivery mode} of the bundle. A v4 bundle sings its sung / ballad modes under the styles of style_modes()
+// (pop before sung before ballad). A v5 bundle's styles are its own style rows, each its own mode, in the order of its
+// table, plus its aliases.
+StyleTable style_table(const SingingControls& controls);
+// The score in `text` as the bundle reads it: a v5 bundle's own styles and the note "x"; the v4 styles otherwise.
+Score parse_bundle_score(const std::string& text, const SingingControls& controls);
+// Octaves (as semitones) that move the score into the voice's sung range (register_shift), then up by further octaves while
+// its lowest note is under the bundle's register_floor.
+int bundle_register_shift(const SingingControls& controls, const Score& score, const std::string& voice);
 
 // Phones in the training layout (<sil>, word, <sil>, word, ..., <sil>) and each later word's first phone.
 std::pair<std::vector<std::string>, std::vector<int>> word_phones(const std::vector<std::string>& words, SongFrontend& frontend,
                                                                   const std::string& language);
+// Phones per score word as a v5 model's sung rows have them: the whole phrase is phonemized as one text (so "a" is the weak
+// vowel, "to" is reduced and a linking r is kept), never one word at a time. Where the G2P returns one group per word, those
+// are the words' phones. Where it joins or splits words ("on the" as one group), the phrase's phones are cut into the words
+// by the cut with the least summed edit distance between each piece and that word's own phones read alone, marks aside; a
+// piece is never empty, and one that starts with a length mark costs 2 more. The words read alone only guide the cut. The
+// English pronoun "I" standing as its own word is stressed (stressed_pronoun). Throws ScoreError when no cut exists.
+std::vector<std::vector<std::string>> line_phones(const std::vector<std::string>& words, SongFrontend& frontend, const std::string& language);
+// The phones of the pronoun "I" with the primary stress mark in front of its vowel: a v5 model's sung rows have the word
+// stressed ("ˈ a ɪ"); the phrase read leaves it bare ("a ɪ"). A consonant the phrase read links to it stays in front
+// ("ɹ a ɪ" after "for" becomes "ɹ ˈ a ɪ"), and a secondary stress on the vowel becomes the primary one. Phones that already
+// carry a primary stress are returned as they are.
+std::vector<std::string> stressed_pronoun(const std::vector<std::string>& phones);
+// Per-word phones in the training layout (<sil>, word, <sil>, word, ..., <sil>) and the index of each later word's first phone.
+std::pair<std::vector<std::string>, std::vector<int>> word_layout(const std::vector<std::vector<std::string>>& groups);
+// phone_durations as a v5 model's sung rows were timed (`phones` in the layout of word_layout). A word starts at its own
+// first frame or where the word before ended, whichever is later, and takes its span or one frame per sounding phone,
+// whichever is more. Its consonants take 1 - vowel_share of that equally (1 to 8 frames each, fewer while the vowels would be
+// left under a frame each) and its vowels the rest; tokens that are only marks take none. The <sil> after a word runs from
+// where its phones ended to the next word's start; the last one to total_frames, and at least 2 frames.
+std::vector<int> score_durations(const std::vector<std::string>& phones, const std::vector<int>& word_starts, const std::vector<ScoreWord>& words,
+                                 int64_t total_frames, double vowel_share, int hop, int sample_rate);
 bool is_vowel(const std::string& phone);
 std::vector<int> phone_durations(const std::vector<std::string>& phones, const std::vector<int>& word_starts, const std::vector<ScoreWord>& words,
                                  int64_t total_frames, double vowel_share, int hop, int sample_rate);
@@ -101,6 +136,8 @@ struct SingSettings {
     int steps = 8;
     std::string sampler = "heun", decoder = "vocos";
     double guidance = 1.0;
+    std::string guidance_steps = "all";    // the bundle's: all, or first_half
+    std::optional<double> guidance_until;  // the flow time from which evaluations run unguided (first_half: 0.5)
 };
 
 // A checked request: the voice (stripped), its language, the parsed score (style checked against the bundle) and the

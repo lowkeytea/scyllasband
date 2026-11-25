@@ -15,6 +15,7 @@ SCYLLASBAND_API void scyllasband_test_free(void* pointer);
 
 /* Text frontend without a runtime. */
 SCYLLASBAND_API int32_t scyllasband_test_normalize(const char* text, const char* language, char** out_text);
+SCYLLASBAND_API int32_t scyllasband_test_nonverbal_spellings(const char* text, const char* language, char** out_text);
 SCYLLASBAND_API int32_t scyllasband_test_split_sentences(const char* text, char** out_json);
 SCYLLASBAND_API int32_t scyllasband_test_punctuated_segments(const char* text, int32_t max_chars, char** out_json);
 SCYLLASBAND_API int32_t scyllasband_test_unicode(const char* text, const char* operation /* "lower" | "nfc" */, char** out_text);
@@ -25,10 +26,13 @@ SCYLLASBAND_API int32_t scyllasband_test_phonemize(ScyllasBandRuntime* runtime, 
 /*
  * One sentence from explicit inputs. request_json: {"phones", "word_starts", "before_ids", "after_ids", "voice", "language",
  * "delivery", "steps", "sampler", "speed", "durations" (optional: skip the duration graph); for a sung target (v4) also
- * "melody" ([frames * 3] row-major: replaces the pitch predictor), "delivery_mode", "guidance" and "decoder" (vocos | bigvgan)}.
+ * "melody" ([frames * 3] row-major: replaces the pitch predictor), "delivery_mode", "guidance", "guidance_until" and "decoder"
+ * (vocos | bigvgan); for a spoken target of a v5 bundle also "style" (its style row), "controlled" (false: intensity and pace
+ * unset, as for rap), "sentence_starts", "min_pauses" and "pitch_prefix" ([2 * n] row-major: the contours rendered so far)}.
  * noise: [2 + latent_dim, noise_frames] row-major (the pitch predictor's two rows, then the flow's); noise_frames must equal the sentence's latent frames. NULL noise only
  * predicts durations. prefix: [latent_dim, prefix_frames] previously spoken latents (flow prefix and decode context).
- * out_json: {"durations", "latent_frames", "bucket", ...}; out_latents [latent_dim, frames]; out_audio samples.
+ * out_json: {"durations", "latent_frames", "bucket", "contour" ([2 * frames]: the rendered pitch contour), ...}; out_latents
+ * [latent_dim, frames]; out_audio samples.
  */
 SCYLLASBAND_API int32_t scyllasband_test_synthesize_sentence(ScyllasBandRuntime* runtime, const char* request_json, const float* noise,
                                                              int64_t noise_frames, const float* prefix, int64_t prefix_frames, char** out_json,

@@ -141,9 +141,10 @@ G2P::G2P(const std::string& bundle_dir, const Json& manifest, const std::map<std
         }
     }
     // The runtime lexicon (lexicon.py), then the bundle's word entries (g2p_phoneme_dict), which add or replace words.
-    for (const LexiconEntry& entry : kLexiconInitialisms) {
+    for (const LexiconInitialism& entry : kLexiconInitialisms) {
         std::vector<std::string> phones = split_lexicon_phones(entry.phones, phone_to_id_);
         if (!phones.empty()) lexicon_initialisms_[entry.language][entry.word] = phones;
+        if (entry.capitals_only) lexicon_capitals_only_[entry.language].insert(entry.word);
     }
     auto add_word = [&](const std::string& language, const std::string& word, const std::string& phones) {
         std::string key = encode(lower(strip(decode(word))));
@@ -152,6 +153,50 @@ G2P::G2P(const std::string& bundle_dir, const Json& manifest, const std::map<std
         if (!split.empty()) lexicon_words_[language][key] = split;
     };
     for (const LexiconEntry& entry : kLexiconWords) add_word(entry.language, entry.word, entry.phones);
+    for (const LexiconContextWord& entry : kLexiconContextWords) {
+        std::vector<std::string> phones = split_lexicon_phones(entry.phones, phone_to_id_);
+        if (phones.empty()) continue;
+        ContextWord rule{entry.word, std::move(phones), {}, {}, entry.phrase_end};
+        for (const Text& word : split_whitespace(decode(entry.after))) rule.after.insert(encode(word));
+        for (const Text& word : split_whitespace(decode(entry.before))) rule.before.insert(encode(word));
+        context_words_[entry.language].push_back(std::move(rule));
+    }
+    // A v5 model was trained on its own phones for non-verbal sounds ("Uh-uh", "Hmm", "Psst"); earlier models were not.
+    const std::string contract = controls.get("graph_input_contract").str();
+    if (contract == "scyllasband_measured_controls_v5" || contract == "scyllasband_measured_controls_v5_1") {
+        const NonverbalPhoneTable& table = nonverbal_phone_table();
+        for (const auto& [word, phones] : table.words) {
+            std::vector<std::vector<std::string>> parts(1);
+            std::set<std::string> unknown;
+            for (const Text& symbol : split_whitespace(decode(phones))) {
+                const std::string phone = encode(symbol);
+                if (phone == "|") {
+                    parts.emplace_back();
+                    continue;
+                }
+                if (!phone_to_id_.count(phone)) unknown.insert(phone);
+                parts.back().push_back(phone);
+            }
+            const bool empty_part = std::any_of(parts.begin(), parts.end(), [](const std::vector<std::string>& part) { return part.empty(); });
+            if (!unknown.empty() || empty_part) {
+                std::string list;
+                for (const std::string& phone : unknown) list += (list.empty() ? "" : " ") + phone;
+                throw std::invalid_argument("Non-verbal entry '" + word + "' needs phones outside this bundle's vocabulary: " + list);
+            }
+            nonverbal_[word] = std::move(parts);
+        }
+        for (const auto& [phrase, word] : table.phrases) {
+            std::vector<Text> tokens = split_whitespace(lower(decode(phrase)));
+            auto entry = nonverbal_.find(word);
+            if (entry == nonverbal_.end() || entry->second.size() != tokens.size()) {
+                throw std::invalid_argument("Non-verbal phrase '" + phrase + "' needs an entry '" + word + "' with one part per word");
+            }
+            nonverbal_phrases_.emplace_back(std::move(tokens), word);
+        }
+        std::stable_sort(nonverbal_phrases_.begin(), nonverbal_phrases_.end(),
+                         [](const auto& a, const auto& b) { return a.first.size() > b.first.size(); });
+        nonverbal_languages_.insert(table.locales.begin(), table.locales.end());
+    }
     if (assets.has("g2p_phoneme_dict")) {
         try {
             Json words = Json::parse_file(asset("g2p_phoneme_dict"));
@@ -191,9 +236,9 @@ std::string G2P::model_language(const std::string& language) const {
     return mapped.is_string() ? mapped.str() : normalized;
 }
 
-Phonemized G2P::phonemize(const std::string& text, const std::string& language) {
+Phonemized G2P::phonemize(const std::string& text, const std::string& language, bool nonverbal) {
     std::string model = model_language(language);
-    std::string key = model + '\x1f' + text;
+    std::string key = model + '\x1f' + (nonverbal ? "" : "\x1e") + text;
     std::lock_guard<std::mutex> lock(mutex_);
     for (auto it = cache_.begin(); it != cache_.end(); ++it) {
         if (it->first == key) {
@@ -201,21 +246,21 @@ Phonemized G2P::phonemize(const std::string& text, const std::string& language) 
             return cache_.front().second;
         }
     }
-    Phonemized result = run(decode(text), model);
+    Phonemized result = run(decode(text), model, nonverbal);
     cache_.emplace_front(key, result);
     if (cache_.size() > kCacheSize) cache_.pop_back();
     return result;
 }
 
-Phonemized G2P::run(const Text& text, const std::string& language) {
+Phonemized G2P::run(const Text& text, const std::string& language, bool nonverbal) {
     Phonemized out;
     std::vector<std::string>& phones = out.phones;
     phones.push_back(kSilence);
     std::vector<double> confidences;
-    auto segments = punctuated_segments(text, chunk_max_chars_);
+    auto segments = marked_segments(text, chunk_max_chars_);
     for (std::size_t index = 0; index < segments.size(); ++index) {
-        const auto& [segment, tokens] = segments[index];
-        Prediction prediction = predict_segment(segment, language);
+        const auto& [segment, tokens, tight] = segments[index];
+        Prediction prediction = predict_segment(segment, language, nonverbal);
         confidences.push_back(prediction.confidence);
         for (const Json& item : prediction.overrides.elements()) out.pronunciation_overrides.push(item);
         for (const Json& item : prediction.repairs.elements()) out.terminal_tail_repairs.push(item);
@@ -249,6 +294,7 @@ Phonemized G2P::run(const Text& text, const std::string& language) {
                 out.punctuation.push(std::move(event));
                 phones.push_back(token);
                 phones.push_back(kSilence);
+                if (tight && token == "<pause_dash>") out.min_pause_phones.push_back(static_cast<int>(phones.size()) - 1);
             }
         }
         out.segments.push_back(encode(segment));
@@ -270,8 +316,8 @@ Phonemized G2P::run(const Text& text, const std::string& language) {
     return out;
 }
 
-G2P::Prediction G2P::predict_segment(const Text& text, const std::string& language) {
-    const std::string key = language + '\x1f' + encode(text);
+G2P::Prediction G2P::predict_segment(const Text& text, const std::string& language, bool nonverbal) {
+    const std::string key = language + '\x1f' + (nonverbal ? "" : "\x1e") + encode(text);
     for (auto it = segment_cache_.begin(); it != segment_cache_.end(); ++it) {
         if (it->first == key) {
             segment_cache_.splice(segment_cache_.begin(), segment_cache_, it);
@@ -279,7 +325,7 @@ G2P::Prediction G2P::predict_segment(const Text& text, const std::string& langua
         }
     }
     Prediction prediction = predict_repaired(text, language);
-    apply_lexicon(prediction, text, language);
+    apply_lexicon(prediction, text, language, nonverbal);
     segment_cache_.emplace_front(key, prediction);
     if (segment_cache_.size() > kCacheSize) segment_cache_.pop_back();
     return prediction;
@@ -406,23 +452,65 @@ void G2P::apply_overrides(Prediction& prediction, const Text& text, const std::s
     }
 }
 
-std::vector<std::string> G2P::lexicon_entry(const Text& token, const std::string& language, bool initialisms) const {
+std::vector<std::string> G2P::lexicon_entry(const Text& token, const std::string& language, bool mixed_case) const {
     auto words = lexicon_words_.find(language);
     if (words != lexicon_words_.end()) {
-        auto it = words->second.find(encode(lower(token)));
+        const Text lowered = lower(token);
+        auto it = words->second.find(encode(lowered));
         if (it != words->second.end()) return it->second;
+        // A possessive "'s" on a word entry ("Garcia's"): lexicon.possessive_phones.
+        for (const Text& suffix : {Text(U"'s"), Text(U"\u2019s")}) {
+            if (lowered.size() <= suffix.size() || lowered.compare(lowered.size() - suffix.size(), suffix.size(), suffix) != 0) continue;
+            auto base = words->second.find(encode(lowered.substr(0, lowered.size() - suffix.size())));
+            if (base == words->second.end()) continue;
+            std::vector<std::string> phones = base->second;
+            std::string last;
+            for (auto p = phones.rbegin(); p != phones.rend(); ++p) {
+                if (*p != "ˈ" && *p != "ˌ" && *p != "ː") { last = *p; break; }
+            }
+            if (last == "s" || last == "z" || last == "ʃ" || last == "ʒ") { phones.push_back("ɪ"); phones.push_back("z"); }
+            else if (last == "p" || last == "t" || last == "k" || last == "f" || last == "θ") phones.push_back("s");
+            else phones.push_back("z");
+            return phones;
+        }
     }
-    if (!initialisms) return {};
     auto table = lexicon_initialisms_.find(language);
     if (table == lexicon_initialisms_.end()) return {};
-    auto exact = table->second.find(encode(token));
-    if (exact != table->second.end()) return exact->second;
+    auto capitals_only = lexicon_capitals_only_.find(language);
+    // Lexicon._initialism: a listed initialism that is never a word, in capitals or in lower case, also in text written all
+    // in capitals; in capitals inside mixed-case text, one that is also a word ("US") or any other word in capitals with no
+    // vowel letter, read letter by letter.
+    auto initialism = [&](const Text& word) -> std::vector<std::string> {
+        const Text capitals = upper(word);
+        const std::string key = encode(capitals);
+        auto listed = table->second.find(key);
+        bool also_word = capitals_only != lexicon_capitals_only_.end() && capitals_only->second.count(key);
+        if (listed != table->second.end() && !also_word && (word == capitals || word == lower(word))) return listed->second;
+        if (!mixed_case || word != capitals) return {};
+        listed = table->second.find(encode(word));
+        if (listed != table->second.end()) return listed->second;
+        if (word.size() < 2 || word.size() > kLexiconSpelledMaxLetters) return {};
+        std::string phones;
+        for (std::size_t i = 0; i < word.size(); ++i) {
+            if (word[i] < 'A' || word[i] > 'Z' || std::string_view(kLexiconVowelLetters).find(static_cast<char>(word[i])) != std::string_view::npos) return {};
+            std::string letter;
+            for (const LexiconLetter& entry : kLexiconLetters) {
+                if (language == entry.language && word[i] == static_cast<char32_t>(entry.letter)) letter = entry.phones;
+            }
+            if (letter.empty()) return {};
+            std::size_t stress = letter.find("{s}");  // lexicon.initialism_phones: primary stress on the last letter
+            if (stress != std::string::npos) letter.replace(stress, 3, i + 1 < word.size() ? "ˌ" : "ˈ");
+            phones += letter;
+        }
+        return split_lexicon_phones(phones, phone_to_id_);
+    };
+    std::vector<std::string> exact = initialism(token);
+    if (!exact.empty()) return exact;
     for (const char* suffix_utf8 : kLexiconPluralSuffixes) {  // a plural or possessive initialism: "GPUs", "CPU's"
         Text suffix = decode(suffix_utf8);
         if (token.size() < suffix.size() || token.compare(token.size() - suffix.size(), suffix.size(), suffix) != 0) continue;
-        auto base = table->second.find(encode(token.substr(0, token.size() - suffix.size())));
-        if (base == table->second.end()) continue;
-        std::vector<std::string> phones = base->second;
+        std::vector<std::string> phones = initialism(token.substr(0, token.size() - suffix.size()));
+        if (phones.empty()) continue;
         phones.push_back(kLexiconPluralPhone);
         return phones;
     }
@@ -432,13 +520,84 @@ std::vector<std::string> G2P::lexicon_entry(const Text& token, const std::string
 // g2p.py _apply_lexicon: replace the phones of lexicon words. When the prediction has one word group per word, each entry
 // replaces its own group; otherwise (the G2P joins some function words) the text between lexicon words is predicted on its
 // own and joined with the entries.
-void G2P::apply_lexicon(Prediction& prediction, const Text& text, const std::string& language) {
+std::map<std::size_t, std::vector<std::string>> G2P::nonverbal_hits(const std::vector<Text>& tokens, const std::string& language) const {
+    std::map<std::size_t, std::vector<std::string>> found;
+    if (nonverbal_.empty() || !nonverbal_languages_.count(language)) return found;
+    // lexicon._split_token: a token as (leading marks, word, trailing marks); quotes and brackets around a word are not part of it.
+    struct Split {
+        Text word;
+        bool leading, trailing;
+    };
+    std::vector<Split> split;
+    for (const Text& token : tokens) {
+        std::size_t start = 0, end = token.size();
+        while (start < end && !is_alnum(token[start])) ++start;
+        while (end > start && !is_alnum(token[end - 1])) --end;
+        split.push_back(Split{token.substr(start, end - start), start > 0, end < token.size()});
+    }
+    for (const auto& [phrase, word] : nonverbal_phrases_) {
+        const std::size_t size = phrase.size();
+        for (std::size_t start = 0; start + size <= tokens.size(); ++start) {
+            bool matches = true;
+            for (std::size_t k = 0; k < size && matches; ++k) {
+                matches = !found.count(start + k) && lower(split[start + k].word) == phrase[k] && !(k + 1 < size && split[start + k].trailing) &&
+                          !(k > 0 && split[start + k].leading);
+            }
+            if (!matches) continue;
+            const std::vector<std::vector<std::string>>& parts = nonverbal_.at(word);
+            for (std::size_t k = 0; k < size; ++k) found[start + k] = parts[k];
+        }
+    }
+    for (std::size_t index = 0; index < split.size(); ++index) {
+        const Text& core = split[index].word;
+        if (found.count(index) || core.empty() || !std::all_of(core.begin(), core.end(), is_alpha)) continue;
+        auto entry = nonverbal_.find(encode(lower(core)));
+        if (entry == nonverbal_.end()) continue;
+        std::vector<std::string> joined;
+        for (const std::vector<std::string>& part : entry->second) joined.insert(joined.end(), part.begin(), part.end());
+        found[index] = std::move(joined);
+    }
+    return found;
+}
+
+std::map<std::size_t, std::vector<std::string>> G2P::context_hits(const std::vector<Text>& tokens, const std::string& language) const {
+    std::map<std::size_t, std::vector<std::string>> found;
+    auto rules = context_words_.find(language);
+    if (rules == context_words_.end()) return found;
+    std::vector<std::string> words;  // lexicon._split_token: the word without the marks around it, in lower case
+    for (const Text& token : tokens) {
+        std::size_t start = 0, end = token.size();
+        while (start < end && !is_alnum(token[start])) ++start;
+        while (end > start && !is_alnum(token[end - 1])) --end;
+        words.push_back(encode(lower(token.substr(start, end - start))));
+    }
+    for (std::size_t i = 0; i < words.size(); ++i) {
+        const std::string previous = i > 0 ? words[i - 1] : std::string();
+        const std::string following = i + 1 < words.size() ? words[i + 1] : std::string();
+        for (const ContextWord& rule : rules->second) {
+            if (words[i] == rule.word && (rule.after.empty() || rule.after.count(previous)) &&
+                (rule.before.empty() || rule.before.count(following)) && (!rule.phrase_end || i + 1 == words.size())) {
+                found[i] = rule.phones;
+                break;
+            }
+        }
+    }
+    return found;
+}
+
+void G2P::apply_lexicon(Prediction& prediction, const Text& text, const std::string& language, bool nonverbal) {
     std::vector<Text> tokens = split_whitespace(text);
-    bool initialisms = std::any_of(text.begin(), text.end(), [](char32_t c) { return c >= 'a' && c <= 'z'; });
-    std::map<std::size_t, std::vector<std::string>> hits;
+    bool mixed_case = std::any_of(text.begin(), text.end(), [](char32_t c) { return c >= 'a' && c <= 'z'; });  // lexicon.has_lowercase
+    std::map<std::size_t, std::vector<std::string>> hits = nonverbal ? nonverbal_hits(tokens, language) : std::map<std::size_t, std::vector<std::string>>{};
+    const std::map<std::size_t, std::vector<std::string>> context = context_hits(tokens, language);
     for (std::size_t i = 0; i < tokens.size(); ++i) {
-        std::vector<std::string> entry = lexicon_entry(tokens[i], language, initialisms);
-        if (!entry.empty()) hits[i] = std::move(entry);
+        if (hits.count(i)) continue;
+        std::vector<std::string> entry = lexicon_entry(tokens[i], language, mixed_case);
+        if (!entry.empty()) {
+            hits[i] = std::move(entry);
+        } else if (auto rule = context.find(i); rule != context.end()) {
+            hits[i] = rule->second;
+        }
     }
     if (hits.empty()) return;
     std::vector<std::size_t> words;
@@ -478,7 +637,7 @@ void G2P::apply_lexicon(Prediction& prediction, const Text& text, const std::str
             if (k) part_text += U" ";
             part_text += piece[k];
         }
-        Prediction part = predict_segment(part_text, language);
+        Prediction part = predict_segment(part_text, language, nonverbal);
         joined.insert(joined.end(), part.phones.begin(), part.phones.end());
         confidences.push_back(part.confidence);
         piece.clear();

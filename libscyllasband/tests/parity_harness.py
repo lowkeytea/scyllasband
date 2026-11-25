@@ -11,12 +11,15 @@ as the Python reference):
 - long-form: identical plans; synthesis with a fixed seed runs end to end; with the reference's noise injected, the
   native loop speaks the same targets (ids, texts, phones, durations, context and prefix sizes, seeds) and the whole
   waveform matches the reference;
-- singing (v4 bundles): identical phrase plans (phones, durations, melody input, register) for every voice and score; per
-  phrase, latents and audio given the same noise with each decoder (vocos, and bigvgan where the bundle has it); whole songs
-  with the reference's noise injected.
+- singing (v4 and v5 bundles): identical phrase plans (phones, durations, melody input, register) for every voice and score;
+  per phrase, latents and audio given the same noise with each decoder (vocos, and bigvgan where the bundle has it); whole
+  songs with the reference's noise injected;
+- v5 bundles: the typed spellings of non-verbal words; lines that use the v5 rules (non-verbal phones, an opening "Uh-uh", a
+  one-word sentence, a paragraph, rap, other languages), each spoken whole by both loops with the reference's noise: the
+  same targets, phones and durations, and the waveform's SNR and largest sample difference.
 
 Usage: PYTHONPATH=<repo> python parity_harness.py --library libscyllasband_native.so --bundle <bundle> [--report out.json]
-       [--melodies <dir of score JSON files>] [--skip-speech]
+       [--melodies <dir of score JSON files>] [--skip-speech] [--checks sentences lines ...]
 """
 
 from __future__ import annotations
@@ -41,6 +44,7 @@ TEXTS = (
     ("question", "Did you really leave the gate open all night? What were you thinking?"),
     ("statement", "Please put the small blue box beside the kitchen window, then close the door behind you."),
     ("lexicon", "Two GPUs ran pytest on a new git branch, then beat Whisper Large V3 on LibriSpeech in the TV room."),
+    ("spelled", "The PTWC and two more PTWCs told NASA that the NPR feed's down."),
 )
 # Long-form only, as paragraphs of their own: short sentences the streaming loop packs together, one sentence longer
 # than the model was trained on, which it cuts at clauses, and a passage without punctuation, which it cuts between words.
@@ -75,9 +79,33 @@ SCORES = {
                         ["by", "A4", 0.5], ["the", "G4", 0.5], ["wa~1", "E4", 1.0], ["ter~2", "D4", 1.0], ["all", "C4", 0.5], ["night~1", "D4", 1.0],
                         ["night~2", "E4", 1.0], ["long", "C4", 3.0]]),
 }
+# v5 bundles: lyrics with the pronoun "I" (stressed as its own word, also after a linking r; not in "I'm" or "I'll").
+SCORES_V5 = {
+    "pronoun": dict(text="for I know I'm here and I will stay", bpm=100, style="folk",
+                    notes=[["for", "E4", 0.5], ["I", "G4", 0.5], ["know", "A4", 1.0], ["I'm", "G4", 0.5], ["here", "E4", 1.5], ["-", "rest", 1.0],
+                           ["and", "D4", 0.5], ["I", "E4", 0.5], ["will", "G4", 0.5], ["stay", "E4", 2.0]]),
+    "carried": dict(text="i carried your heart and i'll wait for you there", bpm=92, style="ballad",
+                    notes=[["i", "C4", 0.5], ["car~1", "E4", 0.5], ["ried~2", "E4", 0.5], ["your", "D4", 0.5], ["heart", "G4", 1.5], ["-", "rest", 0.5],
+                           ["and", "E4", 0.5], ["i'll", "E4", 0.5], ["wait", "G4", 1.0], ["for", "E4", 0.5], ["you", "D4", 0.5], ["there", "C4", 2.0]]),
+}
 SING_SEED = 7
+# v5 bundles: lines for the rules a v5 bundle adds, each spoken whole by both loops: (label, voice, language, style, text).
+V5_LINES = (
+    ("nonverbal", "scylla", None, None, "Hmm, I thought so. Ugh, the rain again... Phew! That was close, haha. Psst, over here. Mhm."),
+    ("opening_uh_uh", "scylla", None, None, "Uh-uh, I am not doing that again. Nuh-uh! You said that last time, uhuh, and look what happened."),
+    ("one_word", "ink", None, None, "Really. I had no idea the bridge was closed. No. Not since the flood."),
+    ("paragraph", "ink", None, None,
+     "The ferry left at noon, as it always did. Nobody noticed the missing crate until the far shore, where the harbour master counted "
+     "the cargo twice and frowned. A-hem, he said, somebody owes me an explanation. Well? The captain shrugged; the mate looked at his "
+     "boots. It was, everyone agreed later, a very long afternoon."),
+    ("rap", "scylla", None, "rap", "I keep the rhythm steady when the lights go low, every word a footstep and I let them flow. No pause, no doubt, just the beat and me."),
+    ("german", "scylla", "de", None, "Guten Morgen! Der Zug nach Hamburg fährt heute von Gleis sieben ab. Bitte beeilen Sie sich."),
+    ("vietnamese", "ink", "vi", None, "Xin chào các bạn. Hôm nay trời đẹp quá, chúng ta đi dạo một chút nhé?"),
+)
 
 FRONTEND_CORPUS = (
+    "Hm, I had not thought of that. Hhhmmm... maybe.", "Mm-hmm, go on; mm hmm. Uh huh, sure. Shhh, listen. Uhh, ummm, errm, heh.",
+    "The HMM model, H.M.M., 5 mm, Sh! Sh is a symbol. MHM, SHH, UH-HUH.",
     "Meet me at 9 a.m. Then we leave.", "It ends at 5 p.m.", "The U.S. Army and the U.K. Navy met.", "Dr. Smith met Mrs. Jones on Main Dr. today.",
     "I paid $3.50, then £12 and 40€ — or 1.234,56 EUR?", "On Jan. 5, 2024 we had 25% more; by 3/4/2025 it was 1/2.",
     "Call me at 10:30pm or 7:05 AM.", "She came 1st, he was 22nd, and they were 103rd.", "Email jane.doe+tts@example.co.uk or ping @scylla.",
@@ -87,12 +115,16 @@ FRONTEND_CORPUS = (
     "Whisper Large V3 beat v3.5 and v2.", "Play the MP3 in 4K on a 3D TV; H2O, B2B, 2FA and e2e.", "GPT4 on an RTX4090 and an A100, Python3, COVID19, iPhone15, x86 at 1080p and 60fps.", "Run it at 10am or 5 PM; the 1990s, the '80s, her 20s, the 2000s; wait 30s.", "On March 4, 1990 and 3/4/2005; test_voice2.py, user_42 and 3.5GB of 16GB.", "100s of 4s, two MP3s, Route 66's history, the 1500s and 1.5s; 68x faster on a 4x4 grid at 1920x1080, 1.5x, 100ms, 24 kHz, 1 GB, 5 mins and 30 mph.", "Edge cases: 4x4.5, 4x45a, 2X, 1.5.s, '1.5s, '1990s, 6's, 0x1F, 1,000s, 10 ms. and 1 fps.", "1,000s of people and 10,000s more, 1,000 ms, 1,500.5x and 1,0005s.",
 )
 FRONTEND_LANGUAGES = ("en_us", "en_gb", "es", "it", "fr", "de", "vi")
+SPELLING_VARIANTS = ("uhuh", "nuhuh", "hehheh", "ah-ha-ha", "a-ha-ha", "ah ha ha", "ah‑ha‑ha", "a-hem", "a‑hem", "pst", "sh", "uh-uh", "ahaha",
+                     "ah-ha ha", "ah  ha ha", "a ha ha", "shh", "psst", "ahem", "uhuhuh", "ah-ha-ha-ha", "ſh")
+SPELLING_NEIGHBOURS = (("", " ", "x", "X", "'", "’", "-", "‑", "(", '"', "1", "é", "\n", "—", ". "),
+                       ("", " ", "x", "Z", "'", "’", "-", "‑", ".", ",", "!", "?", "…", ";", ":", " .", "  !", " x", "\n", " \n", "\t,", ")", "1", "é", " and"))
 FRONTEND_EXTRA = {
-    "es": ("Tengo 1.234 euros y 3,5 kilos; el 2º día, 15/03/2024.",),
-    "fr": ("J'ai 81 ans, 1.000.000 et 3,75 € le 1er mai.",),
-    "de": ("Am 3. Mai 2024 kostet es 21,50 € oder 1.234 Euro.",),
-    "it": ("Il 2º posto costa 1.234,50 € e 99%.",),
-    "vi": ("Tôi có 21 quyển sách và 105 cây bút, 1.000.000 đồng.",),
+    "es": ("Tengo 1.234 euros y 3,5 kilos; el 2º día, 15/03/2024.", "Tienes 1 mensaje y 1 alarma; 21 años, 31 millones, 3,14."),
+    "fr": ("J'ai 81 ans, 1.000.000 et 3,75 € le 1er mai.", "Il fait -3,5 °C à 15:00 et 15 h 00; 3,14, 2,125 kg, 200 000 et 1,000,000."),
+    "de": ("Am 3. Mai 2024 kostet es 21,50 € oder 1.234 Euro.", "In 1 Stunde 1 neue Nachricht, um 12:00 Uhr; 1939-1945."),
+    "it": ("Il 2º posto costa 1.234,50 € e 99%.", "Hai 1 nuovo messaggio e 1 ora, il 1 maggio alle 15:30; 3,14."),
+    "vi": ("Tôi có 21 quyển sách và 105 cây bút, 1.000.000 đồng.", "Ngày 1/9/2026, 41 093,38 $, 3,14 và 1500 kWh."),
 }
 
 
@@ -150,6 +182,12 @@ class Native:
         if self.runtime is not None:
             self.lib.scyllasband_runtime_destroy(self.runtime)
             self.runtime = None
+
+    def spellings(self, text: str, language: str) -> str:
+        out = ctypes.c_void_p()
+        self.lib.scyllasband_test_nonverbal_spellings.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(ctypes.c_void_p)]
+        self._check(self.lib.scyllasband_test_nonverbal_spellings(text.encode(), language.encode(), ctypes.byref(out)), "nonverbal_spellings")
+        return self._take_text(out)
 
     def normalize(self, text: str, language: str) -> str:
         out = ctypes.c_void_p()
@@ -278,8 +316,8 @@ class Native:
         self._check(self.lib.scyllasband_plan_records_json(self.runtime, ctypes.byref(request), ctypes.byref(out)), "plan_records_json")
         return json.loads(self._take_text(out))
 
-    def records_stream(self, records: list, seed: int, noise=None, **kwargs):
-        """The whole stream's audio and the AUDIO events' metadata."""
+    def records_stream(self, records: list, seed: int, noise=None, style: str | None = None, **kwargs):
+        """The whole stream's audio and the AUDIO events' metadata. ``style``: a speech style of the bundle (ABI 3.2)."""
         pieces, metas = [], []
 
         def on_event(event, _user):
@@ -294,7 +332,11 @@ class Native:
         self.lib.scyllasband_test_set_noise(self.runtime, noise_callback, None)
         request = self._records_request(records, seed=seed, **kwargs)
         try:
-            self._check(self.lib.scyllasband_synthesize_records_stream(self.runtime, ctypes.byref(request), callback, None), "records_stream")
+            if style is None:
+                status = self.lib.scyllasband_synthesize_records_stream(self.runtime, ctypes.byref(request), callback, None)
+            else:
+                status = self.lib.scyllasband_synthesize_records_style_stream(self.runtime, ctypes.byref(request), style.encode(), callback, None)
+            self._check(status, "records_stream")
         finally:
             self.lib.scyllasband_test_set_noise(self.runtime, self.noise_type(), None)
         return (np.concatenate(pieces) if pieces else np.zeros(0, np.float32)), metas
@@ -312,12 +354,19 @@ def snr_db(reference: np.ndarray, candidate: np.ndarray) -> float:
     return float("inf") if error == 0 else 10 * math.log10(max(signal, 1e-30) / error)
 
 
+def max_abs(reference: np.ndarray, candidate: np.ndarray) -> float:
+    if reference.size != candidate.size:
+        return float("inf")
+    return float(np.max(np.abs(reference.astype(np.float64) - candidate))) if reference.size else 0.0
+
+
 def rel_error(reference: np.ndarray, candidate: np.ndarray) -> float:
     denominator = float(np.linalg.norm(reference.astype(np.float64)))
     return float(np.linalg.norm(reference.astype(np.float64) - candidate)) / max(denominator, 1e-30)
 
 
 ACCELERATORS = {"cpu": 0, "gpu": 1, "ane": 3}
+CHECKS = ("frontend", "sentences", "long_form", "records", "lines", "singing")
 
 
 def reference_runtime(bundle: str, backend: str, compute_units: str = "cpu"):
@@ -376,24 +425,38 @@ def check_frontend(native: Native, report: dict, failures: list[str]) -> None:
     nfc_mismatch = sum(native.unicode(s, "nfc") != unicodedata.normalize("NFC", s) for s in samples)
     decomposed = [unicodedata.normalize("NFD", "".join(chr(cp) for cp in range(base, base + 256) if scalar(cp))) for base in range(0, 0x30000, 256)]
     nfc_mismatch += sum(native.unicode(s, "nfc") != unicodedata.normalize("NFC", s) for s in decomposed)
+    # The typed spellings of non-verbal words (v5 bundles): every variant in every casing between every pair of neighbours.
+    from scyllasband.text_normalizer import nonverbal_spellings
+    spelling_cases = 0
+    for variant in SPELLING_VARIANTS:
+        for word in dict.fromkeys((variant.lower(), variant.upper(), variant.capitalize(), variant[:-1].lower() + variant[-1:].upper())):
+            texts = [before + word + after for before in SPELLING_NEIGHBOURS[0] for after in SPELLING_NEIGHBOURS[1]]
+            for language in ("en_us", "de"):
+                spelling_cases += 1
+                expected, got = [nonverbal_spellings(t, language=language) for t in texts], [native.spellings(t, language) for t in texts]
+                if expected != got:
+                    wrong = next((t, e, g) for t, e, g in zip(texts, expected, got) if e != g)
+                    mismatches.append(dict(kind="nonverbal_spellings", language=language, text=wrong[0], python=wrong[1], native=wrong[2]))
+    cases += spelling_cases
     report["frontend"] = dict(cases=cases, mismatches=mismatches[:20], mismatch_count=len(mismatches), unicode_lower_block_mismatches=unicode_mismatch,
                               nfc_mismatches=nfc_mismatch)
     if mismatches or unicode_mismatch or nfc_mismatch:
         failures.append(f"frontend: {len(mismatches)} mismatches, lower blocks {unicode_mismatch}, nfc {nfc_mismatch}")
 
 
-def python_targets(engine, plan, speed: float = 1.0):
-    """The targets the Python streaming loop speaks for ``plan``, without synthesizing them:
+def python_targets(engine, plan, speed: float = 1.0, style: str | None = None):
+    """The targets the Python streaming loop speaks for ``plan`` in ``style``, without synthesizing them:
     (chunk, sentence, durations, delivery, first of its chain)."""
-    from scyllasband.streaming import _chains, _ChainStream, _next_target
+    from scyllasband.streaming import _chains, _ChainStream, _next_target, style_delivery
     spoken = 0
+    mode = engine.speech_style(style)[0]
     for chain in _chains(plan.chunks):
         stream = _ChainStream(engine, chain)
-        values, present, _, resolved = engine.delivery_inputs(chain[0].voice, chain[0].delivery)
+        values, present, row, resolved = style_delivery(engine, style, chain[0])
         delivery = (values, present, resolved["pitch"])
         start = 0
         while True:
-            end, sentence, durations = _next_target(engine, stream, start, spoken == 0, delivery, speed)
+            end, sentence, durations = _next_target(engine, stream, start, spoken == 0, delivery, speed, row, mode)
             yield stream.target_chunk(start, end), sentence, durations, delivery, start == 0
             spoken += 1
             if stream.at_end(end):
@@ -401,21 +464,28 @@ def python_targets(engine, plan, speed: float = 1.0):
             start = end
 
 
-def compare_targets(native: Native, engine, plan, voice: str, label: str, failures: list[str], args) -> list[dict]:
-    """Native durations, latents and audio for each Python target, given the same sentence, noise and prefix."""
+def compare_targets(native: Native, engine, plan, voice: str, label: str, failures: list[str], args, style: str | None = None) -> list[dict]:
+    """Native durations, latents and audio for each Python target, given the same sentence, noise and prefix (on a v5 bundle
+    also the same style row and the pitch contour rendered so far, whose native rendering is compared too)."""
     from scyllasband.delivery import delivery_spec
     language = plan.chunks[0].language
     rows = []
-    tail = None
-    for index, (chunk, sentence, python_durations, delivery, chain_start) in enumerate(python_targets(engine, plan)):
-        tail = None if chain_start else tail
+    tail = contour = None
+    mode, controlled = engine.speech_style(style)
+    for index, (chunk, sentence, python_durations, delivery, chain_start) in enumerate(python_targets(engine, plan, style=style)):
+        tail, contour = (None, None) if chain_start else (tail, contour)
         request = dict(phones=sentence.phones, word_starts=sentence.word_starts, before_ids=sentence.before_ids, after_ids=sentence.after_ids,
-                       voice=voice, language=language, delivery=delivery_spec(chunk.delivery), steps=args.steps, sampler=args.sampler, speed=1.0)
+                       min_pauses=sentence.min_pauses, voice=voice, language=language, delivery=delivery_spec(chunk.delivery), steps=args.steps,
+                       sampler=args.sampler, speed=1.0)
+        if engine.v5:
+            request.update(style=mode, controlled=controlled, sentence_starts=sentence.sentence_starts,
+                           pitch_prefix=[] if contour is None else [float(v) for v in contour.reshape(-1)])
         native_durations = native.sentence(request, None, None)[0]["durations"]
         length = int(sum(python_durations))
         noise = np.random.default_rng(SEED + 31 * index).standard_normal((2 + engine.latent_dim, length)).astype(np.float32)
         result = engine.synthesize_sentence(sentence, voice=voice, language=language, delivery=delivery, prefix=tail, steps=args.steps,
-                                            sampler=args.sampler, pitch_noise=noise[:2], noise=noise[2:], durations=python_durations)
+                                            sampler=args.sampler, pitch_noise=noise[:2], noise=noise[2:], durations=python_durations,
+                                            delivery_mode=mode, pitch_prefix=contour)
         python_audio = engine.decode(result.latents, voice=voice, language=language, left=tail)
         native_meta, native_latents, native_audio = native.sentence(dict(request, durations=python_durations), noise, tail)
         latent_rel = rel_error(result.latents, native_latents)
@@ -423,13 +493,22 @@ def compare_targets(native: Native, engine, plan, voice: str, label: str, failur
         rows.append(dict(voice=voice, text=label, target=index, chunk_id=chunk.chunk_id, phones=len(sentence.phones), frames=length,
                          bucket=result.bucket, durations_identical=python_durations == native_durations, duration_frames_python=length,
                          duration_frames_native=int(sum(native_durations)), latent_rel=latent_rel, snr_db=snr,
-                         prefix_frames=native_meta["prefix_frames"]))
+                         max_abs=max_abs(python_audio, native_audio), prefix_frames=native_meta["prefix_frames"]))
         if python_durations != native_durations:
             failures.append(f"durations differ: {voice}/{label}/{chunk.chunk_id}")
         if latent_rel > args.latent_tolerance:
             failures.append(f"latents differ: {voice}/{label}/{chunk.chunk_id}: rel {latent_rel:.3g}")
         if snr < args.min_snr:
             failures.append(f"audio SNR {snr:.1f} dB: {voice}/{label}/{chunk.chunk_id}")
+        if engine.v5:
+            native_contour = np.asarray(native_meta["contour"], np.float32).reshape(2, -1)
+            rows[-1].update(contour_rel=rel_error(result.contour, native_contour), pitch_prefix_frames=native_meta["pitch_prefix_frames"],
+                            delivery_mode=native_meta["delivery_mode"])
+            if (rows[-1]["contour_rel"] > args.latent_tolerance or native_meta["pitch_prefix_frames"] != result.metadata["pitch_prefix_frames"]
+                    or native_meta["delivery_mode"] != mode):
+                failures.append(f"pitch contour, its prefix or the style row differs: {voice}/{label}/{chunk.chunk_id}: rel {rows[-1]['contour_rel']:.3g}")
+            if engine.pitch_prefix_frames:
+                contour = (result.contour if contour is None else np.concatenate([contour, result.contour], -1))[:, -engine.pitch_prefix_frames:]
         joined = result.latents if tail is None else np.concatenate([tail, result.latents], -1)
         tail = joined[:, -max(engine.prefix_frames, engine.decode_context):]
     return rows
@@ -447,7 +526,8 @@ def compare_g2p(native: Native, engine, plan, label: str, failures: list[str]) -
 
 
 def worst_of(rows: list[dict]) -> dict:
-    return dict(latent_rel=max((r["latent_rel"] for r in rows), default=0.0), snr_db=min((r["snr_db"] for r in rows), default=float("inf")))
+    return dict(latent_rel=max((r["latent_rel"] for r in rows), default=0.0), snr_db=min((r["snr_db"] for r in rows), default=float("inf")),
+                max_abs=max((r.get("max_abs", 0.0) for r in rows), default=0.0))
 
 
 def check_sentences(native: Native, runtime, report: dict, failures: list[str], args) -> None:
@@ -462,6 +542,13 @@ def check_sentences(native: Native, runtime, report: dict, failures: list[str], 
             failures.append(f"plan differs: {voice}/{kind}")
         g2p_identical &= compare_g2p(native, engine, plan, f"{voice}/{kind}", failures)
         rows += compare_targets(native, engine, plan, voice, kind, failures, args)
+    if engine.v5:   # the lines for the v5 rules, target by target in their style
+        for label, voice, language, style, text in V5_LINES:
+            if voice not in runtime.voices or (language is not None and language not in runtime.voice_for_id(voice).languages):
+                continue
+            plan = runtime.plan_text(text, voice_id=voice, language=language)
+            g2p_identical &= compare_g2p(native, engine, plan, f"{voice}/{label}", failures)
+            rows += compare_targets(native, engine, plan, voice, label, failures, args, style=style)
     report["sentences"] = dict(rows=rows, count=len(rows), worst=worst_of(rows), g2p_identical=g2p_identical,
                                durations_identical=all(r["durations_identical"] for r in rows))
 
@@ -540,6 +627,8 @@ RECORDS = (
     dict(text="Nobody asked about the weather!", voice="max", intensity=1.5, pitch=1),
     dict(text="Then let us talk about the bridge instead.\n\nIt is still standing.", voice="scylla", delivery={"pace": "0.5", "pitch": None}),
     dict(text="Hola, ¿qué tal? Todo bien por aquí.", voice="scylla", language="es"),
+    dict(text="Il fait -3,5 °C à 15:00; la pile est à 97 %, il reste 18 jours, et 22 en 2026. Il en reste huit.", voice="scylla",
+         language="fr"),
 )
 BAD_RECORDS = (
     [dict(text="Hi.", voice=" ")], [dict(text="Hi.", voice="nobody")], [dict(text="Hi.", voice="scylla", language="xx")],
@@ -594,7 +683,70 @@ def check_records(native: Native, runtime, report: dict, failures: list[str], ar
         failures.append("records stream targets differ from the reference")
     if out["snr_db"] < args.min_snr:
         failures.append(f"records stream SNR {out['snr_db']:.1f} dB")
+    if runtime.engine.v5:   # a speech style: rap is sent to all three models without intensity and pace, and takes neither
+        rap = [dict(text="No pause, no doubt. Just the beat and me, and the long way round.", voice="scylla", pitch=1)]
+        reference = runtime.render_records(rap, seed=SEED, steps=args.steps, sampler=args.sampler, style="rap")
+        injected, metas = native.records_stream(rap, SEED, noise=noise, steps=args.steps, sampler=args.sampler, style="rap")
+        row = runtime.engine.speech_style("rap")[0]
+        out["rap"] = dict(snr_db=snr_db(reference.audio, injected), max_abs=max_abs(reference.audio, injected),
+                          targets_identical=[c["durations"] for c in reference.metadata["chunks"]] == [m["durations"] for m in metas],
+                          rows=sorted({m["delivery_mode"] for m in metas}), delivery_set=any(m["delivery_set"] for m in metas))
+        if out["rap"]["snr_db"] < args.min_snr or not out["rap"]["targets_identical"] or out["rap"]["rows"] != [row] or out["rap"]["delivery_set"]:
+            failures.append(f"rap stream differs from the reference: {out['rap']}")
+        refusals = []
+        for records, style in (([dict(text="Hi there.", voice="scylla", pace=1)], "rap"), ([dict(text="Hi there.", voice="scylla")], "pop"),
+                               ([dict(text="Hi there.", voice="scylla")], "opera")):
+            try:
+                runtime.render_records(records, seed=SEED, style=style)
+                python_error = None
+            except ValueError as exc:
+                python_error = str(exc)
+            try:
+                native.records_stream(records, SEED, style=style)
+                native_error = None
+            except RuntimeError as exc:
+                native_error = str(exc).split(": ", 1)[1] if ": " in str(exc) else str(exc)
+            refusals.append(dict(python=python_error, native=native_error))
+            if python_error is None or python_error != native_error:
+                failures.append(f"style refusal differs: {python_error!r} vs {native_error!r}")
+        out["style_refusals"] = refusals
     report["records"] = out
+
+
+def check_lines(native: Native, runtime, report: dict, failures: list[str], args) -> None:
+    """v5 bundles: each line of V5_LINES spoken whole by both loops with the reference's noise injected. Per line: whether the
+    targets (ids and texts), their phones and their durations are identical, and the waveform's SNR and largest difference."""
+    def noise(index, seed, has_seed, dim, frames, pointer, _user):
+        values = np.random.default_rng(int(seed) if has_seed else None).standard_normal((dim, frames)).astype(np.float32)
+        ctypes.memmove(pointer, values.ctypes.data, values.nbytes)
+
+    rows = []
+    for label, voice, language, style, text in V5_LINES:
+        if voice not in runtime.voices or (language is not None and language not in runtime.voice_for_id(voice).languages):
+            continue
+        records = [dict(text=text, voice=voice, **({} if language is None else dict(language=language)))]
+        options = {} if style is None else dict(style=style)
+        reference = runtime.render_records(records, seed=SEED, steps=args.steps, sampler=args.sampler, **options)
+        injected, metas = native.records_stream(records, SEED, noise=noise, steps=args.steps, sampler=args.sampler, **options)
+        python_targets_ = reference.metadata["chunks"]
+        same = lambda key: [c[key] for c in python_targets_] == [m[key] for m in metas]   # noqa: E731
+        row = dict(label=label, voice=voice, language=python_targets_[0]["chunk"]["language"], style=style or "spoken",
+                   plan_identical=native.records_plan(records) == json.loads(json.dumps(runtime.plan_records(records).to_dict())),
+                   targets=[c["chunk"]["text"] for c in python_targets_],
+                   targets_identical=[(c["chunk"]["chunk_id"], c["chunk"]["text"]) for c in python_targets_]
+                   == [(m["chunk"]["chunk_id"], m["chunk"]["text"]) for m in metas],
+                   phones_identical=same("phones"), durations_identical=same("durations"),
+                   metadata_identical=all(same(key) for key in (*TARGET_KEYS, "pitch_prefix_frames", "delivery_mode", "delivery_set")),
+                   phones=sum(len(c["phones"]) for c in python_targets_), frames=sum(c["latent_frames"] for c in python_targets_),
+                   samples=[int(reference.audio.size), int(injected.size)], snr_db=snr_db(reference.audio, injected),
+                   max_abs=max_abs(reference.audio, injected))
+        rows.append(row)
+        for key in ("plan_identical", "targets_identical", "phones_identical", "durations_identical", "metadata_identical"):
+            if not row[key]:
+                failures.append(f"v5 line {label}: not {key}")
+        if row["snr_db"] < args.min_snr:
+            failures.append(f"v5 line {label}: SNR {row['snr_db']:.1f} dB")
+    report["v5_lines"] = rows
 
 
 def check_singing(native: Native, runtime, report: dict, failures: list[str], args) -> None:
@@ -613,7 +765,7 @@ def check_singing(native: Native, runtime, report: dict, failures: list[str], ar
     python_decoders = sorted(name for name, graphs in engine.decoder_graphs.items() if graphs)
     if sorted(info.get("decoders", [])) != python_decoders or not info.get("supported"):
         failures.append(f"singing info differs: {info} vs decoders {python_decoders}")
-    scores = dict(SCORES)
+    scores = dict(SCORES, **(SCORES_V5 if engine.v5 else {}))
     if args.melodies:
         for path in sorted(Path(args.melodies).glob("*.json")):
             scores[path.stem] = json.loads(path.read_text())
@@ -637,29 +789,33 @@ def check_singing(native: Native, runtime, report: dict, failures: list[str], ar
     out["plans"] = dict(count=plans, differing=differing)
     # Per phrase: the native graphs given the reference's phones, durations, melody and noise, with each decoder.
     singing = engine.singing
+    from scyllasband.singing import GUIDANCE_STEPS
     steps, sampler, guidance = int(singing.get("steps") or 8), str(singing.get("sampler") or "heun"), float(singing.get("guidance", 1.0))
+    guidance_until = GUIDANCE_STEPS[str(singing.get("guidance_steps") or "all")]
     delivery = (np.zeros((1, 5), np.float32), np.zeros((1, 5), bool))
     rows = []
     voice = args.voices[0]
     language = runtime.resolve_language_for_voice(voice, None)
-    for name in ("pop", "ballad", "song"):
+    for name in ("pop", "ballad", "song", *(SCORES_V5 if engine.v5 else ())):
+        if args.sing_scores and name not in args.sing_scores:
+            continue
         plan = plan_song(scores[name], engine, voice, language)
         for item in plan.phrases:
             noise = np.zeros((2 + engine.latent_dim, item.frames), np.float32)
             noise[2:] = np.random.default_rng(SING_SEED + item.index).standard_normal((engine.latent_dim, item.frames)).astype(np.float32)
             result = engine.synthesize_sentence(item.sentence, voice=voice, language=language, delivery=delivery, steps=steps, sampler=sampler,
                                                 noise=noise[2:], durations=item.durations, melody=item.melody, delivery_mode=plan.mode_id,
-                                                guidance=guidance)
+                                                guidance=guidance, guidance_until=guidance_until)
             for decoder in python_decoders:
                 python_audio = engine.decode(result.latents, voice=voice, language=language, decoder=decoder)
                 request = dict(phones=list(item.sentence.phones), word_starts=list(item.sentence.word_starts), before_ids=[], after_ids=[],
                                voice=voice, language=language, delivery=None, steps=steps, sampler=sampler, speed=1.0, durations=list(item.durations),
                                melody=[float(v) for v in np.asarray(item.melody, np.float32).reshape(-1)], delivery_mode=plan.mode_id,
-                               guidance=guidance, decoder=decoder)
+                               guidance=guidance, decoder=decoder, **({} if guidance_until is None else dict(guidance_until=guidance_until)))
                 meta, native_latents, native_audio = native.sentence(request, noise, None)
                 latent_rel, snr = rel_error(result.latents, native_latents), snr_db(python_audio, native_audio)
                 rows.append(dict(score=name, phrase=item.index, frames=item.frames, bucket=result.bucket, decoder=decoder, latent_rel=latent_rel,
-                                 snr_db=snr, samples=int(native_audio.size)))
+                                 snr_db=snr, max_abs=max_abs(python_audio, native_audio), samples=int(native_audio.size)))
                 if meta.get("melody_source") != "score" or meta.get("delivery_mode") != plan.mode_id:
                     failures.append(f"sung phrase metadata: {name}/{item.index}: {meta.get('melody_source')}, mode {meta.get('delivery_mode')}")
                 if latent_rel > args.latent_tolerance:
@@ -674,7 +830,9 @@ def check_singing(native: Native, runtime, report: dict, failures: list[str], ar
         ctypes.memmove(pointer, values.ctypes.data, values.nbytes)
 
     songs = []
-    for name in ("pop", "song"):
+    for name in ("pop", "song", *(SCORES_V5 if engine.v5 else ()), *(sorted(set(scores) - set(SCORES) - set(SCORES_V5)) if args.sing_melodies else ())):
+        if args.sing_scores and name not in args.sing_scores:
+            continue
         for decoder in python_decoders:
             reference = runtime.sing(scores[name], voice, seed=SING_SEED, decoder=decoder)
             started = time.perf_counter()
@@ -684,8 +842,10 @@ def check_singing(native: Native, runtime, report: dict, failures: list[str], ar
             again, _ = native.sing(scores[name], voice, SING_SEED, decoder=decoder)
             snr = snr_db(reference.audio, injected)
             plan_same = [p["durations"] for p in reference.metadata["phrases"]] == [p["durations"] for p in meta["phrases"]]
-            songs.append(dict(score=name, decoder=decoder, samples=int(injected.size), reference_samples=int(reference.audio.size), snr_db=snr,
-                              phrases_identical=plan_same, native_seconds=round(seconds, 2), reproducible=bool(np.array_equal(builtin, again)),
+            plan_same &= [p["phones"] for p in reference.metadata["phrases"]] == [p["phones"] for p in meta["phrases"]]
+            songs.append(dict(score=name, decoder=decoder, style=reference.metadata["style"], samples=int(injected.size),
+                              reference_samples=int(reference.audio.size), snr_db=snr, max_abs=max_abs(reference.audio, injected),
+                              phrases=len(meta["phrases"]), phrases_identical=plan_same, native_seconds=round(seconds, 2), reproducible=bool(np.array_equal(builtin, again)),
                               finite=bool(np.isfinite(builtin).all())))
             if snr < args.min_snr:
                 failures.append(f"song SNR {snr:.1f} dB: {name}/{decoder}")
@@ -711,12 +871,15 @@ def main() -> int:
     parser.add_argument("--skip-frontend", action="store_true")
     parser.add_argument("--skip-speech", action="store_true", help="only the singing checks (v4 bundles)")
     parser.add_argument("--melodies", type=Path, help="extra score JSON files for the sing plan comparison")
+    parser.add_argument("--sing-melodies", action="store_true", help="also sing the --melodies scores whole on both sides")
+    parser.add_argument("--sing-scores", nargs="+", help="sing only these scores (by name)")
+    parser.add_argument("--checks", nargs="+", choices=CHECKS, default=list(CHECKS), help="the checks to run (default: all)")
     args = parser.parse_args()
 
     native = Native(args.library)
     report: dict = dict(backend=native.backend, bundle=args.bundle)
     failures: list[str] = []
-    if not args.skip_frontend:
+    if not args.skip_frontend and "frontend" in args.checks:
         check_frontend(native, report, failures)
     native.open(args.bundle, ACCELERATORS[args.accelerator])
     if native.backend == "apple":
@@ -726,22 +889,26 @@ def main() -> int:
     runtime = reference_runtime(args.bundle, native.backend, args.accelerator)
     args.steps = args.steps or runtime.default_steps
     args.sampler = args.sampler or runtime.default_sampler
+    speech = () if args.skip_speech else ("sentences", "long_form", "records", "lines")
     try:
-        if not args.skip_speech:
-            check_sentences(native, runtime, report, failures, args)
-            check_long_form(native, runtime, report, failures, args)
-            check_records(native, runtime, report, failures, args)
-        check_singing(native, runtime, report, failures, args)
+        for name, check in (("sentences", check_sentences), ("long_form", check_long_form), ("records", check_records), ("lines", check_lines),
+                            ("singing", check_singing)):
+            if name in args.checks and (name in speech or name == "singing") and (name != "lines" or runtime.engine.v5):
+                check(native, runtime, report, failures, args)
     finally:
         native.close()
     report["failures"] = failures
     summary = dict(backend=report["backend"], bundle=args.bundle, failures=len(failures),
                    frontend={k: v for k, v in report.get("frontend", {}).items() if k != "mismatches"})
-    if not args.skip_speech:
+    if "sentences" in report:
         summary.update(sentences=report["sentences"]["count"], g2p_identical=report["sentences"]["g2p_identical"],
-                       durations_identical=report["sentences"]["durations_identical"], worst=report["sentences"]["worst"],
-                       long_form={k: v for k, v in report["long_form"].items() if k != "chunks"},
-                       records={k: v for k, v in report["records"].items() if k != "errors"})
+                       durations_identical=report["sentences"]["durations_identical"], worst=report["sentences"]["worst"])
+    if "long_form" in report:
+        summary.update(long_form={k: v for k, v in report["long_form"].items() if k != "chunks"})
+    if "records" in report:
+        summary.update(records={k: v for k, v in report["records"].items() if k != "errors"})
+    if "v5_lines" in report:
+        summary.update(v5_lines=report["v5_lines"])
     singing = report.get("singing", {})
     summary["singing"] = {k: (v if k != "phrases" else {kk: vv for kk, vv in v.items() if kk != "rows"}) for k, v in singing.items() if k != "native_info"}
     print(json.dumps(summary, indent=2))

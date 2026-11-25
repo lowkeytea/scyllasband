@@ -45,6 +45,20 @@ class PunctuationTest(unittest.TestCase):
     def test_a_sentence_end_wins_over_other_stacked_marks(self):
         self.assertEqual(punctuated_segments("Really?! she asked."), [("Really", ["<end_question>"]), ("she asked", ["<end_stmt>"])])
 
+    def test_a_dash_typed_without_spaces_is_marked_for_its_minimum_pause(self):
+        from scyllasband.g2p import _marked_segments
+        self.assertEqual(_marked_segments("only a\u2014dream, he said. A -- dream. a--b 3\u20135"),
+                         [("only a", ["<pause_dash>"], True), ("dream", ["<pause_comma>"], False), ("he said", ["<end_stmt>"], False),
+                          ("A", ["<pause_dash>"], False), ("dream", ["<end_stmt>"], False), ("a", ["<pause_dash>"], True),
+                          ("b 3", ["<pause_dash>"], False), ("5", [], False)])
+        self.assertEqual(punctuated_segments("only a\u2014dream"), [("only a", ["<pause_dash>"]), ("dream", [])])
+
+    def test_a_hyphen_inside_a_word_is_a_space(self):
+        # As the text normalizer writes it; text that skips the normalizer ("dix-sept") must not pause inside the word.
+        self.assertEqual(punctuated_segments("quatre-vingt-dix-sept, well-known - no; COVID-19 a\u2011b"),
+                         [("quatre vingt dix sept", ["<pause_comma>"]), ("well known", ["<pause_dash>"]), ("no", ["<pause_semicolon>"]),
+                          ("COVID", ["<pause_dash>"]), ("19 a b", [])])
+
     def test_long_phrases_split_between_words_without_punctuation(self):
         segments = punctuated_segments("one two three four five six.", max_chars=10)
         self.assertEqual([s for s, _ in segments], ["one two", "three four", "five six"])
@@ -74,6 +88,12 @@ class DurationAndEventTest(unittest.TestCase):
         phones = ["<sil>", "a", "<sil>", "b", "<sil>"]
         self.assertEqual(frames_to_durations([4, 4, 0.4, 4, 2], phones, pause_scale=1.3), [5, 4, 1, 4, 3])
         self.assertEqual(frames_to_durations([4, 4, 0.4, 4, 2], phones, pause_scale=0.7), [3, 4, 0, 4, 1])
+
+    def test_a_minimum_pause_holds_only_the_listed_silences(self):
+        phones = ["<sil>", "a", "<pause_dash>", "<sil>", "b", "<sil>"]
+        self.assertEqual(frames_to_durations([2, 4, 0, 2, 4, 2], phones, min_pauses=[3], min_pause_frames=14.06), [2, 4, 0, 14, 4, 2])
+        self.assertEqual(frames_to_durations([2, 4, 0, 20, 4, 2], phones, min_pauses=[3], min_pause_frames=14.06), [2, 4, 0, 20, 4, 2])
+        self.assertEqual(frames_to_durations([2, 4, 0, 2, 4, 2], phones, scale=0.5, min_pauses=[3], min_pause_frames=14.06), [1, 2, 0, 7, 2, 1])
 
     def test_events(self):
         phones = ["<sil>", "ˈ", "a", "b", "<pause_comma>", "<sil>", "h", "ː", "<end_stmt>", "<sil>"]
@@ -143,6 +163,277 @@ class NormalizerTest(unittest.TestCase):
         self.assertEqual(normalize_spoken_text("On March 4, 1990 and 3/4/2005.", language="en_us"),
                          "On March fourth, nineteen ninety and March fourth, two thousand five.")
 
+    def test_initials_slashes_ranges_and_speeds(self):
+        from scyllasband.text_normalizer import normalize_spoken_text
+        self.assertEqual(normalize_spoken_text("Kenneth A. Schmied met W. C. Handy in Washington D. C. in 1939-1945.", language="en_us"),
+                         "Kenneth ay Schmied met double you see Handy in Washington dee see in nineteen thirty nine to nineteen "
+                         "forty five.")
+        self.assertEqual(normalize_spoken_text("He chose plan B. The others left 3-2.", language="en_us"),
+                         "He chose plan B. The others left three two.")
+        self.assertEqual(normalize_spoken_text("Drive to/from work at 40 mph (64 km/h) in 30 °C heat.", language="en_us"),
+                         "Drive to from work at forty miles per hour (sixty four kilometers per hour) in thirty degrees Celsius heat.")
+
+    def test_roman_numerals_and_letter_r_in_english(self):
+        from scyllasband.text_normalizer import normalize_spoken_text
+        self.assertEqual(normalize_spoken_text("World War II ended in Queen Elizabeth II's youth; Gordon R. Dickson, Malcolm X.", language="en_us"),
+                         "World War two ended in Queen Elizabeth the second's youth; Gordon arr Dickson, Malcolm X.")
+        self.assertEqual(normalize_spoken_text("Pagine 21, 38 e 45.", language="it"), "Pagine ventuno, trentotto e quarantacinque.")
+        self.assertEqual(normalize_spoken_text("Anni 108, 180, 1880 e il 0º.", language="it"),
+                         "Anni centotto, centottanta, milleottocentottanta e il zero.")
+
+    def test_abbreviated_given_names(self):
+        from scyllasband.text_normalizer import normalize_spoken_text
+        self.assertEqual(normalize_spoken_text("Signed by Wm. Penn and Chas. Darwin.", language="en_us"),
+                         "Signed by William Penn and Charles Darwin.")
+        self.assertEqual(normalize_spoken_text("WM. PENN", language="en_us"), "WILLIAM PENN")
+        self.assertEqual(normalize_spoken_text("The geo. survey and Geo. the cat.", language="en_us"),
+                         "The geo. survey and Geo. the cat.")
+
+    def test_lone_i_after_a_name_is_the_pronoun(self):
+        from scyllasband.text_normalizer import normalize_spoken_text
+        cases = {
+            "Listen, Stephen, I have the keys.": "Listen, Stephen, I have the keys.",
+            "Mary I think you should go. John I am sure.": "Mary I think you should go. John I am sure.",
+            "Queen Elizabeth I was crowned.": "Queen Elizabeth the first was crowned.",
+            "Charles I of England, under James I.": "Charles the first of England, under James the first.",
+            "Henry I's court and Henry II's.": "Henry the first's court and Henry the second's.",
+            "Stephen, II and Henry VIII.": "Stephen, the second and Henry the eighth.",
+        }
+        for text, expected in cases.items():
+            self.assertEqual(normalize_spoken_text(text, language="en_us"), expected, text)
+
+    def test_nonverbal_words_take_one_spelling(self):
+        from scyllasband.text_normalizer import SPOKEN_TEXT_NORMALIZER_SHA256, normalize_spoken_text
+        cases = {
+            "Hm, I had not thought of that.": "hmm, I had not thought of that.",
+            "Hhhmmm... maybe.": "hmm... maybe.",
+            "Hmm": "hmm",
+            "The HMM model converged.": "The hmm model converged.",   # never an initialism; the dotted form is letters
+            "The H.M.M. model and M.H.M., S.H.H. too": "The aitch em em model and em aitch em, ess aitch aitch too",
+            "Mm-hmm, go on.": "mhm, go on.",
+            "mm hmm": "mhm",
+            "Mmhm, MM-HMM and mmm hmmm.": "mhm, mhm and mhm.",
+            "Mhm, that makes sense.": "mhm, that makes sense.",
+            "Uh huh, sure. UH-HUH! uhhuh": "uhhuh, sure. uhhuh! uhhuh",   # one word, so it can carry its own pronunciation
+            "Aha, there. Ah-hah! Ah hah, I see. Ahah. AH-HA, ahhh haaa!": "aha, there. aha! aha, I see. aha. aha, aha!",
+            "A-ha, I knew it. She gave a ha of triumph, ah, ha.": "aha, I knew it. She gave a ha of triumph, ah, ha.",
+            "Ha ha, the Sahara and Utah-haters, ah.": "Ha ha, the Sahara and Utah haters, ah.",
+            "Shhh, listen. Sssh! SHH, now.": "shh, listen. shh! shh, now.",
+            "Sh! Quiet.": "shh! Quiet.",
+            "Sh is the element symbol?": "Sh is the element symbol?",
+            "Uhh, give me a second, ummm, or two.": "uh, give me a second, um, or two.",
+            "Errr, no. Er, eer... Errm, yes. I err on the side of caution. Lest he should err, or stumble. To err.":
+                "er, no. er, er... erm, yes. I err on the side of caution. Lest he should err, or stumble. To err.",   # "err" is the verb
+            "She went to the ER. Heh, hehh. Tssk!": "She went to the ER. heh, heh. tsk!",
+            "Mmm, that is good.": "mm, that is good.",
+            "The bolt is 5 mm wide, the film 35 MM, the gap 2mm.":
+                "The bolt is five millimeters wide, the film thirty five millimeters, the gap two millimeters.",
+            "It is 5 hmm units.": "It is five hmm units.",   # never right after a number
+            "Call at 9 a.m. Hmm, then go, etc. Uhh, fine.": "Call at nine ay em. hmm, then go, et cetera. uh, fine.",
+            "'Hmm,' she said. Well...hmmm.": "'hmm,' she said. Well...hmm.",
+            # Not whole tokens, or tied to another word.
+            "I hummed to mom; shhhip, uh-oh, uhhh-oh, um's, main.mm, src/mm and mm-wave.":
+                "I hummed to mom; shhhip, uh oh, uhhh oh, um's, main.mm, src mm and mm wave.",
+        }
+        for text, expected in cases.items():
+            self.assertEqual(normalize_spoken_text(text, language="en_us"), expected, text)
+            self.assertEqual(normalize_spoken_text(text, language="en_gb"), normalize_spoken_text(text, language="en_us"), text)
+        # Text written all in capitals stays in capitals, as everywhere else.
+        self.assertEqual(normalize_spoken_text("HMMMM.", language="en_us"), "HMM.")
+        self.assertEqual(normalize_spoken_text("MM-HMM, SHHH!", language="en_us"), "MHM, SHH!")
+        # English only.
+        self.assertEqual(normalize_spoken_text("Er sagte: hmmm, umm.", language="de"), "Er sagte: hmmm, umm.")
+        self.assertEqual(normalize_spoken_text("Uhh, umm, shhh.", language="es"), "Uhh, umm, shhh.")
+        self.assertEqual(normalize_spoken_text("Ừmm, uhh.", language="vi"), "Ừmm, uhh.")
+        # The contract hash that bundles verify covers the punctuation contract and is unchanged.
+        self.assertEqual(SPOKEN_TEXT_NORMALIZER_SHA256, "d8fd1b2415d0d100d1c70237a4469117ee6b73d0e4da703e4654c83192779cc4")
+
+    def test_units_never_take_a_word(self):
+        from scyllasband.text_normalizer import normalize_spoken_text
+        self.assertEqual(normalize_spoken_text("Negli anni '80 ha collaborato.", language="it"), "Negli anni 'ottanta ha collaborato.")
+        self.assertEqual(normalize_spoken_text("En 2020 ha sido así.", language="es"), "En dos mil veinte ha sido así.")
+
+    def test_german_abbreviations_initialisms_and_units(self):
+        from scyllasband.text_normalizer import normalize_spoken_text
+        self.assertEqual(normalize_spoken_text("Dr. Lee und John Baldwin Jr. fuhren nach St. Louis.", language="de"),
+                         "Doktor Lee und John Baldwin Junior fuhren nach Sankt Louis.")
+        self.assertEqual(normalize_spoken_text("Das UN-Mitgliedsland nutzt z.B. UMTS bzw. LTE usw. Der NDR und die NATO senden.", language="de"),
+                         "Das uh enn Mitgliedsland nutzt zum Beispiel uh emm teh ess beziehungsweise LTE und so weiter. "
+                         "Der enn deh err und die NATO senden.")
+        self.assertEqual(normalize_spoken_text("Inspekteur D. K. Arya fuhr 480 km/h, 1 km weit, mit 90 kg und 30 % Last.", language="de"),
+                         "Inspekteur deh kah Arya fuhr vierhundertachtzig Kilometer pro Stunde, ein Kilometer weit, mit neunzig "
+                         "Kilogramm und dreißig Prozent Last.")
+        self.assertEqual(normalize_spoken_text("ACHTUNG, DIE SPD TAGT.", language="de"), "ACHTUNG, DIE SPD TAGT.")
+
+    def test_french_numbers_clock_centuries_and_titles(self):
+        from scyllasband.text_normalizer import normalize_spoken_text
+        self.assertEqual(normalize_spoken_text("Selon M. Pittman, 31 % des 5 000 000 de visiteurs partent à 7 h 19 ou 21 h.", language="fr"),
+                         "Selon Monsieur Pittman, trente et un pour cent des cinq millions de visiteurs partent à sept heures dix neuf "
+                         "ou vingt et une heures.")
+        self.assertEqual(normalize_spoken_text("Au XVIIIe siècle, François Ier et Elizabeth II roulaient à 56-64 km/h, etc.", language="fr"),
+                         "Au dix huitième siècle, François premier et Elizabeth deux roulaient à cinquante six à soixante quatre "
+                         "kilomètres par heure, et cetera.")
+        self.assertEqual(normalize_spoken_text("La SNCF et le Dr. Damadian, 5 000 ans av. J.-C.", language="fr"),
+                         "La esse enne cé èf et le Docteur Damadian, cinq mille ans avant Jésus Kri.")
+        self.assertEqual(normalize_spoken_text("Le TGV, une ONG et le NPWS.", language="fr"),
+                         "Le TGV, une o enne gé et le enne pé double vé esse.")
+
+    def test_french_times_minus_signs_decimals_and_thousands(self):
+        from scyllasband.text_normalizer import normalize_spoken_text
+        self.assertEqual(normalize_spoken_text("Rendez-vous à 15:00, 15 h 00, 15h30 ou 00:05; à 1:00 et 0 h 15.", language="fr"),
+                         "Rendez vous à quinze heures, quinze heures, quinze heures trente ou zéro heure cinq; à une heure et "
+                         "zéro heure quinze.")
+        self.assertEqual(normalize_spoken_text("En 2026, -3,5 °C; x = -2, −4 et -0,5 %. Pages 10-12, 1939-1945 et COVID-19.",
+                                               language="fr"),
+                         "En deux mille vingt six, moins trois virgule cinq degrés Celsius; x égal moins deux, moins quatre et moins "
+                         "zéro virgule cinq pour cent. Pages dix à douze, mille neuf cent trente neuf à mille neuf cent quarante cinq "
+                         "et COVID dix neuf.")
+        self.assertEqual(normalize_spoken_text("IL FAIT -3 DEGRÉS.", language="fr"), "IL FAIT MOINS TROIS DEGRÉS.")
+        self.assertEqual(normalize_spoken_text("3,14, 0,05, 21,75 %, 9,30 et 2,125 kg; 1,000,000 et 1,000 €.", language="fr"),
+                         "trois virgule quatorze, zéro virgule zéro cinq, vingt et un virgule soixante quinze pour cent, neuf virgule "
+                         "trente et deux virgule cent vingt cinq kilogrammes; un million et mille euros.")
+        self.assertEqual(normalize_spoken_text("80 000, 200 000, 1 500 000 et 1 280 000; 41 093,38 $ et 1 500 kWh.", language="fr"),
+                         "quatre vingt mille, deux cent mille, un million cinq cent mille et un million deux cent quatre vingt mille; "
+                         "quarante et un mille quatre vingt treize dollars et trente huit centimes et mille cinq cents kilowattheures.")
+
+    def test_minus_signs_and_clock_times_in_other_languages(self):
+        from scyllasband.text_normalizer import normalize_spoken_text
+        self.assertEqual(normalize_spoken_text("It was -4 °C at 15:00.", language="en_us"),
+                         "It was minus four degrees Celsius at fifteen hundred.")
+        self.assertEqual(normalize_spoken_text("Um 1:00, 15:00 und 21:15 waren es -3,5 °C.", language="de"),
+                         "Um ein Uhr, fünfzehn Uhr und einundzwanzig Uhr fünfzehn waren es minus drei Komma fünf Grad Celsius.")
+        self.assertEqual(normalize_spoken_text("A las 15:00 y a las 3:30, -2 grados.", language="es"),
+                         "A las quince y a las tres treinta, menos dos grados.")
+        self.assertEqual(normalize_spoken_text("Alle 15:00, -2 gradi.", language="it"), "Alle quindici, meno due gradi.")
+        self.assertEqual(normalize_spoken_text("Lúc 15:30 và 5h00, -3 độ.", language="vi"), "Lúc mười lăm giờ ba mươi và năm giờ, âm ba độ.")
+
+    def test_one_agrees_with_the_noun_after_it(self):
+        from scyllasband.text_normalizer import normalize_spoken_text
+        self.assertEqual(normalize_spoken_text("Tienes 1 mensaje nuevo y 1 alarma; tengo 21 años, 31 días y 21 casas; 101 perros, "
+                                               "21 000 personas y 31 millones. El capítulo 1 sección 2, 1 de cada 3.", language="es"),
+                         "Tienes un mensaje nuevo y una alarma; tengo veintiún años, treinta y un días y veintiuna casas; ciento un "
+                         "perros, veintiún mil personas y treinta y un millones. El capítulo uno sección dos, uno de cada tres.")
+        self.assertEqual(normalize_spoken_text("Hai 1 nuovo messaggio, 1 studente, 1 ora, 1 casa e 1 milione; capitolo 1 sezione 2.",
+                                               language="it"),
+                         "Hai un nuovo messaggio, uno studente, un'ora, una casa e un milione; capitolo uno sezione due.")
+        self.assertEqual(normalize_spoken_text("In 1 Stunde: 1 neue Nachricht, 1 Termin, 1 Haus, um 1 Uhr, seit 1 Jahr, mit 1 Frau, "
+                                               "mit 1 neuen Nachricht; Kapitel 1 Abschnitt 2.", language="de"),
+                         "In einer Stunde: eine neue Nachricht, ein Termin, ein Haus, um ein Uhr, seit einem Jahr, mit einer Frau, "
+                         "mit einer neuen Nachricht; Kapitel eins Abschnitt zwei.")
+
+    def test_dates_times_decimals_and_ranges_by_language(self):
+        from scyllasband.text_normalizer import normalize_spoken_text
+        self.assertEqual(normalize_spoken_text("On 1/9/2026, 24/11/2026 and 1st September; at 15:00 and 00:00.", language="en_gb"),
+                         "On the first of September twenty twenty six, the twenty fourth of November twenty twenty six and the "
+                         "first of September; at fifteen hundred and midnight.")
+        self.assertEqual(normalize_spoken_text("On 9/1/2026 and 24/11/2026; 5 may be.", language="en_us"),
+                         "On September first, twenty twenty six and the twenty fourth of November twenty twenty six; five may be.")
+        self.assertEqual(normalize_spoken_text("Es ist 12:00 Uhr und 00:30 Uhr, 1939-1945.", language="de"),
+                         "Es ist zwölf Uhr und null Uhr dreißig, neunzehnhundertneununddreißig bis neunzehnhundertfünfundvierzig.")
+        self.assertEqual(normalize_spoken_text("Pi vale 3,14 y mide 1,75 m.", language="es"),
+                         "Pi vale tres coma catorce y mide uno coma setenta y cinco metros.")
+        self.assertEqual(normalize_spoken_text("Il 1 settembre alle 15:30, 3,14 e 2.000.000.000 di euro.", language="it"),
+                         "Il primo settembre alle quindici e trenta, tre virgola quattordici e due miliardi di euro.")
+        self.assertEqual(normalize_spoken_text("Le 1 septembre.", language="fr"), "Le premier septembre.")
+        self.assertEqual(normalize_spoken_text("Ngày 1/9/1999, giá 41 193,38 $, 3,14 và 1500 kWh.", language="vi"),
+                         "Ngày một tháng chín năm một nghìn chín trăm chín mươi chín, giá bốn mươi mốt nghìn một trăm chín mươi "
+                         "ba đô la và ba mươi tám xu, ba phẩy mười bốn và một nghìn năm trăm ki lô oát giờ.")
+
+    def test_spanish_and_italian_abbreviations_and_roman_numerals(self):
+        from scyllasband.text_normalizer import normalize_spoken_text
+        self.assertEqual(normalize_spoken_text("En los EE. UU. del siglo XX, la reina Isabel II y Alfonso XIII, etc.", language="es"),
+                         "En los Estados Unidos del siglo veinte, la reina Isabel segunda y Alfonso trece, etcétera.")
+        self.assertEqual(normalize_spoken_text("J. C. Bach y el NDP: 104 500 barriles a 11 km/h, el n.º 11.", language="es"),
+                         "jota ce Bach y el ene de pe: ciento cuatro mil quinientos barriles a once kilómetros por hora, el número once.")
+        self.assertEqual(normalize_spoken_text("Nel XV secolo Elisabetta II, e/o Kier Starmer QC, a 11 km/h, ecc.", language="it"),
+                         "Nel quindicesimo secolo Elisabetta seconda, e o Kier Starmer cu ci, a undici chilometri orari, eccetera.")
+
+
+
+class TextDataTest(unittest.TestCase):
+    """Every entry of every language's tables (scyllasband/text_data), in each casing its ``case`` policy accepts."""
+
+    SECTIONS = {"abbreviations": "sentence", "titles": "sentence", "before_number": "any", "units": "any"}
+
+    @staticmethod
+    def _sentence(section: str, form: str) -> str:
+        return {"abbreviations": f"aa {form} bb", "titles": f"aa {form} Zorro bb", "before_number": f"aa {form} 7 bb",
+                "units": f"aa 7 {form} bb"}[section]
+
+    @staticmethod
+    def _spoken(section: str, entry) -> str:
+        return entry["many"] if section == "units" else entry["spoken"]
+
+    def _expanded(self, output: str, spoken: str) -> bool:
+        return spoken.casefold().replace("-", " ") in output.casefold()
+
+    def test_every_entry_in_every_accepted_casing(self):
+        from scyllasband.text_data import TEXT_DATA, forms
+        from scyllasband.text_normalizer import normalize_spoken_text
+        failures = []
+        for lang, data in TEXT_DATA.items():
+            for section, default_case in self.SECTIONS.items():
+                shared = {}
+                for entry in data.get(section, ()):
+                    for form in forms(entry["written"]):
+                        shared.setdefault(form.replace(" ", "").lower(), set()).add(id(entry))
+                for entry in data.get(section, ()):
+                    case = entry.get("case", default_case)
+                    spoken = self._spoken(section, entry)
+                    for form in forms(entry["written"]):
+                        shapes = [(self._sentence(section, form), True)]
+                        if len(shared[form.replace(" ", "").lower()]) > 1:
+                            shapes.append((self._sentence(section, form), True))   # "GB"/"Gb": casing is all that tells them apart
+                            for text, expected in shapes:
+                                if not self._expanded(normalize_spoken_text(text, language=lang), spoken):
+                                    failures.append(f"{lang} {section} {form!r}: {text!r}")
+                            continue
+                        shapes.append((self._sentence(section, form).upper(), True))   # text written in capitals
+                        if ". " in form:
+                            shapes.append((self._sentence(section, form.replace(". ", ".")), True))
+                        if form.lower() != form:
+                            shapes.append((self._sentence(section, form.lower()), case != "exact"))
+                        if form.upper() != form and section in ("before_number", "units"):
+                            shapes.append((self._sentence(section, form.upper()), case == "any"))
+                        if section in ("abbreviations", "titles") and form[:1].islower():
+                            capital = form[:1].upper() + form[1:]
+                            starts = {"abbreviations": f"{capital} bb", "titles": f"{capital} Zorro bb"}[section]
+                            shapes.append((starts, case != "exact"))
+                        for text, expected in shapes:
+                            output = normalize_spoken_text(text, language=lang)
+                            if expected and not self._expanded(output, spoken):
+                                failures.append(f"{lang} {section} {form!r}: {text!r} -> {output!r}")
+        self.assertEqual(failures, [], "\n".join(failures[:400]))
+
+    def test_exact_entries_leave_other_casings_alone(self):
+        from scyllasband.text_data import TEXT_DATA, forms
+        from scyllasband.text_normalizer import normalize_spoken_text
+        failures = []
+        for lang, data in TEXT_DATA.items():
+            for section, default_case in self.SECTIONS.items():
+                keys = {}
+                for entry in data.get(section, ()):
+                    for form in forms(entry["written"]):
+                        keys.setdefault(form.replace(" ", "").lower(), []).append(entry.get("case", default_case))
+                for entry in data.get(section, ()):
+                    if entry.get("case", default_case) != "exact":
+                        continue
+                    for form in forms(entry["written"]):
+                        other = form.lower() if form.lower() != form else form.upper()
+                        if other == form or len(keys[form.replace(" ", "").lower()]) > 1 or form == "EUR":
+                            continue   # "EUR" after an amount is read by the currency rule in any casing
+                        output = normalize_spoken_text(self._sentence(section, other), language=lang)
+                        if self._expanded(output, self._spoken(section, entry)):
+                            failures.append(f"{lang} {section} {form!r} also matched {other!r}: {output!r}")
+        self.assertEqual(failures, [], "\n".join(failures[:400]))
+
+    def test_native_text_data_is_current(self):
+        import importlib.util
+        path = Path(__file__).resolve().parents[1] / "libscyllasband" / "tools" / "generate_text_data.py"
+        spec = importlib.util.spec_from_file_location("generate_text_data", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.assertEqual(module.OUT.read_text(encoding="utf-8"), module.render())
 
 class LexiconTest(unittest.TestCase):
     def test_entries_and_matching(self):
@@ -156,9 +447,54 @@ class LexiconTest(unittest.TestCase):
         self.assertEqual("".join(lexicon.lookup("GPUs", "en_us", initialisms=True)), "dʒˌiːpˌiːjˈuːz")
         self.assertEqual("".join(lexicon.lookup("Git", "en_us", initialisms=True)), "ɡˈɪt")
         self.assertEqual("".join(lexicon.lookup("scylla", "en_us", initialisms=True)), "sˈɪlə")
-        self.assertIsNone(lexicon.lookup("GPU", "en_us", initialisms=False))   # text written all in capitals
-        self.assertIsNone(lexicon.lookup("US", "en_us", initialisms=True))
+        self.assertEqual("".join(lexicon.lookup("GPU", "en_us", initialisms=False)), "dʒˌiːpˌiːjˈuː")   # all-capitals text
+        self.assertEqual("".join(lexicon.lookup("gpus", "en_us", initialisms=True)), "dʒˌiːpˌiːjˈuːz")   # never a word
+        self.assertIsNone(lexicon.lookup("Gpu", "en_us", initialisms=True))
+        self.assertIsNotNone(lexicon.lookup("US", "en_us", initialisms=True))   # capitals_only: capitals in mixed text
+        self.assertIsNone(lexicon.lookup("US", "en_us", initialisms=False))
+        self.assertIsNone(lexicon.lookup("us", "en_us", initialisms=True))
+        self.assertIsNone(lexicon.lookup("PTWC", "en_us", initialisms=False))   # unlisted: not in all-capitals text
+        self.assertEqual("".join(lexicon.lookup("PTWC", "en_us", initialisms=True)), "pˌiːtˌiːdˌʌbəljuːsˈiː")   # capitals, no vowel
+        self.assertIsNone(lexicon.lookup("NASA", "en_us", initialisms=True))
+        for dialect in ("en_us", "en_gb"):   # non-verbal words: one pronunciation each
+            self.assertEqual(lexicon.lookup("mhm", dialect, initialisms=True), ("m", "̩", "ː", "h", "ˈ", "m", "̩", "ː"))
+            self.assertEqual(lexicon.lookup("Shh", dialect, initialisms=True), ("ʃ", "ː", "ʃ", "ː"))
+            self.assertEqual(lexicon.lookup("uhhuh", dialect, initialisms=True), ("ˈ", "ʌ", "̃", "h", "ʌ", "̃"))
+            self.assertEqual(lexicon.lookup("HMM", dialect, initialisms=False), ("h", "ə", "m"))   # in text all in capitals
+
+    def test_names_and_possessives(self):
+        from scyllasband.lexicon import WORDS, Lexicon
+        vocabulary = {ch: 1 for ch in "".join(p for w in WORDS.values() for p in w.values()) + "ɪz"}
+        lexicon = Lexicon(vocabulary)
+        garcia = "".join(lexicon.lookup("Garcia", "en_us", initialisms=True))
+        self.assertEqual(garcia, "ɡɑːɹsˈiːə")
+        self.assertEqual("".join(lexicon.lookup("García", "en_us", initialisms=True)), garcia)
+        self.assertEqual("".join(lexicon.lookup("Garcia's", "en_us", initialisms=True)), garcia + "z")
+        self.assertEqual("".join(lexicon.lookup("Diaz’s", "en_us", initialisms=True)), "dˈiːæzɪz")
+        self.assertEqual("".join(lexicon.lookup("Okonkwo's", "en_gb", initialisms=True)), "əʊkˈɒŋkwəʊz")
+        self.assertEqual("".join(lexicon.lookup("Isaac", "en_us", initialisms=True)), "ˈaɪsək")
+        self.assertEqual("".join(lexicon.lookup("Zoë's", "en_gb", initialisms=True)), "zˈəʊiz")
+        self.assertIsNone(lexicon.lookup("Eli", "en_gb", initialisms=True))
         self.assertIsNone(lexicon.lookup("GPU", "es", initialisms=True))
+
+    def test_french_numbers_read_by_context(self):
+        from scyllasband.lexicon import CONTEXT_WORDS, Lexicon
+        vocabulary = {ch: 1 for ch in "".join(rule["phones"] for rule in CONTEXT_WORDS["fr"])}
+        lexicon = Lexicon(vocabulary)
+
+        def read(text):
+            return {index: "".join(phones) for index, phones in lexicon.context_hits(text.split(), "fr").items()}
+
+        self.assertEqual(read("vingt deux degrés"), {0: "vˈɛ̃t"})   # the t of "vingt" before deux to neuf
+        self.assertEqual(read("quatre vingt deux"), {1: "vˈɛ̃"})   # never after "quatre"
+        self.assertEqual(read("il fait quatre vingt un degrés"), {3: "vˈɛ̃"})
+        self.assertEqual(read("vingt jours"), {})
+        self.assertEqual(read("dix neuf et dix huit"), {0: "dˈiz", 4: "yˈit"})   # a final "huit" keeps its t
+        self.assertEqual(read("huit jours"), {})
+        self.assertEqual(read("il en reste six"), {3: "sˈis"})
+        self.assertEqual(read("deux mille vingt six"), {2: "vˈɛ̃t", 3: "sˈis"})
+        self.assertEqual(read("«dix»"), {0: "dˈis"})
+        self.assertEqual(lexicon.context_hits(["vingt", "deux"], "es"), {})
 
     def test_native_lexicon_table_is_current(self):
         import importlib.util
@@ -344,6 +680,123 @@ class OnnxProvidersTest(unittest.TestCase):
             OnnxSession(Path("g2p.onnx"))   # CPU only: nothing to check
             with self.assertRaisesRegex(RuntimeError, r"\.\[cuda\]"):
                 OnnxSession(Path("g2p.onnx"), providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
+        _preload_cuda.cache_clear()
+
+    def test_estimators_on_cuda_run_as_captured_graphs(self):
+        from scyllasband import engine as module
+        cpu, cuda = ["CPUExecutionProvider"], ["CUDAExecutionProvider", "CPUExecutionProvider"]
+
+        def opened(providers, **options):
+            made = []
+            with tempfile.TemporaryDirectory() as tmp, \
+                    mock.patch.object(module, "OnnxSession", lambda path, **kw: made.append(("plain", path.name)) or "plain"), \
+                    mock.patch.object(module, "cuda_graph_session", lambda path, **kw: made.append(("captured", path.name)) or "captured"):
+                engine = Engine(_fake_bundle(Path(tmp), v4=True), providers=providers, **options)
+                names = [name for name in engine.manifest["components"] if name.startswith(("vector_", "pitch_", "vocoder", "duration"))]
+                return {name: engine.session(name) for name in names}
+
+        with mock.patch.dict(os.environ):
+            os.environ.pop("SCYLLASBAND_CUDA_GRAPH", None)
+            sessions = opened(lambda name: cuda)
+            captured = sorted(name for name, kind in sessions.items() if kind == "captured")
+            self.assertTrue(captured)
+            self.assertEqual(captured, sorted(n for n in sessions if n.startswith(("vector_estimator", "pitch_estimator"))))
+            self.assertEqual(set(opened(lambda name: cpu).values()), {"plain"})                     # the CPU is untouched
+            self.assertEqual(set(opened(None).values()), {"plain"})
+            self.assertEqual(set(opened(lambda name: cuda, cuda_graph=False).values()), {"plain"})   # the off switches
+            os.environ["SCYLLASBAND_CUDA_GRAPH"] = "0"
+            self.assertEqual(set(opened(lambda name: cuda).values()), {"plain"})
+            self.assertEqual(set(opened(lambda name: cuda, cuda_graph=True).values()), {"plain", "captured"})
+
+    def test_a_captured_graph_replays_on_fixed_buffers_and_falls_back_once(self):
+        import contextlib
+        import io
+        import sys
+        import types
+        from scyllasband.engine import CudaGraphSession, OnnxSession, _preload_cuda, cuda_graph_session
+        log = dict(uploads=[], sessions=[], fail=False)
+
+        class Value:
+            def __init__(self, array):
+                self.array = np.array(array)
+
+            def update_inplace(self, array):
+                log["uploads"].append(int(array.size))
+                self.array[...] = array
+
+            def numpy(self):
+                return self.array.copy()
+
+        class Session:
+            def __init__(self, path, options, providers):
+                self.captures = isinstance(providers[0], tuple)
+                if self.captures and Path(path).name == "refused.onnx":
+                    raise RuntimeError("cannot use the graph capture feature\nas requested")
+                log["sessions"].append(("captured" if self.captures else "plain", providers[0]))
+
+            def get_providers(self):
+                return ["CUDAExecutionProvider", "CPUExecutionProvider"]
+
+            def get_inputs(self):
+                return [types.SimpleNamespace(name="noise", shape=[1, 2, 4], type="tensor(float)"),
+                        types.SimpleNamespace(name="voice_id", shape=[1], type="tensor(int64)")]
+
+            def get_outputs(self):
+                return [types.SimpleNamespace(name="velocity", shape=[1, 2, 4], type="tensor(float)")]
+
+            def io_binding(self):
+                bound = types.SimpleNamespace(inputs={}, output=None)
+                bound.bind_ortvalue_input = bound.inputs.__setitem__
+                bound.bind_ortvalue_output = lambda name, value: setattr(bound, "output", value)
+                return bound
+
+            def run_with_iobinding(self, bound):
+                if log["fail"]:
+                    raise RuntimeError("device lost")
+                bound.output.array[...] = bound.inputs["noise"].array * 2 + bound.inputs["voice_id"].array
+
+            def run(self, names, feeds):
+                return [feeds["noise"] * 2 + feeds["voice_id"]]
+
+        fake = types.SimpleNamespace(SessionOptions=lambda: types.SimpleNamespace(), InferenceSession=Session, preload_dlls=lambda: None,
+                                     OrtValue=types.SimpleNamespace(ortvalue_from_numpy=lambda array, device, index: Value(array),
+                                                                    ortvalue_from_shape_and_type=lambda shape, kind, device, index: Value(np.zeros(shape, kind))))
+        cuda = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+        noise = np.arange(8, dtype=np.float32).reshape(1, 2, 4)
+        _preload_cuda.cache_clear()
+        errors = io.StringIO()
+        with mock.patch.dict(sys.modules, {"onnxruntime": fake}), contextlib.redirect_stderr(errors):
+            session = cuda_graph_session(Path("vector_estimator_128.onnx"), providers=cuda)
+            self.assertIsInstance(session, CudaGraphSession)
+            self.assertEqual(log["sessions"], [("captured", ("CUDAExecutionProvider", {"enable_cuda_graph": "1"}))])
+            feeds = dict(noise=noise, voice_id=np.array([3], np.int64), unused=np.zeros(1))
+            np.testing.assert_array_equal(session.run(feeds), noise * 2 + 3)
+            self.assertEqual(log["uploads"], [8, 1])
+            np.testing.assert_array_equal(session.run(feeds), noise * 2 + 3)
+            self.assertEqual(log["uploads"], [8, 1])                       # unchanged inputs stay on the device
+            noise[0, 0, 0] = -0.0                                          # changed in place, by the sign of a zero alone
+            session.run(feeds)
+            np.testing.assert_array_equal(session.run(dict(feeds, voice_id=np.array([5], np.int64))), noise * 2 + 5)
+            self.assertEqual(log["uploads"], [8, 1, 8, 1])
+            self.assertEqual(errors.getvalue(), "")
+            # A call that fails moves the graph to a plain session for good, with one line.
+            log["fail"] = True
+            for _ in range(3):
+                np.testing.assert_array_equal(session.run(feeds), noise * 2 + 3)
+            self.assertEqual([kind for kind, _ in log["sessions"]], ["captured", "plain"])
+            self.assertEqual(errors.getvalue().count("\n"), 1)
+            self.assertRegex(errors.getvalue(), r"vector_estimator_128\.onnx: running without CUDA graph capture \(device lost\); SCYLLASBAND_CUDA_GRAPH=0")
+            # A wrong shape is never written to the device buffers.
+            log["fail"] = False
+            shaped = cuda_graph_session(Path("pitch_estimator.onnx"), providers=cuda)
+            shaped.run(dict(feeds, noise=np.zeros((1, 2, 5), np.float32)))
+            self.assertIsNotNone(shaped.plain)
+            # A graph ONNX Runtime will not capture opens as a plain session, with one line.
+            errors.truncate(0), errors.seek(0)
+            refused = cuda_graph_session(Path("refused.onnx"), providers=cuda)
+            self.assertIsInstance(refused, OnnxSession)
+            self.assertEqual(errors.getvalue().count("\n"), 1)
+            self.assertIn("refused.onnx: running without CUDA graph capture (cannot use the graph capture feature)", errors.getvalue())
         _preload_cuda.cache_clear()
 
     def test_gpu_requests_use_the_webgpu_bundle(self):
@@ -650,6 +1103,56 @@ class StreamingTargetTest(unittest.TestCase):
         self.assertEqual([text for _, text, _ in self.targets(paragraphs)], ["ab. ab."])
         self.assertEqual([text for _, text, _ in self.targets(records)], ["ab. ab."])
         self.assertEqual([text for _, text, _ in self.targets(chains)], ["ab.", "ab."])
+
+    def test_a_dash_without_spaces_holds_its_pause(self):
+        from scyllasband.streaming import _ChainStream
+        engine = _fake_engine(1.0, chunking=dict(min_target_frames=6, max_target_frames=12),
+                              span_conditioning=dict(context_max_phones=64, context_phones_each_side=8))
+
+        def durations(text):
+            plan = plan_records(records_from_text(text, voice="scylla", language=None), resolve_language=lambda voice, language: "en_us")
+            stream = _ChainStream(engine, plan.chunks)
+            stream.extend(10 ** 6)
+            sentence = stream.sentence(0, len(stream.phones) - 1)
+            values, present = np.zeros((1, 5), np.float32), np.zeros((1, 5), bool)
+            return sentence.phones, engine.durations(sentence, voice=0, language=0, delivery=(values, present))
+        phones, spaced = durations("ab \u2014 ab.")
+        self.assertEqual(phones, ["<sil>", "a", "b", "<pause_dash>", "<sil>", "a", "b", "<end_stmt>", "<sil>"])
+        self.assertEqual(spaced, [1, 1, 1, 0, 1, 1, 1, 0, 1])
+        self.assertEqual(durations("ab\u2014ab."), (phones, [1, 1, 1, 0, 14, 1, 1, 0, 1]))
+        self.assertEqual(durations("ab--ab.")[1], [1, 1, 1, 0, 14, 1, 1, 0, 1])
+
+    def chain_calls(self, records, **options):
+        engine = _fake_engine(1.0, chunking=dict(min_target_frames=6, max_target_frames=12),
+                              span_conditioning=dict(context_max_phones=64, context_phones_each_side=8))
+        plan = plan_records(records, resolve_language=lambda voice, language: "en_us")
+        list(synthesize_plan_stream(engine, plan, StreamOptions(steps=1, seed=0, **options)))
+        calls = engine._fake.calls
+        return ([c for c in calls if c["name"] == "duration_predictor"], [c for c in calls if c["name"].startswith("vector_estimator")],
+                [c for c in calls if c["name"].startswith("vocoder")])
+
+    def test_a_delivery_change_continues_the_passage(self):
+        records = [dict(text="ab ab.", voice="scylla"), dict(text="ab ab.", voice="scylla", delivery="intensity=1")]
+        durations, flows, decodes = self.chain_calls(records)
+        self.assertEqual(len(flows), 2)
+        self.assertFalse(flows[0]["prefix_mask"].any())
+        same_chain = self.chain_calls(records_from_text("ab ab. ab ab.", voice="scylla", language=None))
+        self.assertGreater(int(flows[1]["prefix_mask"].sum()), 0)           # the first target's frames carry over,
+        self.assertEqual(int(flows[1]["prefix_mask"].sum()), int(same_chain[1][1]["prefix_mask"].sum()))   # as inside a chain,
+        self.assertEqual(int(decodes[1]["latent_mask"].sum()), int(same_chain[2][1]["latent_mask"].sum()))  # and to the decoder
+        segments = [c["span_segment_ids"][c["span_mask"]].tolist() for c in durations]
+        self.assertIn([1] * 8 + [2] * 5, segments)    # the next chain's "ab ab." follows the first target as context
+        self.assertIn([0] * 5 + [1] * 8, segments)    # and the first chain's precedes the second
+
+    def test_a_pause_or_a_new_voice_starts_afresh(self):
+        records = [dict(text="ab ab.", voice="scylla"), dict(text="ab ab.", voice="scylla", delivery="intensity=1")]
+        from scyllasband.streaming import _same_speaker
+        flows = self.chain_calls(records, pause_ms=100.0)[1]
+        self.assertEqual(len(flows), 2)
+        self.assertFalse(flows[1]["prefix_mask"].any())
+        plan = plan_records(records + [dict(text="ab.", voice="gwen")], resolve_language=lambda voice, language: "en_us")
+        self.assertTrue(_same_speaker(plan.chunks[0], plan.chunks[1]))
+        self.assertFalse(_same_speaker(plan.chunks[1], plan.chunks[2]))
 
     def test_a_long_enough_paragraph_ends_its_target(self):
         self.assertEqual([text for _, text, _ in self.targets(records_from_text("ab ab. ab ab.\n\nab ab.", voice="scylla",

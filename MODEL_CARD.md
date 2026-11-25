@@ -88,6 +88,7 @@ How the runtime applies them:
 
 - The duration and flow graphs take intensity and pace as value / 5 in delivery slots 0 and 1, with presence bits; the other slots are always absent.
 - Pace also scales the pauses between words by exp(−0.13 × pace) (`controls.pace_pauses`).
+- A dash typed with no spaces around it (`a—dream`, `a--dream`) is read as an interruption: the pause after it lasts at least 0.3 seconds. Dashes with a space on either side keep the pause the model gives them.
 - A passage with fewer than four spoken phones, such as a lone "Yes.", keeps the voice's own intensity and pace, as the model was trained (`controls.delivery.min_spoken_phones`). Its pitch shift still applies.
 - Pitch shifts the predicted contour in semitones; a soft limit keeps it inside the voice's measured range (`controls.pitch.edges`).
 
