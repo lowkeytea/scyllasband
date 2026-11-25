@@ -277,11 +277,11 @@ class Engine:
         self.speech_styles: tuple[str, ...] = ("spoken",)
         if self.v5:
             if "spoken" not in self.delivery_modes:
-                raise ValueError("This v5 bundle gives no style rows (controls.delivery_modes.ids with a 'spoken' row)")
+                raise ValueError("This bundle gives no style rows (controls.delivery_modes.ids with a 'spoken' row)")
             trained = [str(style) for style in modes.get("duration_styles_trained") or ()]
             unknown = [style for style in trained if style not in self.delivery_modes]
             if "spoken" not in trained or unknown:
-                raise ValueError("This v5 bundle must list the styles its duration graph was trained on "
+                raise ValueError("This bundle must list the styles its duration graph was trained on "
                                  f"(controls.delivery_modes.duration_styles_trained); got {trained}"
                                  + (f", with no row for {', '.join(unknown)}" if unknown else ""))
             pitched = modes.get("pitch_styles_trained")   # the pitch graph's own list, where the bundle gives one
@@ -315,7 +315,7 @@ class Engine:
             self.pitch_prefix_frames = int(prefix.get("max_frames", 0)) if prefix.get("enabled") else 0
             marks = controls.get("pause_marks") or {}
             if marks.get("default") not in ("all", "none"):
-                raise ValueError("This v5 bundle does not say how pauses are marked (controls.pause_marks.default: all or none)")
+                raise ValueError("This bundle does not say how pauses are marked (controls.pause_marks.default: all or none)")
             if marks["default"] == "all":
                 if marks.get("token") not in self.phone_to_id:
                     raise ValueError(f"This bundle's pause mark {marks.get('token')!r} is not in its phone vocabulary")
@@ -464,7 +464,7 @@ class Engine:
         if name == "spoken":
             return self.spoken_mode, True
         if not self.v5:
-            raise ValueError(f"This bundle speaks in one style; --style {name} needs a v5 bundle")
+            raise ValueError(f"This bundle speaks only in the spoken style, not in --style {name}")
         if name not in self.speech_styles:
             sung = " (it is a sung style: give a score to sing)" if name in self.delivery_modes else ""
             raise ValueError(f"Style {name!r} cannot be spoken{sung}: this bundle's duration and pitch models were trained on "

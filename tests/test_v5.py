@@ -244,7 +244,7 @@ class SpeechStyleTest(unittest.TestCase):
             engine = _fake_engine(v4=v4, **PASSAGE)
             self.assertEqual((engine.speech_styles, engine.speech_style("spoken")), (("spoken",), (0, True)))
             self.assertEqual(_fake_engine(v4=v4).min_target_phones, 0)
-            with self.assertRaisesRegex(ValueError, "needs a v5 bundle"):
+            with self.assertRaisesRegex(ValueError, "speaks only in the spoken style"):
                 engine.speech_style("rap")
             plain = _stream(engine, records_from_text("ab ab ab. ab.", voice="scylla", language=None))
             named = _fake_engine(v4=v4, **PASSAGE)

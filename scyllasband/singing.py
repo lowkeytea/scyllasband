@@ -738,7 +738,7 @@ def sing(engine: Engine, score: Score | Mapping[str, Any], voice: str, language:
     if not engine.decoder_graphs.get(decoder):
         raise ValueError(f"This bundle has no {decoder!r} decoder; it has {', '.join(k for k, v in engine.decoder_graphs.items() if v)}")
     if guidance is None and engine.v5 and "guidance" not in singing:
-        raise ValueError("This v5 bundle states no singing guidance (controls.delivery_modes.singing.guidance); pass guidance")
+        raise ValueError("This bundle states no singing guidance (controls.delivery_modes.singing.guidance); pass guidance")
     guidance = float(singing.get("guidance", 1.0) if guidance is None else guidance)
     guidance_steps = str(singing.get("guidance_steps") or "all")
     if guidance_steps not in GUIDANCE_STEPS:
